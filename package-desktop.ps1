@@ -27,10 +27,28 @@ New-Item -ItemType Directory -Force $stage, $dest | Out-Null
 Copy-Item $jar $stage
 
 $toolsStage = Join-Path $stage "tools"
-New-Item -ItemType Directory -Force (Join-Path $toolsStage "validators"), (Join-Path $toolsStage "converters\libmobi") | Out-Null
+$converterStage = Join-Path $toolsStage "converters"
+New-Item -ItemType Directory -Force (Join-Path $toolsStage "validators"), (Join-Path $converterStage "libmobi") | Out-Null
 Copy-Item -Recurse -Force "tools\validators\epubcheck" (Join-Path $toolsStage "validators\epubcheck")
-Copy-Item -Force "tools\converters\libmobi\mobitool.exe" (Join-Path $toolsStage "converters\libmobi\mobitool.exe")
-Copy-Item -Force "tools\converters\libmobi\build-src\COPYING" (Join-Path $toolsStage "converters\libmobi\COPYING")
+Copy-Item -Force "tools\converters\libmobi\mobitool.exe" (Join-Path $converterStage "libmobi\mobitool.exe")
+Copy-Item -Force "tools\converters\libmobi\build-src\COPYING" (Join-Path $converterStage "libmobi\COPYING")
+
+# Optional compatibility pack.  Keep upstream directory names so licenses/resources
+# stay next to the executable; runtime discovery understands these layouts.
+foreach ($name in @("fbc-windows-amd64", "pandoc-3.11", "Calibre")) {
+    $source = Join-Path "tools\converters" $name
+    if (Test-Path $source -PathType Container) {
+        if ($name -eq "Calibre") {
+            $ebookConvert = Join-Path $source "ebook-convert.exe"
+            $parallel = Join-Path $source "calibre-parallel.exe"
+            if (-not ((Test-Path $ebookConvert -PathType Leaf) -and (Test-Path $parallel -PathType Leaf))) {
+                Write-Warning "Skipping incomplete Calibre bundle; ebook-convert.exe and calibre-parallel.exe are both required."
+                continue
+            }
+        }
+        Copy-Item -Recurse -Force $source (Join-Path $converterStage $name)
+    }
+}
 
 if ($Type -eq "app-image") {
     Remove-Item -Recurse -Force "$dest\MyHomeLib" -ErrorAction SilentlyContinue

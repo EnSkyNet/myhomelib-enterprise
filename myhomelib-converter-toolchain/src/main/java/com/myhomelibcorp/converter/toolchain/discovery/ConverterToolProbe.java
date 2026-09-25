@@ -6,6 +6,7 @@ import com.myhomelibcorp.converter.toolchain.process.ExternalToolResult;
 import com.myhomelibcorp.converter.toolchain.process.ExternalToolRunner;
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -37,6 +38,10 @@ public class ConverterToolProbe {
             if (!compatibilityDiagnostic.isBlank()) {
                 return new ToolInstallation(id, executable, new ToolVersion(versionLine), false, compatibilityDiagnostic);
             }
+            String runtimeDiagnostic = runtimeLayoutDiagnostic(id, executable);
+            if (!runtimeDiagnostic.isBlank()) {
+                return new ToolInstallation(id, executable, new ToolVersion(versionLine), false, runtimeDiagnostic);
+            }
             return new ToolInstallation(id, executable, new ToolVersion(versionLine), true, "");
         } catch (ConversionToolchainException e) {
             return ToolInstallation.unavailable(id, BoundedOutputCapture.compact(e.getMessage()));
@@ -50,6 +55,8 @@ public class ConverterToolProbe {
             case "fbc" -> lower.contains("fbc") || lower.contains("fb2cng");
             case "pandoc" -> lower.startsWith("pandoc ") || lower.equals("pandoc");
             case "libmobi" -> lower.startsWith("libmobi:") || lower.startsWith("libmobi ");
+            case "calibre" -> lower.contains("calibre")
+                    && (lower.contains("ebook-convert") || lower.contains("ebook convert"));
             default -> false;
         };
     }
@@ -71,6 +78,19 @@ public class ConverterToolProbe {
         }
         if (major < 3 || major == 3 && minor < 11) {
             return "Pandoc 3.11+ is required for the mandatory --sandbox document bridge; detected " + versionLine;
+        }
+        return "";
+    }
+
+    private String runtimeLayoutDiagnostic(String id, Path executable) {
+        if (!"calibre".equalsIgnoreCase(id == null ? "" : id) || executable == null) return "";
+        Path fileName = executable.getFileName();
+        if (fileName == null || !fileName.toString().equalsIgnoreCase("ebook-convert.exe")) return "";
+        Path parent = executable.getParent();
+        if (parent == null) return "Calibre installation directory cannot be determined";
+        Path worker = parent.resolve("calibre-parallel.exe");
+        if (!Files.isRegularFile(worker, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            return "Calibre is incomplete: required calibre-parallel.exe is missing next to ebook-convert.exe";
         }
         return "";
     }

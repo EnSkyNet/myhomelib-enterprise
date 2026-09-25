@@ -3,9 +3,11 @@ package com.myhomelibcorp.application.export;
 import com.myhomelibcorp.application.dto.ExportRequest;
 import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -66,7 +68,11 @@ public class DeviceProfileService {
     public DeviceTargetProfile detectOrGeneric(Path mountRoot) {
         if (mountRoot == null) return genericFolder();
         Path root = mountRoot.toAbsolutePath().normalize();
-        if (!Files.isDirectory(root)) return genericFolder();
+        try {
+            root = SafeFilePublication.requireSafeDirectoryPath(root, "Device mount root");
+        } catch (Exception unsafeRoot) {
+            return genericFolder();
+        }
         for (var detector : runtimeExtensions.deviceProfileDetectors()) {
             try {
                 Optional<DeviceTargetProfile> detected = detector.detect(root);
@@ -170,8 +176,14 @@ public class DeviceProfileService {
     }
 
     private static boolean exists(Path root, String child) {
-        try { return Files.exists(root.resolve(child)); }
-        catch (RuntimeException ignored) { return false; }
+        try {
+            Path candidate = root.resolve(child).normalize();
+            return candidate.startsWith(root)
+                    && Files.isDirectory(candidate, LinkOption.NOFOLLOW_LINKS)
+                    && !Files.isSymbolicLink(candidate);
+        } catch (RuntimeException ignored) {
+            return false;
+        }
     }
 
     private static boolean isBuiltIn(String id) {

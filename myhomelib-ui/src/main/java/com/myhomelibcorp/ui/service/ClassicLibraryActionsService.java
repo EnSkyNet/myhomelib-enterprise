@@ -27,6 +27,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Service
@@ -80,41 +81,27 @@ public class ClassicLibraryActionsService {
      */
     public void editBook(Window owner, BookId id, Runnable onSuccess) {
         if (id == null) return;
-        LibraryOperationCoordinator.Lease lease;
-        try {
-            lease = operations.acquireDetachedShared(LibraryOperationType.EDIT);
-        } catch (RuntimeException conflict) {
-            dialogs.showError(UiText.text("ui.java.classic_library_actions_service.8d560155bf"), UiExceptionMessages.root(conflict));
-            return;
-        }
         var token = UiAsyncRequestGuard.next(editGeneration, state);
-        backgroundExecutor.submit(() -> query.findById(id).orElse(null))
+        backgroundExecutor.submitCollectionScoped(LibraryOperationType.QUERY, () -> query.findById(id).orElse(null))
                 .whenComplete((book, loadError) -> Platform.runLater(() -> {
-                    if (!UiAsyncRequestGuard.isCurrent(token, editGeneration, state)) {
-                        lease.close();
-                        return;
-                    }
+                    if (!UiAsyncRequestGuard.isCurrent(token, editGeneration, state)) return;
                     if (loadError != null) {
-                        lease.close();
                         dialogs.showError(UiText.text("ui.java.classic_library_actions_service.8d560155bf"), UiExceptionMessages.root(loadError));
                         return;
                     }
                     if (book == null) {
-                        lease.close();
                         dialogs.showWarning(UiText.text("ui.java.classic_library_actions_service.457c748374"), UiText.text("ui.java.classic_library_actions_service.933f4f45c4"));
                         return;
                     }
                     try {
-                        showEditDialog(owner, book, onSuccess, lease, token);
+                        showEditDialog(owner, book, onSuccess, token);
                     } catch (RuntimeException failure) {
-                        lease.close();
                         dialogs.showError(UiText.text("ui.java.classic_library_actions_service.8d560155bf"), UiExceptionMessages.root(failure));
                     }
                 }));
     }
 
-    private void showEditDialog(Window owner, Book book, Runnable onSuccess,
-                                LibraryOperationCoordinator.Lease lease, UiAsyncRequestToken token) {
+    private void showEditDialog(Window owner, Book book, Runnable onSuccess, UiAsyncRequestToken token) {
         Dialog<ButtonType> d = new Dialog<>();
         DialogLocalization.prepare(d);
         d.setTitle(UiText.text("ui.java.classic_library_actions_service.1dbaaf6a09"));
@@ -146,13 +133,14 @@ public class ClassicLibraryActionsService {
 
         ButtonType result = d.showAndWait().orElse(ButtonType.CANCEL);
         if (result == onlineMetadata) {
-            lease.close();
-            metadataMergeUi.lookupAndReview(owner, book.getId(), onSuccess);
+            if (UiAsyncRequestGuard.isCurrent(token, editGeneration, state)) {
+                metadataMergeUi.lookupAndReview(owner, book.getId(), onSuccess);
+            }
             return;
         }
-        if (result != ButtonType.OK) { lease.close(); return; }
+        if (result != ButtonType.OK) return;
+        if (!UiAsyncRequestGuard.isCurrent(token, editGeneration, state)) return;
         if (title.getText() == null || title.getText().isBlank()) {
-            lease.close();
             dialogs.showWarning(UiText.text("ui.java.classic_library_actions_service.73fa190726"), UiText.text("ui.java.classic_library_actions_service.286ea1d3e6"));
             return;
         }
@@ -170,44 +158,58 @@ public class ClassicLibraryActionsService {
                 annotation.getText(),
                 review.getText());
 
-        backgroundExecutor.submit(() -> editBookUseCase.execute(request))
-                .whenComplete((updated, saveError) -> {
-                    lease.close();
-                    Platform.runLater(() -> {
-                        if (!UiAsyncRequestGuard.isCurrent(token, editGeneration, state)) return;
-                        if (saveError != null) {
-                            dialogs.showError(UiText.text("ui.java.classic_library_actions_service.8d560155bf"), UiExceptionMessages.root(saveError));
-                            return;
-                        }
-                        if (onSuccess != null) onSuccess.run();
-                    });
-                });
+        backgroundExecutor.submitCollectionScoped(LibraryOperationType.EDIT,
+                        () -> editBookUseCase.execute(request, token.collectionId()))
+                .whenComplete((updated, saveError) -> Platform.runLater(() -> {
+                    if (!UiAsyncRequestGuard.isCurrent(token, editGeneration, state)) return;
+                    if (saveError != null) {
+                        dialogs.showError(UiText.text("ui.java.classic_library_actions_service.8d560155bf"), UiExceptionMessages.root(saveError));
+                        return;
+                    }
+                    if (onSuccess != null) onSuccess.run();
+                }));
     }
 
     public boolean deleteBook(BookId id) {
         if (id == null) return false;
-        var lease = operations.acquireDetachedShared(LibraryOperationType.EDIT);
+
+        String expectedCollectionId;
+        Book book;
+        var queryLease = operations.acquireDetachedShared(LibraryOperationType.QUERY);
         try {
-            String expectedCollectionId = currentCollectionId();
-            Book book = query.findById(id).orElse(null);
-            if (book == null) {
-                lease.markCompleted("");
-                return false;
-            }
-            if (settings.getBoolean("ui.confirmDelete", true)
-                    && !dialogs.showConfirmation(UiText.text("ui.java.classic_library_actions_service.0422aa8a6f"), book.getTitle(),
-                    UiText.text("ui.java.classic_library_actions_service.4d475e7478"))) {
-                lease.markCancelled("");
+            expectedCollectionId = currentCollectionId();
+            book = query.findById(id).orElse(null);
+            queryLease.markCompleted("");
+        } catch (RuntimeException | Error failure) {
+            queryLease.markFailed(failure);
+            throw failure;
+        } finally {
+            queryLease.close();
+        }
+
+        if (book == null) return false;
+        if (settings.getBoolean("ui.confirmDelete", true)
+                && !dialogs.showConfirmation(UiText.text("ui.java.classic_library_actions_service.0422aa8a6f"), book.getTitle(),
+                UiText.text("ui.java.classic_library_actions_service.4d475e7478"))) {
+            return false;
+        }
+        if (!Objects.equals(expectedCollectionId, currentCollectionId())) return false;
+
+        var editLease = operations.acquireDetachedShared(LibraryOperationType.EDIT);
+        try {
+            // The collection may have switched while EDIT was waiting for the barrier.
+            if (!Objects.equals(expectedCollectionId, currentCollectionId())) {
+                editLease.markCancelled("collection changed");
                 return false;
             }
             bookSaver.deleteBook(id, expectedCollectionId);
-            lease.markCompleted("");
+            editLease.markCompleted("");
             return true;
         } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
+            editLease.markFailed(failure);
             throw failure;
         } finally {
-            lease.close();
+            editLease.close();
         }
     }
 

@@ -67,6 +67,32 @@ public class RemoveLocalBookCopyUseCase {
 
     /** Read-only removal impact used by UI confirmation. */
     public RemovalPreview preview(BookDto book) {
+        return preview(book, null);
+    }
+
+    /**
+     * Collection-bound preview. The QUERY barrier is owned by the application boundary itself so
+     * callers cannot accidentally resolve an archive in collection A and count affected rows in B
+     * after a collection switch between UI stages.
+     */
+    public RemovalPreview preview(BookDto book, String expectedCollectionId) {
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        try {
+            if (expectedCollectionId != null && !expectedCollectionId.isBlank()) {
+                assertExpectedCollection(expectedCollectionId);
+            }
+            RemovalPreview result = previewLocked(book);
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private RemovalPreview previewLocked(BookDto book) {
         validateBook(book);
         Path physical = resources.locateBookFile(
                 book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry()).orElse(null);

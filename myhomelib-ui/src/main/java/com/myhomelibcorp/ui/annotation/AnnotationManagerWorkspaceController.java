@@ -239,12 +239,13 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
                 owner, selected.type(), selected.quote(), selected.note(), selected.color(),
                 Set.copyOf(selected.tags()), knownTags()).orElse(null);
         if (edited == null) return;
+        String expectedCollectionId = currentCollectionId();
         setBusy(true, i18n.text("ui.annotations.saving"));
         executor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> {
             annotationManagerService.update(selected.id(), edited.note(), edited.color(), edited.tags());
             return null;
         }).whenComplete((ignored, error) -> Platform.runLater(() -> {
-            if (disposed) return;
+            if (disposed || !isCurrentCollection(expectedCollectionId)) return;
             if (error != null) {
                 setBusy(false, i18n.text("ui.annotations.save_failed") + ": " + UiExceptionSupport.message(error));
                 dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.save_failed"), UiExceptionSupport.message(error));
@@ -264,10 +265,11 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         if (!dialogs.showConfirmation(i18n.text("ui.annotations.delete"),
                 i18n.text("ui.annotations.delete_confirm"), confirmation)) return;
         List<String> ids = selected.stream().map(AnnotationManagerItem::id).toList();
+        String expectedCollectionId = currentCollectionId();
         setBusy(true, i18n.text("ui.annotations.deleting"));
         executor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationManagerService.deleteForUndo(ids))
                 .whenComplete((token, error) -> Platform.runLater(() -> {
-                    if (disposed) return;
+                    if (disposed || !isCurrentCollection(expectedCollectionId)) return;
                     if (error != null) {
                         setBusy(false, i18n.text("ui.annotations.delete_failed") + ": " + UiExceptionSupport.message(error));
                         dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.delete_failed"), UiExceptionSupport.message(error));
@@ -283,12 +285,13 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     public void undoDelete() {
         AnnotationBatchUndoToken token = undoStack.peekFirst();
         if (token == null) return;
+        String expectedCollectionId = currentCollectionId();
         setBusy(true, i18n.text("ui.annotations.restoring"));
         executor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> {
             annotationManagerService.restoreDeleted(token);
             return null;
         }).whenComplete((ignored, error) -> Platform.runLater(() -> {
-            if (disposed) return;
+            if (disposed || !isCurrentCollection(expectedCollectionId)) return;
             if (error != null) {
                 setBusy(false, i18n.text("ui.annotations.undo_failed") + ": " + UiExceptionSupport.message(error));
                 dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.undo_failed"), UiExceptionSupport.message(error));
@@ -315,9 +318,10 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         String color = dialog.showAndWait().orElse(null);
         if (color == null) return;
         List<String> ids = selected.stream().map(AnnotationManagerItem::id).toList();
+        String expectedCollectionId = currentCollectionId();
         setBusy(true, i18n.text("ui.annotations.saving"));
         executor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationManagerService.updateColor(ids, color))
-                .whenComplete((count, error) -> Platform.runLater(() -> finishBatchEdit(error, count, "ui.annotations.batch_updated")));
+                .whenComplete((count, error) -> Platform.runLater(() -> finishBatchEdit(expectedCollectionId, error, count, "ui.annotations.batch_updated")));
     }
 
     @FXML
@@ -330,9 +334,10 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         Set<String> tags = AnnotationEditorDialog.parseTags(value);
         if (tags.isEmpty()) return;
         List<String> ids = selected.stream().map(AnnotationManagerItem::id).toList();
+        String expectedCollectionId = currentCollectionId();
         setBusy(true, i18n.text("ui.annotations.saving"));
         executor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationManagerService.addTags(ids, tags))
-                .whenComplete((count, error) -> Platform.runLater(() -> finishBatchEdit(error, count, "ui.annotations.batch_updated")));
+                .whenComplete((count, error) -> Platform.runLater(() -> finishBatchEdit(expectedCollectionId, error, count, "ui.annotations.batch_updated")));
     }
 
     @FXML
@@ -345,9 +350,10 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         Set<String> tags = AnnotationEditorDialog.parseTags(value);
         if (tags.isEmpty()) return;
         List<String> ids = selected.stream().map(AnnotationManagerItem::id).toList();
+        String expectedCollectionId = currentCollectionId();
         setBusy(true, i18n.text("ui.annotations.saving"));
         executor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationManagerService.removeTags(ids, tags))
-                .whenComplete((count, error) -> Platform.runLater(() -> finishBatchEdit(error, count, "ui.annotations.batch_updated")));
+                .whenComplete((count, error) -> Platform.runLater(() -> finishBatchEdit(expectedCollectionId, error, count, "ui.annotations.batch_updated")));
     }
 
     @FXML
@@ -360,9 +366,10 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         List<AnnotationManagerItem> selected = selectedItems();
         if (!selected.isEmpty()) {
             Path destination = file.toPath();
+            String expectedCollectionId = currentCollectionId();
             setBusy(true, i18n.text("ui.annotations.exporting"));
             executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> exportSelectedDigest(selected, destination))
-                    .whenComplete((count, error) -> Platform.runLater(() -> finishDigestExport(destination, count, error)));
+                    .whenComplete((count, error) -> Platform.runLater(() -> finishDigestExport(expectedCollectionId, destination, count, error)));
             return;
         }
 
@@ -381,12 +388,13 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
                 i18n.text("ui.reader.annotation.editor.note"),
                 i18n.text("ui.reader.annotation.editor.tags"),
                 i18n.text("ui.annotations.digest_open"));
+        String expectedCollectionId = currentCollectionId();
         executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> annotationDigestService.export(selection, destination, labels))
-                .whenComplete((count, error) -> Platform.runLater(() -> finishDigestExport(destination, count, error)));
+                .whenComplete((count, error) -> Platform.runLater(() -> finishDigestExport(expectedCollectionId, destination, count, error)));
     }
 
-    private void finishDigestExport(Path destination, Long count, Throwable error) {
-        if (disposed) return;
+    private void finishDigestExport(String expectedCollectionId, Path destination, Long count, Throwable error) {
+        if (disposed || !isCurrentCollection(expectedCollectionId)) return;
         if (error != null) {
             setBusy(false, i18n.text("ui.annotations.export_failed") + ": " + UiExceptionSupport.message(error));
             dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.export_failed"), UiExceptionSupport.message(error));
@@ -404,9 +412,10 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
                 i18n.text("ui.annotations.export_csv"), "annotations-selected.csv");
         if (file == null) return;
         Path destination = file.toPath();
+        String expectedCollectionId = currentCollectionId();
         setBusy(true, i18n.text("ui.annotations.exporting"));
         executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> exportSelectedRows(selected, destination)).whenComplete((count, error) -> Platform.runLater(() -> {
-            if (disposed) return;
+            if (disposed || !isCurrentCollection(expectedCollectionId)) return;
             if (error != null) {
                 setBusy(false, i18n.text("ui.annotations.export_failed") + ": " + UiExceptionSupport.message(error));
                 dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.export_failed"), UiExceptionSupport.message(error));
@@ -425,9 +434,10 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         AnnotationManagerFilter filter = currentFilter();
         if (filter == null) return;
         Path destination = file.toPath();
+        String expectedCollectionId = currentCollectionId();
         setBusy(true, i18n.text("ui.annotations.exporting"));
         executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> exportCsv(filter, destination)).whenComplete((count, error) -> Platform.runLater(() -> {
-            if (disposed) return;
+            if (disposed || !isCurrentCollection(expectedCollectionId)) return;
             if (error != null) {
                 setBusy(false, i18n.text("ui.annotations.export_failed") + ": " + UiExceptionSupport.message(error));
                 dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.export_failed"), UiExceptionSupport.message(error));
@@ -484,9 +494,10 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         }
         AnnotationExportRequest request = new AnnotationExportRequest(
                 values.format(), selection, file.toPath(), values.templates());
+        String expectedCollectionId = currentCollectionId();
         setBusy(true, i18n.text("ui.annotations.exporting"));
         executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> annotationExportService.export(request)).whenComplete((result, error) -> Platform.runLater(() -> {
-            if (disposed) return;
+            if (disposed || !isCurrentCollection(expectedCollectionId)) return;
             if (error != null) {
                 setBusy(false, i18n.text("ui.annotations.export_failed") + ": " + UiExceptionSupport.message(error));
                 dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.export_failed"), UiExceptionSupport.message(error));
@@ -508,9 +519,10 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
 
         KnowledgeMarkdownExportRequest request = new KnowledgeMarkdownExportRequest(
                 selection, directory.toPath(), values.templates(), values.frontmatter(), values.backlinks(), values.policy());
+        String expectedCollectionId = currentCollectionId();
         setBusy(true, i18n.text("ui.annotations.exporting"));
         executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> knowledgeMarkdownExportService.export(request)).whenComplete((result, error) -> Platform.runLater(() -> {
-            if (disposed) return;
+            if (disposed || !isCurrentCollection(expectedCollectionId)) return;
             if (error != null) {
                 setBusy(false, i18n.text("ui.annotations.export_failed") + ": " + UiExceptionSupport.message(error));
                 dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.export_failed"), UiExceptionSupport.message(error));
@@ -803,6 +815,15 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         return table == null ? List.of() : List.copyOf(table.getSelectionModel().getSelectedItems());
     }
 
+    private String currentCollectionId() {
+        String id = appState.getCurrentLibraryCollectionId();
+        return id == null ? "" : id;
+    }
+
+    private boolean isCurrentCollection(String expectedCollectionId) {
+        return Objects.equals(expectedCollectionId, currentCollectionId());
+    }
+
     private void pushUndo(AnnotationBatchUndoToken token) {
         if (token == null) return;
         String activeCollectionId = appState.getCurrentLibraryCollectionId();
@@ -815,8 +836,8 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         while (undoStack.size() > MAX_UNDO_OPERATIONS) undoStack.removeLast();
     }
 
-    private void finishBatchEdit(Throwable error, Integer count, String successKey) {
-        if (disposed) return;
+    private void finishBatchEdit(String expectedCollectionId, Throwable error, Integer count, String successKey) {
+        if (disposed || !isCurrentCollection(expectedCollectionId)) return;
         if (error != null) {
             setBusy(false, i18n.text("ui.annotations.save_failed") + ": " + UiExceptionSupport.message(error));
             dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.save_failed"), UiExceptionSupport.message(error));

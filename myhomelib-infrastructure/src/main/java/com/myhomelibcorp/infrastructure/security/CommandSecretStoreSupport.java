@@ -1,11 +1,10 @@
 package com.myhomelibcorp.infrastructure.security;
 
 import com.myhomelibcorp.shared.security.SecretStoreException;
+import com.myhomelibcorp.shared.util.ExecutablePathSafety;
 import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,23 +16,24 @@ final class CommandSecretStoreSupport {
     private CommandSecretStoreSupport() {}
 
     static boolean isExecutableOnPath(String executable) {
-        String path = System.getenv("PATH");
-        if (path == null || path.isBlank()) return false;
-        for (String part : path.split(java.io.File.pathSeparator)) {
-            try {
-                Path candidate = Path.of(part).resolve(executable);
-                if (Files.isRegularFile(candidate, java.nio.file.LinkOption.NOFOLLOW_LINKS) && Files.isExecutable(candidate)) return true;
-            } catch (RuntimeException ignored) {
-                // Ignore malformed PATH entries.
-            }
+        try {
+            ExecutablePathSafety.resolve(executable, "Native credential-store executable");
+            return true;
+        } catch (IOException | RuntimeException unavailable) {
+            return false;
         }
-        return false;
     }
 
     static Result run(List<String> command, String stdin) {
         try {
+            if (command == null || command.isEmpty()) {
+                throw new SecretStoreException("Native credential-store command is empty");
+            }
+            ArrayList<String> safeCommand = new ArrayList<>(command);
+            safeCommand.set(0, ExecutablePathSafety.resolve(
+                    safeCommand.getFirst(), "Native credential-store executable").toString());
             ProcessExecutionSupport.Result result = ProcessExecutionSupport.run(
-                    new ArrayList<>(command), stdin, TIMEOUT, 256 * 1024);
+                    safeCommand, stdin, TIMEOUT, 256 * 1024);
             return new Result(result.exitCode(), result.stdoutText().strip(), result.stderrText().strip());
         } catch (ProcessExecutionSupport.ProcessTimeoutException e) {
             throw new SecretStoreException("Native credential-store command timed out", e);

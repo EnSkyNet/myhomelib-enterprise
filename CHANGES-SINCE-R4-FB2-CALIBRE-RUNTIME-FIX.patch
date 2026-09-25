@@ -1,0 +1,970 @@
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-application/src/main/java/com/myhomelibcorp/application/catalog/CatalogSourceIdentity.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-application/src/main/java/com/myhomelibcorp/application/catalog/CatalogSourceIdentity.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-application/src/main/java/com/myhomelibcorp/application/catalog/CatalogSourceIdentity.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-application/src/main/java/com/myhomelibcorp/application/catalog/CatalogSourceIdentity.java	2026-09-24 14:45:44.291696846 +0000
+@@ -6,6 +6,9 @@
+ 
+ /** Stable logical identity helpers. Remote sync must use the collection id, never a downloaded temp path. */
+ public final class CatalogSourceIdentity {
++    /** Placeholder persisted by remote preflight state before the first catalog payload is applied. */
++    public static final String UNAPPLIED_FINGERPRINT = "sync-state:unapplied";
++
+     private CatalogSourceIdentity() { }
+ 
+     public static String remoteCollection(String collectionId) {
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-application/src/main/java/com/myhomelibcorp/application/service/CollectionLifecycleService.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-application/src/main/java/com/myhomelibcorp/application/service/CollectionLifecycleService.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-application/src/main/java/com/myhomelibcorp/application/service/CollectionLifecycleService.java	2026-09-23 18:58:21.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-application/src/main/java/com/myhomelibcorp/application/service/CollectionLifecycleService.java	2026-09-24 14:45:44.302969924 +0000
+@@ -199,7 +199,7 @@
+         LibraryOperationCoordinator.Lease preAcquiredLease = null;
+         if (acquireImmediately) {
+             try {
+-                preAcquiredLease = operationCoordinator.acquireDetached(LibraryOperationType.INDEX);
++                preAcquiredLease = operationCoordinator.acquireDetachedShared(LibraryOperationType.INDEX);
+             } catch (RuntimeException leaseFailure) {
+                 activeRebuild.compareAndSet(task, null);
+                 future.completeExceptionally(leaseFailure);
+@@ -231,7 +231,7 @@
+         String completionDetail = "";
+         try {
+             if (lease == null) {
+-                lease = operationCoordinator.acquireDetachedAwait(LibraryOperationType.INDEX);
++                lease = operationCoordinator.acquireDetachedSharedAwait(LibraryOperationType.INDEX);
+             }
+             if (!isRebuildStillValid(task)) {
+                 cancelled = true;
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-application/src/test/java/com/myhomelibcorp/application/service/CollectionLifecycleServiceTest.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-application/src/test/java/com/myhomelibcorp/application/service/CollectionLifecycleServiceTest.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-application/src/test/java/com/myhomelibcorp/application/service/CollectionLifecycleServiceTest.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-application/src/test/java/com/myhomelibcorp/application/service/CollectionLifecycleServiceTest.java	2026-09-24 14:56:21.224793971 +0000
+@@ -119,6 +119,9 @@
+         var future = f.service.rebuildSearchIndexAsync();
+ 
+         org.junit.jupiter.api.Assertions.assertEquals(LibraryOperationType.INDEX, f.coordinator.activeOperation());
++        try (var query = f.coordinator.acquireDetachedShared(LibraryOperationType.QUERY)) {
++            org.junit.jupiter.api.Assertions.assertEquals(LibraryOperationType.INDEX, f.coordinator.activeOperation());
++        }
+         assertThrows(LibraryOperationConflictException.class,
+                 () -> f.coordinator.acquire(LibraryOperationType.SYNC));
+         org.junit.jupiter.api.Assertions.assertFalse(future.isDone());
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-bootstrap/src/main/java/com/myhomelibcorp/MyHomeLibApp.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-bootstrap/src/main/java/com/myhomelibcorp/MyHomeLibApp.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-bootstrap/src/main/java/com/myhomelibcorp/MyHomeLibApp.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-bootstrap/src/main/java/com/myhomelibcorp/MyHomeLibApp.java	2026-09-24 14:45:44.303708023 +0000
+@@ -173,7 +173,16 @@
+             log.warn("Не вдалося закрити активний workspace", e);
+         }
+ 
+-        // 2. Закриваємо AsyncConfig
++        // 2. Stop coordinated maintenance while its executor is still alive. Otherwise a long
++        // Lucene rebuild can keep AsyncConfig busy until the executor shutdown timeout expires.
++        try {
++            context.getBean(com.myhomelibcorp.application.service.CollectionLifecycleService.class)
++                    .cancelBackgroundRebuildAndAwait();
++        } catch (Exception e) {
++            log.warn("Не вдалося скасувати фонову перебудову індексу", e);
++        }
++
++        // 3. Закриваємо AsyncConfig
+         try {
+             var asyncConfig = context.getBean(com.myhomelibcorp.infrastructure.config.AsyncConfig.class);
+             asyncConfig.shutdown();
+@@ -181,7 +190,7 @@
+             log.warn("Не вдалося закрити AsyncConfig", e);
+         }
+ 
+-        // 3. Закриваємо UiBackgroundExecutor
++        // 4. Закриваємо UiBackgroundExecutor
+         try {
+             var uiExecutor = context.getBean(com.myhomelibcorp.ui.service.UiBackgroundExecutor.class);
+             uiExecutor.shutdown();
+@@ -189,9 +198,9 @@
+             log.warn("Не вдалося закрити UiBackgroundExecutor", e);
+         }
+ 
+-        // 4. Shared task/io/import/search executors are owned and stopped by AsyncConfig.
++        // 5. Shared task/io/import/search executors are owned and stopped by AsyncConfig.
+ 
+-        // 5. Закриваємо активну колекцію через єдиний lifecycle:
++        // 6. Закриваємо активну колекцію через єдиний lifecycle:
+         // Lucene commit/close -> SQLite close/checkpoint -> freshness seal.
+         if (context != null) {
+             try {
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/main/java/com/myhomelibcorp/epub/optimizer/EpubOptimizer.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/main/java/com/myhomelibcorp/epub/optimizer/EpubOptimizer.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/main/java/com/myhomelibcorp/epub/optimizer/EpubOptimizer.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/main/java/com/myhomelibcorp/epub/optimizer/EpubOptimizer.java	2026-09-24 14:47:28.798425751 +0000
+@@ -12,6 +12,7 @@
+ import com.myhomelibcorp.epub.optimizer.profile.ReadingSystemProfile;
+ import com.myhomelibcorp.epub.optimizer.profile.StandardReadingSystemProfile;
+ import com.myhomelibcorp.epub.optimizer.semantic.EpubSemanticVerifier;
++import org.springframework.beans.factory.annotation.Autowired;
+ import org.springframework.stereotype.Component;
+ 
+ import java.nio.file.Files;
+@@ -33,8 +34,10 @@
+     private final EpubSemanticVerifier semanticVerifier;
+     private final EpubPackageVersionInspector packageVersionInspector;
+     private final EpubBinaryResourceOptimizer binaryResourceOptimizer;
++    private final EpubPackageVersionPromoter packageVersionPromoter;
+     private final List<EpubAcceptanceValidator> acceptanceValidators;
+ 
++    @Autowired
+     public EpubOptimizer(EpubStructuralValidator validator,
+                          EpubResourceGraphAnalyzer graphAnalyzer,
+                          EpubPackager packager,
+@@ -44,6 +47,7 @@
+                          EpubSemanticVerifier semanticVerifier,
+                          EpubPackageVersionInspector packageVersionInspector,
+                          EpubBinaryResourceOptimizer binaryResourceOptimizer,
++                         EpubPackageVersionPromoter packageVersionPromoter,
+                          List<EpubAcceptanceValidator> acceptanceValidators) {
+         this.validator = validator;
+         this.graphAnalyzer = graphAnalyzer;
+@@ -54,9 +58,26 @@
+         this.semanticVerifier = semanticVerifier;
+         this.packageVersionInspector = packageVersionInspector;
+         this.binaryResourceOptimizer = binaryResourceOptimizer;
++        this.packageVersionPromoter = packageVersionPromoter;
+         this.acceptanceValidators = acceptanceValidators == null ? List.of() : List.copyOf(acceptanceValidators);
+     }
+ 
++    /** Backward-compatible constructor used by focused tests and non-Spring adapters. */
++    public EpubOptimizer(EpubStructuralValidator validator,
++                         EpubResourceGraphAnalyzer graphAnalyzer,
++                         EpubPackager packager,
++                         EpubExactDuplicateDeduplicator duplicateDeduplicator,
++                         EpubResourcePruner resourcePruner,
++                         EpubSafeMarkupNormalizer markupNormalizer,
++                         EpubSemanticVerifier semanticVerifier,
++                         EpubPackageVersionInspector packageVersionInspector,
++                         EpubBinaryResourceOptimizer binaryResourceOptimizer,
++                         List<EpubAcceptanceValidator> acceptanceValidators) {
++        this(validator, graphAnalyzer, packager, duplicateDeduplicator, resourcePruner, markupNormalizer,
++                semanticVerifier, packageVersionInspector, binaryResourceOptimizer,
++                new EpubPackageVersionPromoter(new EpubResourceReplacementWriter()), acceptanceValidators);
++    }
++
+     public EpubOptimizationReport optimize(Path source, Path target, EpubOptimizationProfile profile) throws Exception {
+         return optimize(source, target, profile, StandardReadingSystemProfile.GENERIC_EPUB33_COMPAT, EpubAcceptanceMode.STANDARD);
+     }
+@@ -99,15 +120,38 @@
+             checkCancelled();
+             validator.validate(source);
+             checkCancelled();
+-            String sourcePackageVersion = packageVersionInspector.packageVersion(source);
+-            if (profile == EpubOptimizationProfile.MODERN_EPUB34 && !packageVersionInspector.isEpub34(sourcePackageVersion)) {
+-                throw new IllegalArgumentException("MODERN_EPUB34 requires an EPUB package that explicitly declares version 3.4; source declares " + sourcePackageVersion);
++            String inputPackageVersion = packageVersionInspector.packageVersion(source);
++            String promotionWarning = null;
++            if (profile == EpubOptimizationProfile.MODERN_EPUB34
++                    && !packageVersionInspector.isEpub34(inputPackageVersion)) {
++                if (!packageVersionInspector.isEpub3(inputPackageVersion)) {
++                    throw new IllegalArgumentException("MODERN_EPUB34 can safely promote only an EPUB 3.x package; source declares "
++                            + inputPackageVersion);
++                }
++                EpubResourceGraph inputGraph = graphAnalyzer.analyze(source);
++                Path promoted = optimizerWorkspace.resolve("source-epub34.epub");
++                packageVersionPromoter.promoteTo34(source, promoted, inputGraph.packagePath(), optimizerWorkspace);
++                checkCancelled();
++                validator.validate(promoted);
++                String promotedVersion = packageVersionInspector.packageVersion(promoted);
++                if (!packageVersionInspector.isEpub34(promotedVersion)) {
++                    throw new IllegalArgumentException("EPUB 3.4 promotion did not produce an OPF 3.4 package");
++                }
++                EpubSemanticVerifier.Verification promotionVerification = semanticVerifier.verify(source, promoted);
++                if (!promotionVerification.equivalent()) {
++                    throw new IllegalArgumentException("EPUB 3.4 promotion changed publication semantics: "
++                            + promotionVerification.differences());
++                }
++                source = promoted;
++                promotionWarning = "Promoted OPF package version from " + inputPackageVersion + " to " + promotedVersion + ".";
+             }
++            String sourcePackageVersion = packageVersionInspector.packageVersion(source);
+             EpubResourceGraph graph = graphAnalyzer.analyze(source);
+             checkCancelled();
+             long sourceSize = Files.size(source);
+             List<String> warnings = new ArrayList<>(graph.warnings());
+             warnings.add("EPUB package version: " + sourcePackageVersion + ".");
++            if (promotionWarning != null) warnings.add(promotionWarning);
+             int duplicateCount = graph.exactDuplicateGroups().values().stream().mapToInt(list -> list.size() - 1).sum();
+             if (duplicateCount > 0) warnings.add("Exact duplicate resources detected: " + duplicateCount + ".");
+             if (!graph.warnings().isEmpty()) {
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/main/java/com/myhomelibcorp/epub/optimizer/EpubPackageVersionInspector.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/main/java/com/myhomelibcorp/epub/optimizer/EpubPackageVersionInspector.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/main/java/com/myhomelibcorp/epub/optimizer/EpubPackageVersionInspector.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/main/java/com/myhomelibcorp/epub/optimizer/EpubPackageVersionInspector.java	2026-09-24 14:47:28.797441787 +0000
+@@ -50,6 +50,12 @@
+         throw new IllegalArgumentException("EPUB package document is empty");
+     }
+ 
++    public boolean isEpub3(String version) {
++        if (version == null) return false;
++        String normalized = version.strip();
++        return normalized.equals("3") || normalized.startsWith("3.");
++    }
++
+     public boolean isEpub34(String version) {
+         if (version == null) return false;
+         String normalized = version.strip();
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/main/java/com/myhomelibcorp/epub/optimizer/EpubPackageVersionPromoter.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/main/java/com/myhomelibcorp/epub/optimizer/EpubPackageVersionPromoter.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/main/java/com/myhomelibcorp/epub/optimizer/EpubPackageVersionPromoter.java	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/main/java/com/myhomelibcorp/epub/optimizer/EpubPackageVersionPromoter.java	2026-09-24 14:47:47.445825762 +0000
+@@ -0,0 +1,134 @@
++package com.myhomelibcorp.epub.optimizer;
++
++import com.myhomelibcorp.epub.optimizer.fs.EpubPathSafety;
++import com.myhomelibcorp.epub.optimizer.graph.EpubResourceReplacementWriter;
++import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
++import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
++import org.springframework.stereotype.Component;
++
++import javax.xml.namespace.QName;
++import javax.xml.stream.XMLEventFactory;
++import javax.xml.stream.XMLEventReader;
++import javax.xml.stream.XMLEventWriter;
++import javax.xml.stream.XMLOutputFactory;
++import javax.xml.stream.events.Attribute;
++import javax.xml.stream.events.Namespace;
++import javax.xml.stream.events.StartElement;
++import javax.xml.stream.events.XMLEvent;
++import java.io.InputStream;
++import java.io.OutputStream;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.Iterator;
++import java.util.List;
++import java.util.Map;
++import java.util.Objects;
++import java.util.concurrent.CancellationException;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipFile;
++
++/**
++ * Promotes an already-EPUB-3 publication to the experimental 3.4 package declaration without
++ * changing its manifest, spine, navigation, metadata or resource paths. EPUB 2 is intentionally
++ * rejected: changing only its OPF version is not a safe format upgrade.
++ */
++@Component
++public final class EpubPackageVersionPromoter {
++    private static final String TARGET_VERSION = "3.4";
++
++    private final EpubResourceReplacementWriter replacementWriter;
++
++    public EpubPackageVersionPromoter(EpubResourceReplacementWriter replacementWriter) {
++        this.replacementWriter = Objects.requireNonNull(replacementWriter, "replacementWriter");
++    }
++
++    public void promoteTo34(Path source, Path target, String packagePath, Path workspace) throws Exception {
++        Path safeSource = EpubPathSafety.requireSafeRegularFile(source, "EPUB 3.4 promotion source");
++        Path safeTarget = EpubPathSafety.prepareTarget(target, "EPUB 3.4 promotion target");
++        if (packagePath == null || packagePath.isBlank()) {
++            throw new IllegalArgumentException("EPUB package path is required for 3.4 promotion");
++        }
++        Path safeWorkspace = Objects.requireNonNull(workspace, "workspace").toAbsolutePath().normalize();
++        Path replacement = EpubPathSafety.prepareTarget(
++                safeWorkspace.resolve("package-3.4.opf"), "EPUB 3.4 package replacement");
++
++        writePromotedPackage(safeSource, packagePath, replacement);
++        replacementWriter.replace(safeSource, safeTarget, Map.of(packagePath, replacement));
++    }
++
++    private void writePromotedPackage(Path source, String packagePath, Path replacement) throws Exception {
++        try (ZipFile zip = new ZipFile(source.toFile(), StandardCharsets.UTF_8)) {
++            ZipEntry entry = zip.getEntry(packagePath);
++            if (entry == null || entry.isDirectory()) {
++                throw new IllegalArgumentException("EPUB package document is missing: " + packagePath);
++            }
++            if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize())) {
++                throw new IllegalArgumentException("EPUB package document exceeds safe size limit");
++            }
++            try (InputStream input = zip.getInputStream(entry);
++                 OutputStream output = EpubPathSafety.openFreshOutputStream(replacement, "EPUB 3.4 package replacement")) {
++                rewritePackageVersion(input, output);
++            }
++        }
++    }
++
++    private void rewritePackageVersion(InputStream input, OutputStream output) throws Exception {
++        XMLEventReader reader = SecureXmlInputFactory.create(false, false).createXMLEventReader(input);
++        XMLEventWriter writer = XMLOutputFactory.newFactory().createXMLEventWriter(output, StandardCharsets.UTF_8.name());
++        XMLEventFactory events = XMLEventFactory.newFactory();
++        boolean rootSeen = false;
++        boolean versionChanged = false;
++        try {
++            while (reader.hasNext()) {
++                checkCancelled();
++                XMLEvent event = reader.nextEvent();
++                if (event.isStartDocument()) {
++                    writer.add(events.createStartDocument(StandardCharsets.UTF_8.name(), "1.0"));
++                    continue;
++                }
++                if (event.isStartElement() && !rootSeen) {
++                    rootSeen = true;
++                    StartElement root = event.asStartElement();
++                    if (!"package".equals(root.getName().getLocalPart())) {
++                        throw new IllegalArgumentException("EPUB OPF root is not package");
++                    }
++                    List<Attribute> attributes = new ArrayList<>();
++                    Iterator<?> rawAttributes = root.getAttributes();
++                    while (rawAttributes.hasNext()) {
++                        Attribute attribute = (Attribute) rawAttributes.next();
++                        if ("version".equals(attribute.getName().getLocalPart())) {
++                            QName name = attribute.getName();
++                            attributes.add(events.createAttribute(name, TARGET_VERSION));
++                            versionChanged = true;
++                        } else {
++                            attributes.add(attribute);
++                        }
++                    }
++                    if (!versionChanged) {
++                        attributes.add(events.createAttribute("version", TARGET_VERSION));
++                        versionChanged = true;
++                    }
++                    List<Namespace> namespaces = new ArrayList<>();
++                    Iterator<?> rawNamespaces = root.getNamespaces();
++                    while (rawNamespaces.hasNext()) namespaces.add((Namespace) rawNamespaces.next());
++                    writer.add(events.createStartElement(root.getName(), attributes.iterator(), namespaces.iterator()));
++                    continue;
++                }
++                writer.add(event);
++            }
++            writer.flush();
++        } finally {
++            try { reader.close(); } finally { writer.close(); }
++        }
++        if (!rootSeen || !versionChanged) {
++            throw new IllegalArgumentException("EPUB package version could not be promoted to 3.4");
++        }
++    }
++
++    private static void checkCancelled() {
++        if (Thread.currentThread().isInterrupted()) {
++            throw new CancellationException("EPUB 3.4 package promotion cancelled");
++        }
++    }
++}
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/test/java/com/myhomelibcorp/epub/optimizer/EpubPackageVersionPromoterTest.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/test/java/com/myhomelibcorp/epub/optimizer/EpubPackageVersionPromoterTest.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/test/java/com/myhomelibcorp/epub/optimizer/EpubPackageVersionPromoterTest.java	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-epub-optimizer/src/test/java/com/myhomelibcorp/epub/optimizer/EpubPackageVersionPromoterTest.java	2026-09-24 14:55:55.812186239 +0000
+@@ -0,0 +1,81 @@
++package com.myhomelibcorp.epub.optimizer;
++
++import com.myhomelibcorp.epub.optimizer.graph.EpubResourceReplacementWriter;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++
++import java.io.InputStream;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.zip.CRC32;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipFile;
++import java.util.zip.ZipOutputStream;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++class EpubPackageVersionPromoterTest {
++    @TempDir Path temp;
++
++    @Test
++    void promotesOnlyOpfPackageVersionAndPreservesPublicationResources() throws Exception {
++        Path source = temp.resolve("source.epub");
++        Path target = temp.resolve("target.epub");
++        String opf = """
++                <?xml version="1.0" encoding="UTF-8"?>
++                <package xmlns="http://www.idpf.org/2007/opf" version="3.3" unique-identifier="bookid">
++                  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bookid">urn:test</dc:identifier></metadata>
++                  <manifest><item id="c" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest>
++                  <spine><itemref idref="c"/></spine>
++                </package>
++                """;
++        byte[] chapter = "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body>Text</body></html>"
++                .getBytes(StandardCharsets.UTF_8);
++        writeFixture(source, opf.getBytes(StandardCharsets.UTF_8), chapter);
++
++        new EpubPackageVersionPromoter(new EpubResourceReplacementWriter())
++                .promoteTo34(source, target, "OEBPS/content.opf", temp);
++
++        try (ZipFile zip = new ZipFile(target.toFile(), StandardCharsets.UTF_8)) {
++            String promoted = read(zip, "OEBPS/content.opf");
++            assertThat(promoted).contains("version=\"3.4\"");
++            assertThat(promoted).contains("unique-identifier=\"bookid\"");
++            assertThat(zip.getInputStream(zip.getEntry("OEBPS/chapter.xhtml")).readAllBytes())
++                    .containsExactly(chapter);
++            assertThat(zip.entries().nextElement().getName()).isEqualTo("mimetype");
++            assertThat(zip.getEntry("mimetype").getMethod()).isEqualTo(ZipEntry.STORED);
++        }
++    }
++
++    private static String read(ZipFile zip, String name) throws Exception {
++        try (InputStream input = zip.getInputStream(zip.getEntry(name))) {
++            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
++        }
++    }
++
++    private static void writeFixture(Path target, byte[] opf, byte[] chapter) throws Exception {
++        byte[] mimetype = "application/epub+zip".getBytes(StandardCharsets.US_ASCII);
++        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(target), StandardCharsets.UTF_8)) {
++            CRC32 crc = new CRC32();
++            crc.update(mimetype);
++            ZipEntry mime = new ZipEntry("mimetype");
++            mime.setMethod(ZipEntry.STORED);
++            mime.setSize(mimetype.length);
++            mime.setCompressedSize(mimetype.length);
++            mime.setCrc(crc.getValue());
++            out.putNextEntry(mime);
++            out.write(mimetype);
++            out.closeEntry();
++
++            write(out, "OEBPS/content.opf", opf);
++            write(out, "OEBPS/chapter.xhtml", chapter);
++        }
++    }
++
++    private static void write(ZipOutputStream out, String name, byte[] bytes) throws Exception {
++        out.putNextEntry(new ZipEntry(name));
++        out.write(bytes);
++        out.closeEntry();
++    }
++}
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/catalog/SqliteCatalogSourceStateAdapter.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/catalog/SqliteCatalogSourceStateAdapter.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/catalog/SqliteCatalogSourceStateAdapter.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/catalog/SqliteCatalogSourceStateAdapter.java	2026-09-24 14:45:44.291978294 +0000
+@@ -97,7 +97,8 @@
+                     source_id, source_key, source_location, source_revision, source_fingerprint,
+                     first_seen_at, last_synced_at
+                 ) VALUES (?, ?, ?, 1, ?, ?, ?)
+-                """, CatalogSourceIdentity.stableId(key), key, safe(sourceLocation), "sync-state:unapplied", now(), now());
++                """, CatalogSourceIdentity.stableId(key), key, safe(sourceLocation),
++                CatalogSourceIdentity.UNAPPLIED_FINGERPRINT, now(), now());
+     }
+ 
+     private static String nullable(String value) { return value == null || value.isBlank() ? null : value.trim(); }
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/catalog/SqliteCatalogUpdateTrackingAdapter.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/catalog/SqliteCatalogUpdateTrackingAdapter.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/catalog/SqliteCatalogUpdateTrackingAdapter.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/catalog/SqliteCatalogUpdateTrackingAdapter.java	2026-09-24 14:45:44.293350501 +0000
+@@ -65,15 +65,22 @@
+         }
+ 
+         SourceRow row = existing.getFirst();
++        // Remote update preflight creates catalog_sources before the INPX payload is applied. That
++        // placeholder is not a real synchronization baseline and must not disable the empty-catalog
++        // import fast path or advance the first real source revision to 2.
++        boolean unappliedPlaceholder = row.fingerprint() == null
++                || row.fingerprint().isBlank()
++                || CatalogSourceIdentity.UNAPPLIED_FINGERPRINT.equals(row.fingerprint());
+         long revision = row.revision();
+-        boolean changed = !sourceFingerprint.equals(row.fingerprint());
+-        if (changed) revision++;
++        boolean changed = unappliedPlaceholder || !sourceFingerprint.equals(row.fingerprint());
++        if (changed && !unappliedPlaceholder) revision++;
+         jdbc().update("""
+                 UPDATE catalog_sources
+                    SET source_location = ?, source_revision = ?, source_fingerprint = ?, last_synced_at = ?
+                  WHERE source_key = ?
+                 """, safeLocation, revision, sourceFingerprint, now, normalizedKey);
+-        return new CatalogSyncSession(row.sourceId(), normalizedKey, revision, sourceFingerprint, false, changed);
++        return new CatalogSyncSession(row.sourceId(), normalizedKey, revision, sourceFingerprint,
++                unappliedPlaceholder, changed);
+     }
+ 
+     @Override
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/ImportIndexLifecycle.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/ImportIndexLifecycle.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/ImportIndexLifecycle.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/ImportIndexLifecycle.java	2026-09-24 14:54:56.167373045 +0000
+@@ -26,8 +26,9 @@
+      * an empty catalog. They are intentionally not suspended for a refresh of an existing catalog:
+      * rebuilding a large pre-existing index can cost more than maintaining it during UPSERTs.
+      *
+-     * The exact author-name lookup index and keyword_books(book_id) stay live because the import
+-     * path can need them for safe author-cache fallback and idempotent relation replacement.
++     * The exact author-name lookup index stays live because the import path can need it for the
++     * safe author-cache fallback. Initial-baseline relation replacement is insert-only, so the
++     * book-side keyword/catalog-state indexes are also pure write amplification and may be rebuilt.
+      */
+     private static final List<String> INITIAL_BASELINE_EXTRA_SUSPEND_INDEXES = List.of(
+             "idx_books_language",
+@@ -46,7 +47,11 @@
+             "idx_books_active_language_title",
+             "idx_books_active_id",
+             "idx_book_authors_author_id",
+-            "idx_book_genres_genre_code"
++            "idx_book_genres_genre_code",
++            "idx_keyword_books_book_id",
++            "idx_keyword_books_keyword_book",
++            "idx_catalog_book_state_source",
++            "idx_catalog_book_state_downloaded"
+     );
+ 
+     private final CollectionManager collectionManager;
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxImportPipeline.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxImportPipeline.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxImportPipeline.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxImportPipeline.java	2026-09-24 14:45:44.299683440 +0000
+@@ -40,6 +40,7 @@
+ @Slf4j
+ public class InpxImportPipeline {
+     private static final long AUTHOR_PRELOAD_MIN_RECORDS = 100_000L;
++    private static final long AUTHOR_DELTA_PRELOAD_MIN_RECORDS = 10_000L;
+     private static final int AUTHOR_SEEN_FILTER_BITS = 1 << 24; // 2 MiB Bloom filter
+     private static final int AUTHOR_SEEN_FILTER_MASK = AUTHOR_SEEN_FILTER_BITS - 1;
+     private static final long SELECTIVE_PREVIEW_MIN_RECORDS = 100_000L;
+@@ -350,9 +351,9 @@
+         // Never infer deletion from absence in one snapshot; a partial/corrupt catalog must not hide
+         // previously imported books. Catalog tracking still records revisions for rows that are present.
+ 
+-        // Preloading the complete author table only pays off for a large full online snapshot.
+-        // A small delta/local import must not spend hundreds of milliseconds reading tens of
+-        // thousands of unrelated authors before touching its few records.
++        // Preloading the persistent author table pays off for a large full snapshot and for a
++        // sizeable online delta. Without it, a 20k+ delta repeatedly resolves author-name triples
++        // through SQL even when the whole author table fits in the bounded cache.
+         if (shouldPreloadAuthorCache(onlineCollection, catalogFullSnapshot, totalRecords)) {
+             preloadAuthorCacheIfFits(authorTableInitiallyEmpty);
+         }
+@@ -711,7 +712,7 @@
+         BatchClassification classification = null;
+         if (fastInitialBaseline) {
+             classifyInitialSearchChanges(books, changes);
+-            batchWriter.batchInsertFull(books.stream().map(NormalizedBook::row).toList(), authorResolution);
++            batchWriter.batchInsertFull(books.stream().map(NormalizedBook::row).toList(), authorResolution, false);
+         } else {
+             classification = classifySearchChanges(books, changes, tracked);
+             if (!classification.persistenceBooks().isEmpty()) {
+@@ -988,7 +989,10 @@
+     }
+ 
+     private static boolean shouldPreloadAuthorCache(boolean onlineCollection, boolean catalogFullSnapshot, long totalRecords) {
+-        return onlineCollection && catalogFullSnapshot && totalRecords >= AUTHOR_PRELOAD_MIN_RECORDS;
++        if (!onlineCollection) return false;
++        return catalogFullSnapshot
++                ? totalRecords >= AUTHOR_PRELOAD_MIN_RECORDS
++                : totalRecords >= AUTHOR_DELTA_PRELOAD_MIN_RECORDS;
+     }
+ 
+     private void preloadAuthorCacheIfFits(boolean authorTableInitiallyEmpty) {
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/JdbcBatchWriter.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/JdbcBatchWriter.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/JdbcBatchWriter.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/JdbcBatchWriter.java	2026-09-24 14:45:44.299364603 +0000
+@@ -39,6 +39,16 @@
+      */
+     public void batchInsertFull(List<Object[]> booksData,
+                                 Map<String, String> authorResolution) {
++        batchInsertFull(booksData, authorResolution, true);
++    }
++
++    /**
++     * Writes a book batch. {@code replaceExistingRelations=false} is valid only for rows proven
++     * to be new in an initially empty catalog and avoids redundant DELETE probes for every batch.
++     */
++    public void batchInsertFull(List<Object[]> booksData,
++                                Map<String, String> authorResolution,
++                                boolean replaceExistingRelations) {
+         if (booksData.isEmpty()) return;
+ 
+         JdbcTemplate jt = getJdbcTemplate();
+@@ -128,7 +138,8 @@
+             bookUpsertNs = System.nanoTime() - phaseStarted;
+             phaseStarted = System.nanoTime();
+         }
+-        KeywordIndexSupport.replaceForBooks(jt, keywordProjection);
++        if (replaceExistingRelations) KeywordIndexSupport.replaceForBooks(jt, keywordProjection);
++        else KeywordIndexSupport.insertForBooksFresh(jt, keywordProjection);
+         if (IMPORT_PHASE_METRICS) {
+             keywordNs = System.nanoTime() - phaseStarted;
+             phaseStarted = System.nanoTime();
+@@ -136,8 +147,10 @@
+ 
+         // SQLite builds commonly expose a much smaller bind-variable limit than our 10k import batch.
+         // Delete relationship rows in bounded chunks instead of producing one huge IN (?, ...).
+-        deleteLinksByBookIds(jt, "book_authors", bookIds);
+-        deleteLinksByBookIds(jt, "book_genres", bookIds);
++        if (replaceExistingRelations) {
++            deleteLinksByBookIds(jt, "book_authors", bookIds);
++            deleteLinksByBookIds(jt, "book_genres", bookIds);
++        }
+         if (IMPORT_PHASE_METRICS) {
+             relationDeleteNs = System.nanoTime() - phaseStarted;
+             phaseStarted = System.nanoTime();
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteBookQueryRepository.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteBookQueryRepository.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteBookQueryRepository.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteBookQueryRepository.java	2026-09-24 14:45:44.302221209 +0000
+@@ -35,7 +35,7 @@
+ public class SqliteBookQueryRepository implements BookQueryRepository {
+ 
+     private static final int STREAM_PAGE_SIZE = 400;
+-    private static final int SEARCH_STREAM_PAGE_SIZE = 5_000;
++    private static final int SEARCH_STREAM_PAGE_SIZE = 10_000;
+     private final CollectionManager collectionManager;
+     private final BookRowMapper bookRowMapper;
+     private final BookListRowMapper bookListRowMapper;
+@@ -221,7 +221,7 @@
+      * Dedicated Lucene projection. A 700k-row rebuild previously materialized full Book,
+      * BookMetadata and BookFile aggregates in 400-row pages and then discarded most fields.
+      * This path reads only searchable columns, skips tombstones in SQL and enriches relations
+-     * with two bounded range scans per 5k page.
++     * with bounded range scans per page.
+      */
+     @Override
+     public Stream<BookSnapshot> streamSearchSnapshots() {
+@@ -354,6 +354,8 @@
+         private List<BookSnapshot> currentPage = List.of();
+         private int currentIndex;
+         private boolean endReached;
++        private Boolean customFieldsPresent;
++        private Boolean annotationsPresent;
+ 
+         private SearchSnapshotIterator(int pageSize) {
+             this.pageSize = Math.max(100, Math.min(10_000, pageSize));
+@@ -412,8 +414,12 @@
+ 
+             Map<String, RelatedText> authors = loadSearchAuthors(first, last, pageIds);
+             Map<String, RelatedText> genres = loadSearchGenres(first, last, pageIds);
+-            Map<String, List<CustomFieldValue>> customFields = loadSearchCustomFields(first, last, pageIds);
+-            Map<String, AnnotationCounts> annotationCounts = loadSearchAnnotationCounts(first, last, pageIds);
++            if (customFieldsPresent == null) customFieldsPresent = hasAnyCustomFieldValues();
++            if (annotationsPresent == null) annotationsPresent = hasAnyAnnotations();
++            Map<String, List<CustomFieldValue>> customFields = customFieldsPresent
++                    ? loadSearchCustomFields(first, last, pageIds) : Map.of();
++            Map<String, AnnotationCounts> annotationCounts = annotationsPresent
++                    ? loadSearchAnnotationCounts(first, last, pageIds) : Map.of();
+             List<BookSnapshot> snapshots = new ArrayList<>(baseRows.size());
+             for (SearchBaseRow row : baseRows) {
+                 RelatedText author = authors.get(row.id());
+@@ -456,6 +462,18 @@
+     }
+ 
+ 
++    private boolean hasAnyCustomFieldValues() {
++        Integer present = getJdbcTemplate().queryForObject(
++                "SELECT EXISTS(SELECT 1 FROM custom_field_values LIMIT 1)", Integer.class);
++        return present != null && present != 0;
++    }
++
++    private boolean hasAnyAnnotations() {
++        Integer present = getJdbcTemplate().queryForObject(
++                "SELECT EXISTS(SELECT 1 FROM annotations LIMIT 1)", Integer.class);
++        return present != null && present != 0;
++    }
++
+     private Map<String, AnnotationCounts> loadSearchAnnotationCounts(String firstId, String lastId, Set<String> pageIds) {
+         Map<String, AnnotationCounts> result = new HashMap<>();
+         String sql = """
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/KeywordIndexSupport.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/KeywordIndexSupport.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/KeywordIndexSupport.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/KeywordIndexSupport.java	2026-09-24 14:45:44.298305917 +0000
+@@ -84,6 +84,15 @@
+      * expected to participate in the caller's current transaction where one exists.
+      */
+     public static void replaceForBooks(JdbcTemplate jdbc, Map<String, String> keywordsByBookId) {
++        writeForBooks(jdbc, keywordsByBookId, true);
++    }
++
++    /** Inserts keyword links for books proven to be new in an empty catalog baseline. */
++    public static void insertForBooksFresh(JdbcTemplate jdbc, Map<String, String> keywordsByBookId) {
++        writeForBooks(jdbc, keywordsByBookId, false);
++    }
++
++    private static void writeForBooks(JdbcTemplate jdbc, Map<String, String> keywordsByBookId, boolean replaceExistingLinks) {
+         if (jdbc == null || keywordsByBookId == null || keywordsByBookId.isEmpty()) return;
+ 
+         List<String> bookIds = keywordsByBookId.keySet().stream()
+@@ -91,7 +100,7 @@
+                 .toList();
+         if (bookIds.isEmpty()) return;
+ 
+-        deleteLinks(jdbc, bookIds);
++        if (replaceExistingLinks) deleteLinks(jdbc, bookIds);
+ 
+         LinkedHashMap<String, String> keywordLabels = new LinkedHashMap<>();
+         List<Object[]> links = new ArrayList<>();
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneSearchService.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneSearchService.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneSearchService.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneSearchService.java	2026-09-24 14:45:44.300182123 +0000
+@@ -265,7 +265,9 @@
+                     documentBuildNanos += System.nanoTime() - buildStarted;
+ 
+                     long writeStarted = System.nanoTime();
+-                    indexWriter.updateDocument(new Term("id", snapshot.getId().asString()), document);
++                    // The writer was deleteAll()'d at the start of this atomic rebuild and book IDs
++                    // are unique. addDocument avoids a redundant per-book delete-by-Term lookup.
++                    indexWriter.addDocument(document);
+                     luceneWriteNanos += System.nanoTime() - writeStarted;
+                     indexed++;
+ 
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/catalog/SqliteCatalogSourceStateAdapterTest.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/catalog/SqliteCatalogSourceStateAdapterTest.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/catalog/SqliteCatalogSourceStateAdapterTest.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/catalog/SqliteCatalogSourceStateAdapterTest.java	2026-09-24 14:54:56.168827901 +0000
+@@ -44,6 +44,22 @@
+     }
+ 
+     @Test
++    void preflightPlaceholderRemainsTheFirstRealSyncBaseline() {
++        String sourceKey = "remote-collection:c1";
++        String realFingerprint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
++
++        stateAdapter.recordChecked(sourceKey, "https://example.test/full.inpx", "INPX", "2026-09-24");
++        var session = trackingAdapter.beginSync(sourceKey, "https://example.test/full.inpx", realFingerprint);
++
++        assertThat(session.initialBaseline()).isTrue();
++        assertThat(session.sourceChanged()).isTrue();
++        assertThat(session.sourceRevision()).isEqualTo(1L);
++        assertThat(stateAdapter.matchesAppliedFingerprint(sourceKey, realFingerprint)).isTrue();
++        assertThat(stateAdapter.matchesAppliedFingerprint(
++                sourceKey, com.myhomelibcorp.application.catalog.CatalogSourceIdentity.UNAPPLIED_FINGERPRINT)).isFalse();
++    }
++
++    @Test
+     void appliedFingerprintIsIndependentFromLastDownloadedSha() {
+         String sourceKey = "remote-collection:c1";
+         String applied = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/importengine/InpxImportPipelineTest.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/importengine/InpxImportPipelineTest.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/importengine/InpxImportPipelineTest.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/importengine/InpxImportPipelineTest.java	2026-09-24 14:54:56.168501592 +0000
+@@ -420,7 +420,7 @@
+     }
+ 
+     @Test
+-    void authorPreloadGateOnlyAllowsLargeOnlineFullSnapshots() throws Exception {
++    void authorPreloadGateAllowsLargeFullSnapshotsAndSizeableOnlineDeltas() throws Exception {
+         Method gate = InpxImportPipeline.class.getDeclaredMethod(
+                 "shouldPreloadAuthorCache", boolean.class, boolean.class, long.class);
+         gate.setAccessible(true);
+@@ -428,9 +428,11 @@
+         assertThat(gate.invoke(null, true, true, 562_307L)).isEqualTo(true);
+         assertThat(gate.invoke(null, true, true, 100_000L)).isEqualTo(true);
+         assertThat(gate.invoke(null, true, true, 99_999L)).isEqualTo(false);
+-        assertThat(gate.invoke(null, true, false, 562_307L)).isEqualTo(false);
++        assertThat(gate.invoke(null, true, false, 23_841L)).isEqualTo(true);
++        assertThat(gate.invoke(null, true, false, 10_000L)).isEqualTo(true);
++        assertThat(gate.invoke(null, true, false, 9_999L)).isEqualTo(false);
+         assertThat(gate.invoke(null, false, true, 562_307L)).isEqualTo(false);
+-        assertThat(gate.invoke(null, false, false, 562_307L)).isEqualTo(false);
++        assertThat(gate.invoke(null, false, false, 23_841L)).isEqualTo(false);
+     }
+ 
+ }
+\ No newline at end of file
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationThemeService.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationThemeService.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationThemeService.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationThemeService.java	2026-09-24 14:55:32.491672363 +0000
+@@ -190,6 +190,9 @@
+                     -fx-text-base-color: %s;
+                     -fx-accent: %s;
+                     -fx-focus-color: %s;
++                    -fx-selection-bar: %s;
++                    -fx-selection-bar-non-focused: %s;
++                    -fx-selection-bar-text: %s;
+                     -fx-font-size: %.1fpx;
+                 }
+                 """,
+@@ -198,7 +201,7 @@
+                 success(config), warning(config), danger(config), onAccent(config), warningBg(config), warningText(config),
+                 codeBackground(config), codeText(config),
+                 config.panel(), config.background(), config.panel(), config.text(), config.text(), config.accent(), config.accent(),
+-                config.fontSize());
++                config.accent(), config.accent(), onAccent(config), config.fontSize());
+         try (var out = SafeFilePublication.openFreshOutputStream(file, "Generated theme stylesheet")) {
+             out.write(css.getBytes(StandardCharsets.UTF_8));
+         }
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/BookDownloadCoordinator.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/BookDownloadCoordinator.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/BookDownloadCoordinator.java	2026-09-23 18:40:51.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/BookDownloadCoordinator.java	2026-09-24 14:35:48.441413511 +0000
+@@ -47,6 +47,7 @@
+     private final ApplicationEventPublisher eventPublisher;
+     private final OperationCenterService operationCenter;
+     private final Semaphore downloadSlots;
++    private final int maxParallelDownloads;
+     private final Map<String, AtomicBoolean> active = new ConcurrentHashMap<>();
+ 
+     public BookDownloadCoordinator(DownloadBookUseCase downloadBookUseCase, RemoveLocalBookCopyUseCase removeLocalBookCopyUseCase,
+@@ -63,6 +64,7 @@
+         this.eventPublisher = eventPublisher;
+         this.operationCenter = operationCenter;
+         int permits = Math.max(1, Math.min(16, settings.getInt("online.maxParallelDownloads", 2)));
++        this.maxParallelDownloads = permits;
+         this.downloadSlots = new Semaphore(permits, true);
+     }
+ 
+@@ -76,7 +78,7 @@
+         if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
+             return CompletableFuture.failedFuture(new IllegalStateException("Активну колекцію не вибрано"));
+         }
+-        return loadAuthoritative(book, expectedCollectionId).thenCompose(authoritative ->
++        return loadAuthoritative(book, expectedCollectionId, LibraryOperationType.DOWNLOAD).thenCompose(authoritative ->
+                 download(authoritative, false, true, true, expectedCollectionId).whenComplete((path, error) -> {
+                     if (error == null) copyStorageState(authoritative, book);
+                 }));
+@@ -86,7 +88,7 @@
+     public CompletableFuture<Path> ensureLocal(BookId bookId) {
+         if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
+         String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
+-        return executor.submitCollectionScoped(LibraryOperationType.QUERY,
++        return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD,
+                         () -> {
+                             requireCurrentCollection(expectedCollectionId, "завантаження книги");
+                             return loadBookByIdUseCase.execute(bookId)
+@@ -110,7 +112,11 @@
+     private CompletableFuture<EnsureLocalOutcome> ensureLocalWithStatus(
+             BookId bookId, boolean showErrors, String expectedCollectionId) {
+         if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
+-        return executor.submitCollectionScoped(LibraryOperationType.QUERY,
++        // The complete "ensure local" workflow is download-scoped. Using QUERY here and
++        // DOWNLOAD in the continuation creates a QUERY -> DOWNLOAD lifecycle transition. Under
++        // a large batch, many pre-acquired QUERY leases coexist and almost every continuation is
++        // rejected while sibling QUERY leases are still queued.
++        return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD,
+                         () -> {
+                             requireCurrentCollection(expectedCollectionId, "завантаження книги");
+                             BookDto authoritative = loadBookByIdUseCase.execute(bookId)
+@@ -166,22 +172,38 @@
+         java.util.concurrent.atomic.AtomicInteger failed = new java.util.concurrent.atomic.AtomicInteger();
+         java.util.List<String> errors = new java.util.concurrent.CopyOnWriteArrayList<>();
+ 
+-        CompletableFuture<?>[] tasks = ids.stream().map(id -> ensureLocalWithStatus(id, false, expectedCollectionId).handle((outcome, error) -> {
+-            if (error != null) {
+-                failed.incrementAndGet();
+-                errors.add(id + ": " + compactError(unwrap(error)));
+-            } else if (outcome.alreadyLocal()) {
+-                alreadyLocal.incrementAndGet();
+-            } else {
+-                downloaded.incrementAndGet();
++        // Do not enqueue the whole selection at once. UiBackgroundExecutor intentionally has a
++        // bounded queue, and collection-scoped tasks acquire their lifecycle lease before enqueue.
++        // Fan-out of hundreds of books can therefore overflow the queue and, before the download
++        // scope fix above, created QUERY -> DOWNLOAD conflicts. Keep only the configured number of
++        // download workflows in flight; each lane schedules its next book only after the previous one
++        // has reached a terminal state.
++        int lanesCount = Math.max(1, Math.min(maxParallelDownloads, ids.size()));
++        CompletableFuture<?>[] lanes = new CompletableFuture<?>[lanesCount];
++        for (int laneIndex = 0; laneIndex < lanesCount; laneIndex++) {
++            CompletableFuture<Void> lane = CompletableFuture.completedFuture(null);
++            for (int index = laneIndex; index < ids.size(); index += lanesCount) {
++                BookId id = ids.get(index);
++                lane = lane.thenCompose(ignored -> ensureLocalWithStatus(id, false, expectedCollectionId)
++                        .handle((outcome, error) -> {
++                            if (error != null) {
++                                failed.incrementAndGet();
++                                errors.add(id + ": " + compactError(unwrap(error)));
++                            } else if (outcome.alreadyLocal()) {
++                                alreadyLocal.incrementAndGet();
++                            } else {
++                                downloaded.incrementAndGet();
++                            }
++                            int done = completed.incrementAndGet();
++                            Platform.runLater(() -> progressDialog.update(done, ids.size(), downloaded.get(), alreadyLocal.get(), failed.get(),
++                                    UiText.text("ui.java.book_download_coordinator.ae22229ad2")));
++                            return null;
++                        }));
+             }
+-            int done = completed.incrementAndGet();
+-            Platform.runLater(() -> progressDialog.update(done, ids.size(), downloaded.get(), alreadyLocal.get(), failed.get(),
+-                    UiText.text("ui.java.book_download_coordinator.ae22229ad2")));
+-            return null;
+-        })).toArray(CompletableFuture[]::new);
++            lanes[laneIndex] = lane;
++        }
+ 
+-        return CompletableFuture.allOf(tasks).thenApply(ignored -> {
++        return CompletableFuture.allOf(lanes).thenApply(ignored -> {
+             BatchDownloadResult result = new BatchDownloadResult(ids.size(), downloaded.get(), alreadyLocal.get(), failed.get(), List.copyOf(errors));
+             Platform.runLater(() -> {
+                 progressDialog.complete(ids.size(), result.downloaded(), result.alreadyLocal(), result.failed());
+@@ -246,7 +268,7 @@
+     public CompletableFuture<Path> ensureLocalForOpen(BookDto book) {
+         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
+         String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
+-        return loadAuthoritative(book, expectedCollectionId).thenCompose(authoritative ->
++        return loadAuthoritative(book, expectedCollectionId, LibraryOperationType.DOWNLOAD).thenCompose(authoritative ->
+                 ensureLocalForOpenAuthoritative(authoritative, expectedCollectionId).whenComplete((path, error) -> {
+                     if (error == null) copyStorageState(authoritative, book);
+                 }));
+@@ -255,7 +277,7 @@
+     public CompletableFuture<Path> ensureLocalForOpen(BookId bookId) {
+         if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
+         String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
+-        return executor.submitCollectionScoped(LibraryOperationType.QUERY,
++        return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD,
+                         () -> {
+                             requireCurrentCollection(expectedCollectionId, "відкриття книги");
+                             BookDto authoritative = loadBookByIdUseCase.execute(bookId)
+@@ -306,13 +328,18 @@
+         if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
+             return CompletableFuture.failedFuture(new IllegalStateException("Активну колекцію не вибрано"));
+         }
+-        return loadAuthoritative(book, expectedCollectionId).thenCompose(authoritative ->
++        return loadAuthoritative(book, expectedCollectionId, LibraryOperationType.DOWNLOAD).thenCompose(authoritative ->
+                 download(authoritative, true, true, true, expectedCollectionId).whenComplete((path, error) -> {
+                     if (error == null) copyStorageState(authoritative, book);
+                 }));
+     }
+ 
+     private CompletableFuture<BookDto> loadAuthoritative(BookDto fallback, String expectedCollectionId) {
++        return loadAuthoritative(fallback, expectedCollectionId, LibraryOperationType.QUERY);
++    }
++
++    private CompletableFuture<BookDto> loadAuthoritative(
++            BookDto fallback, String expectedCollectionId, LibraryOperationType operationType) {
+         if (fallback == null) {
+             return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
+         }
+@@ -325,7 +352,8 @@
+         } catch (RuntimeException invalidId) {
+             return CompletableFuture.failedFuture(new IllegalArgumentException("Book has an invalid stable id", invalidId));
+         }
+-        return executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
++        LibraryOperationType scope = operationType == null ? LibraryOperationType.QUERY : operationType;
++        return executor.submitCollectionScoped(scope, () -> {
+             requireCurrentCollection(expectedCollectionId, "завантаження даних книги");
+             return loadBookByIdUseCase.execute(id)
+                     .orElseThrow(() -> new IllegalStateException(
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/UiBackgroundExecutor.java /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/UiBackgroundExecutor.java
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/UiBackgroundExecutor.java	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/UiBackgroundExecutor.java	2026-09-24 14:35:48.441309616 +0000
+@@ -65,7 +65,16 @@
+         if (operationType == null) throw new IllegalArgumentException("operationType is required");
+         if (task == null) throw new IllegalArgumentException("task is required");
+ 
+-        LibraryOperationCoordinator.Lease lease = operationCoordinator.acquireDetachedShared(operationType);
++        final LibraryOperationCoordinator.Lease lease;
++        try {
++            lease = operationCoordinator.acquireDetachedShared(operationType);
++        } catch (RuntimeException acquisitionFailure) {
++            // submit* is an asynchronous API. Returning an exceptional future keeps caller cleanup
++            // chains (whenComplete/handle) attached even when the lifecycle barrier is busy. A
++            // synchronous throw here can otherwise leak UI operation rows created immediately before
++            // submission and leave them permanently in the "running" state.
++            return CompletableFuture.failedFuture(acquisitionFailure);
++        }
+         CompletableFuture<T> result = new CompletableFuture<>();
+         try {
+             executor.execute(() -> {
+diff -ruN --exclude target --exclude dist --exclude .mvn/repository /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/resources/css/app-theme-base.css /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/resources/css/app-theme-base.css
+--- /mnt/data/clean_checkpoint_compare/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/resources/css/app-theme-base.css	2026-09-23 12:13:47.000000000 +0000
++++ /mnt/data/mhl_src_current/MyHomeLib-8.0.0-R4-FB2-CALIBRE-RUNTIME-FIX-CHECKPOINT-2026-09-24/myhomelib-ui/src/main/resources/css/app-theme-base.css	2026-09-24 14:55:32.490599586 +0000
+@@ -28,6 +28,9 @@
+     -fx-text-base-color: #202124;
+     -fx-accent: #1a73e8;
+     -fx-focus-color: #1a73e8;
++    -fx-selection-bar: #1a73e8;
++    -fx-selection-bar-non-focused: #1a73e8;
++    -fx-selection-bar-text: #ffffff;
+     -fx-faint-focus-color: transparent;
+ }
+ 
+@@ -82,12 +85,15 @@
+ .list-cell:filled:selected:focused,
+ .tree-cell:selected,
+ .tree-cell:selected:focused {
+-    -fx-background-color: -mhl-accent;
+-    -fx-text-fill: -mhl-on-accent;
++    /* ComboBox popups live in a separate popup scene, where custom -mhl-* lookups are
++       not guaranteed to inherit from the application .root. Use Modena's typed selection
++       lookups here so popup list cells never resolve a custom colour token as raw String. */
++    -fx-background-color: -fx-selection-bar;
++    -fx-text-fill: -fx-selection-bar-text;
+ }
+ .list-cell:filled:selected .label,
+ .tree-cell:selected .label {
+-    -fx-text-fill: -mhl-on-accent;
++    -fx-text-fill: -fx-selection-bar-text;
+ }
+ .operation-center-row {
+     -fx-border-color: transparent transparent -mhl-border transparent;

@@ -20,6 +20,7 @@ import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
@@ -46,6 +47,7 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
     private final NavigationPanelController navigationPanelController;
     private final UiBackgroundExecutor executor;
     private final LocalizationService localizationService;
+    private final ApplicationState applicationState;
 
     @FXML private TreeView<UpdateTreeNode> updatesTree;
     @FXML private Label summaryLabel;
@@ -113,9 +115,11 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
         TreeItem<UpdateTreeNode> selected = updatesTree.getSelectionModel().getSelectedItem();
         if (selected == null || selected.getValue() == null) return;
         UpdateTreeNode node = selected.getValue();
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
         setBusy(true);
         detailLabel.setText(localizationService.text("ui.text.marking_update_as_viewed"));
         executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
+            requireCurrentCollection(expectedCollectionId);
             if (node.kind == Kind.BOOK && node.item != null) {
                 catalogUpdateService.acknowledgeUpdate(BookId.fromString(node.item.bookId()), node.item.type());
             } else if (node.kind == Kind.CATEGORY) {
@@ -131,7 +135,7 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
             }
             return null;
         }).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
-            if (disposed) return;
+            if (disposed || !sameCollection(expectedCollectionId)) return;
             setBusy(false);
             if (error != null) {
                 Throwable cause = UiExceptionSupport.unwrapAsync(error);
@@ -145,14 +149,16 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
 
     @FXML
     public void acknowledgeAll() {
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
         setBusy(true);
         detailLabel.setText(localizationService.text("ui.text.marking_all_updates_as_viewed"));
         executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
+                    requireCurrentCollection(expectedCollectionId);
                     catalogUpdateService.acknowledgeAllUpdates();
                     return null;
                 })
                 .whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
-                    if (disposed) return;
+                    if (disposed || !sameCollection(expectedCollectionId)) return;
                     setBusy(false);
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
@@ -169,15 +175,18 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
         UpdateTreeNode node = selectedNode();
         if (node == null || node.kind != Kind.BOOK || node.item == null) return;
         CatalogUpdateItem item = node.item;
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
         setBusy(true);
         detailLabel.setText(localizationService.text("ui.text.preparing_download") + " " + item.bookTitle());
 
-        executor.submitCollectionScoped(LibraryOperationType.QUERY,
-                        () -> loadBookByIdUseCase.execute(BookId.fromString(item.bookId()))
-                        .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.updates_workspace_controller.7e6db1b645") + item.bookId())))
-                .thenCompose(book -> download(item, book))
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
+                    requireCurrentCollection(expectedCollectionId);
+                    return loadBookByIdUseCase.execute(BookId.fromString(item.bookId()))
+                            .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.updates_workspace_controller.7e6db1b645") + item.bookId()));
+                })
+                .thenCompose(book -> download(item, book, expectedCollectionId))
                 .whenComplete((path, error) -> UiExecutor.runOnUiThread(() -> {
-                    if (disposed) return;
+                    if (disposed || !sameCollection(expectedCollectionId)) return;
                     setBusy(false);
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
@@ -191,21 +200,30 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
                 }));
     }
 
-    private CompletableFuture<java.nio.file.Path> download(CatalogUpdateItem item, BookDto book) {
+    private CompletableFuture<java.nio.file.Path> download(
+            CatalogUpdateItem item, BookDto book, String expectedCollectionId) {
+        if (!sameCollection(expectedCollectionId)) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Активна колекція змінилася до початку завантаження оновлення"));
+        }
         return item.type() == CatalogUpdateType.UPDATED_DOWNLOADED_BOOK
-                ? bookDownloadCoordinator.downloadUpdate(book)
-                : bookDownloadCoordinator.ensureLocal(book);
+                ? bookDownloadCoordinator.downloadUpdate(book, expectedCollectionId)
+                : bookDownloadCoordinator.ensureLocal(book, expectedCollectionId);
     }
 
     private void loadUpdates() {
         long generation = ++loadGeneration;
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
         setBusy(true);
         emptyLabel.setVisible(false);
         emptyLabel.setManaged(false);
         detailLabel.setText(localizationService.text("ui.text.loading_updates"));
-        executor.submitCollectionScoped(LibraryOperationType.QUERY, catalogUpdateService::pendingUpdateSnapshot)
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
+                    requireCurrentCollection(expectedCollectionId);
+                    return catalogUpdateService.pendingUpdateSnapshot();
+                })
                 .whenComplete((snapshot, error) -> UiExecutor.runOnUiThread(() -> {
-                    if (disposed || generation != loadGeneration) return;
+                    if (disposed || generation != loadGeneration || !sameCollection(expectedCollectionId)) return;
                     setBusy(false);
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
@@ -313,6 +331,17 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
         return selected == null ? null : selected.getValue();
     }
 
+
+    private boolean sameCollection(String expectedCollectionId) {
+        return expectedCollectionId != null && !expectedCollectionId.isBlank()
+                && expectedCollectionId.equals(applicationState.getCurrentLibraryCollectionId());
+    }
+
+    private void requireCurrentCollection(String expectedCollectionId) {
+        if (!sameCollection(expectedCollectionId)) {
+            throw new IllegalStateException("Активна колекція змінилася під час операції оновлень");
+        }
+    }
 
     @Override
     public void dispose() {

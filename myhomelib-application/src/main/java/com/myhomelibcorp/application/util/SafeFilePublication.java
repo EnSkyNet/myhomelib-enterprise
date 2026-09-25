@@ -54,6 +54,93 @@ public final class SafeFilePublication {
         return requireSafeDirectoryPath(workspace, role);
     }
 
+
+    /**
+     * Resolves an existing directory explicitly selected by the user. Unlike catalog-controlled
+     * paths, an explicit destination is allowed to traverse a symlink/junction/reparse point:
+     * the user chose that location and the canonical real directory becomes the persisted root.
+     */
+    public static Path requireUserSelectedDirectory(Path directory, String role) throws IOException {
+        Objects.requireNonNull(directory, "directory");
+        Path selected = directory.toAbsolutePath().normalize();
+        if (!Files.exists(selected)) {
+            throw new IOException(role + " does not exist: " + selected);
+        }
+        if (!Files.isDirectory(selected)) {
+            throw new IOException(role + " is not a directory: " + selected);
+        }
+        Path real = selected.toRealPath();
+        if (!Files.isDirectory(real)) {
+            throw new IOException(role + " does not resolve to a directory: " + selected);
+        }
+        return real;
+    }
+
+    /**
+     * Publishes an application-owned staged file into an explicitly user-selected directory.
+     * Parent symlinks/reparse points are permitted by contract; the leaf itself is always created
+     * fresh with NOFOLLOW_LINKS and is fingerprint-verified after publication.
+     */
+    public static FileSnapshot publishFreshToUserSelectedPath(Path source, Path target, String role) throws IOException {
+        Path safeSource = requireSafeRegularFile(source, role + " source");
+        FileSnapshot sourceBefore = snapshot(safeSource, role + " source preflight");
+
+        Path absolute = Objects.requireNonNull(target, "target").toAbsolutePath().normalize();
+        Path parent = absolute.getParent();
+        if (parent == null || !Files.isDirectory(parent)) {
+            throw new IOException(role + " parent is not an existing directory: " + parent);
+        }
+        if (Files.exists(absolute, LinkOption.NOFOLLOW_LINKS)) {
+            throw new FileAlreadyExistsException(absolute.toString());
+        }
+
+        try (InputStream in = Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS);
+             OutputStream out = Files.newOutputStream(absolute, StandardOpenOption.CREATE_NEW,
+                     StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+            byte[] buffer = new byte[1024 * 1024];
+            for (int read; (read = in.read(buffer)) >= 0; ) {
+                if (read > 0) out.write(buffer, 0, read);
+            }
+            out.flush();
+        } catch (FileAlreadyExistsException race) {
+            throw new IOException(role + " target appeared while publishing: " + absolute, race);
+        }
+
+        FileSnapshot sourceAfter = snapshot(safeSource, role + " source verification");
+        if (!sourceBefore.equals(sourceAfter)) {
+            throw new IOException(role + " staged source changed during publication");
+        }
+        FileSnapshot published = snapshotUserSelectedFile(absolute, role + " published file");
+        if (!sourceBefore.equals(published)) {
+            throw new IOException(role + " published bytes differ from staged source");
+        }
+        return published;
+    }
+
+    /** Snapshot of a fresh leaf under an explicitly user-selected directory; parent links are allowed. */
+    public static FileSnapshot snapshotUserSelectedFile(Path file, String role) throws IOException {
+        Path absolute = Objects.requireNonNull(file, "file").toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(absolute)) {
+            throw new IOException(role + " is a symbolic link: " + absolute);
+        }
+        BasicFileAttributes attrs = Files.readAttributes(absolute, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attrs.isRegularFile() || attrs.isOther()) {
+            throw new IOException(role + " is not a regular file: " + absolute);
+        }
+        try (FileChannel channel = FileChannel.open(absolute, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+            return new FileSnapshot(sha256(channel, role), channel.size());
+        }
+    }
+
+    /** Best-effort rollback for a file created under an explicitly user-selected directory. */
+    public static boolean removeUserSelectedFileIfOwned(Path file, String expectedHash, String role) throws IOException {
+        if (file == null || expectedHash == null || expectedHash.isBlank()
+                || !Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return false;
+        FileSnapshot current = snapshotUserSelectedFile(file, role + " ownership check");
+        if (!expectedHash.equalsIgnoreCase(current.sha256())) return false;
+        return Files.deleteIfExists(file);
+    }
+
     public static Path prepareTarget(Path target, String role) throws IOException {
         Objects.requireNonNull(target, "target");
         Path absolute = target.toAbsolutePath().normalize();
@@ -271,7 +358,25 @@ public final class SafeFilePublication {
      */
     public static void publishReplacingIfUnchanged(
             Path staging, Path target, String expectedTargetHash, String role) throws IOException {
-        String stagedHash = sha256(staging, role + " staged");
+        FileSnapshot staged = snapshot(staging, role + " staged preflight");
+        publishReplacingIfUnchanged(staging, target, expectedTargetHash, staged.sha256(), role);
+    }
+
+    /**
+     * Publishes only the exact staging bytes previously validated by the caller. The expected
+     * staging hash is checked before destination mutation and again after the move, closing the
+     * validate/check -> replace staging pathname race.
+     */
+    public static void publishReplacingIfUnchanged(
+            Path staging, Path target, String expectedTargetHash, String expectedStagingHash, String role) throws IOException {
+        if (expectedStagingHash == null || expectedStagingHash.isBlank()) {
+            throw new IllegalArgumentException("expectedStagingHash is required");
+        }
+        FileSnapshot stagedSnapshot = snapshot(staging, role + " staged preflight");
+        if (!expectedStagingHash.equalsIgnoreCase(stagedSnapshot.sha256())) {
+            throw new IOException(role + " staged input changed before publication: " + staging);
+        }
+
         Path detached = null;
         boolean published = false;
         IOException failure = null;
@@ -284,10 +389,29 @@ public final class SafeFilePublication {
                     throw new FileAlreadyExistsException(safeTarget.toString());
                 }
             }
+
             moveNoReplace(staging, target, role + " publication");
             String publishedHash = sha256(target, role + " published target");
-            if (!stagedHash.equalsIgnoreCase(publishedHash)) {
-                throw new IOException(role + " published bytes differ from staged bytes: " + target);
+            if (!expectedStagingHash.equalsIgnoreCase(publishedHash)) {
+                IOException mismatch = new IOException(role
+                        + " published bytes differ from the validated staged bytes: " + target);
+                try {
+                    // The moved pathname is not the validated object. Preserve those unexpected
+                    // bytes as evidence before restoring the prior destination when possible.
+                    detachIfOwned(target, publishedHash, role + " unexpected publication");
+                } catch (IOException quarantineFailure) {
+                    mismatch.addSuppressed(quarantineFailure);
+                }
+                if (detached != null && !Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                    try {
+                        moveNoReplace(detached, target, role + " rollback");
+                        requireOwnedPath(target, expectedTargetHash, role + " rollback verification");
+                        detached = null;
+                    } catch (IOException restoreFailure) {
+                        mismatch.addSuppressed(restoreFailure);
+                    }
+                }
+                throw mismatch;
             }
             published = true;
         } catch (IOException e) {
@@ -298,6 +422,9 @@ public final class SafeFilePublication {
                     && !Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
                 try {
                     moveNoReplace(detached, target, role + " rollback");
+                    if (expectedTargetHash != null) {
+                        requireOwnedPath(target, expectedTargetHash, role + " rollback verification");
+                    }
                     detached = null;
                 } catch (IOException restoreFailure) {
                     if (failure != null) failure.addSuppressed(restoreFailure);
@@ -375,6 +502,31 @@ public final class SafeFilePublication {
         Path detached = detachIfOwned(target, expectedHash, role);
         Files.delete(detached);
         return !Files.exists(target, LinkOption.NOFOLLOW_LINKS);
+    }
+
+    /**
+     * Deletes an application-managed disposable file without ever accepting a link, directory or
+     * special/reparse entry in its place. This is intended for files such as SQLite sidecars and
+     * generation markers whose bytes do not need an ownership hash, but whose pathname must still
+     * obey the same fail-closed boundary as the primary artifact.
+     */
+    public static boolean deleteSafeRegularFileIfExists(Path target, String role) throws IOException {
+        Objects.requireNonNull(target, "target");
+        Path absolute = target.toAbsolutePath().normalize();
+        Path parent = absolute.getParent();
+        if (parent == null) throw new IOException(role + " has no parent directory: " + absolute);
+        requireSafeDirectoryPath(parent, role + " parent");
+        if (!Files.exists(absolute, LinkOption.NOFOLLOW_LINKS)) return true;
+        if (Files.isSymbolicLink(absolute)) {
+            throw new IOException(role + " is a symbolic link: " + absolute);
+        }
+        BasicFileAttributes attrs = Files.readAttributes(
+                absolute, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attrs.isRegularFile() || attrs.isOther()) {
+            throw new IOException(role + " is not a safe regular file: " + absolute);
+        }
+        Files.delete(absolute);
+        return !Files.exists(absolute, LinkOption.NOFOLLOW_LINKS);
     }
 
     public static void cleanupPrivateWorkspace(Path workspace) throws IOException {

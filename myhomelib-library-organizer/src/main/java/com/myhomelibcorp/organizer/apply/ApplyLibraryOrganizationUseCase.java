@@ -2,6 +2,7 @@ package com.myhomelibcorp.organizer.apply;
 
 import com.myhomelibcorp.application.conversion.BookConversionCapability;
 import com.myhomelibcorp.application.conversion.BookConversionContext;
+import com.myhomelibcorp.application.conversion.CancellableBoundedInputStream;
 import com.myhomelibcorp.application.conversion.ConverterSelectionPolicy;
 import com.myhomelibcorp.application.conversion.ConversionFailureSignal;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
@@ -340,7 +341,11 @@ public final class ApplyLibraryOrganizationUseCase {
             if (Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
                 throw new FileAlreadyExistsException("Organizer conversion staging path is already occupied: " + candidate);
             }
-            try (InputStream in = Files.newInputStream(OrganizerPathSafety.canonicalExistingFile(sourceForConversion, "Organizer conversion source"), LinkOption.NOFOLLOW_LINKS)) {
+            try (InputStream raw = Files.newInputStream(
+                         OrganizerPathSafety.canonicalExistingFile(sourceForConversion, "Organizer conversion source"),
+                         LinkOption.NOFOLLOW_LINKS);
+                 InputStream in = new CancellableBoundedInputStream(
+                         raw, ArchiveSafetyLimits.MAX_ENTRY_BYTES, cancelled)) {
                 converter.convert(new BookConversionContext(book, item.sourceFormat(), item.targetFormat(), in, candidate,
                         cancelled, MAX_OUTPUT_BYTES, false));
                 converted = candidate;

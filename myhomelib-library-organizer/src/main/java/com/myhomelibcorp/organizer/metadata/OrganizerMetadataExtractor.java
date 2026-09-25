@@ -32,7 +32,10 @@ public final class OrganizerMetadataExtractor {
             if (source == null) throw new IllegalArgumentException("Unsafe/non-regular metadata source");
             Path safeSource = OrganizerPathSafety.canonicalExistingFile(source, "Organizer metadata source");
             return switch (format.format()) {
-                case "fb2" -> parseFb2(Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS), format, warnings, safeSource);
+                case "fb2" -> {
+                    InputStream raw = Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS);
+                    yield parseFb2(new BoundedInputStream(raw, MAX_XML_ENTRY_BYTES), format, warnings, safeSource);
+                }
                 case "fb2_zip" -> parseFb2Zip(safeSource, format, warnings);
                 case "epub" -> parseEpub(safeSource, format, warnings);
                 case "docx" -> parseDocx(safeSource, format, warnings);
@@ -83,6 +86,9 @@ public final class OrganizerMetadataExtractor {
                     int e = r.next();
                     if (e == XMLStreamConstants.START_ELEMENT) {
                         String local = r.getLocalName();
+                        // All metadata used by Organizer lives in FB2 <description>. Do not scan the
+                        // potentially huge body payload after metadata has already been collected.
+                        if ("body".equals(local)) break;
                         if ("title-info".equals(local)) inTitleInfo = true;
                         else if (inTitleInfo && "author".equals(local)) { inAuthor = true; first = middle = last = ""; }
                         else if (inTitleInfo && "annotation".equals(local)) { inAnnotation = true; annotationText.setLength(0); annotationTruncated = false; }
@@ -287,6 +293,15 @@ public final class OrganizerMetadataExtractor {
             int read = super.read(buffer, offset, length);
             if (read > 0) account(read);
             return read;
+        }
+
+        @Override public long skip(long bytes) throws java.io.IOException {
+            if (bytes <= 0) return 0L;
+            long remaining = Math.max(0L, maxBytes - consumed);
+            long probe = remaining == Long.MAX_VALUE ? bytes : Math.min(bytes, remaining + 1L);
+            long skipped = super.skip(probe);
+            if (skipped > 0) account(skipped);
+            return skipped;
         }
 
         private void account(long bytes) throws java.io.IOException {

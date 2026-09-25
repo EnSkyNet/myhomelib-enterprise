@@ -199,7 +199,7 @@ public class CollectionLifecycleService {
         LibraryOperationCoordinator.Lease preAcquiredLease = null;
         if (acquireImmediately) {
             try {
-                preAcquiredLease = operationCoordinator.acquireDetached(LibraryOperationType.INDEX);
+                preAcquiredLease = operationCoordinator.acquireDetachedShared(LibraryOperationType.INDEX);
             } catch (RuntimeException leaseFailure) {
                 activeRebuild.compareAndSet(task, null);
                 future.completeExceptionally(leaseFailure);
@@ -226,12 +226,12 @@ public class CollectionLifecycleService {
 
     private void runAsyncRebuild(RebuildTask task, LibraryOperationCoordinator.Lease preAcquiredLease) {
         LibraryOperationCoordinator.Lease lease = preAcquiredLease;
-        RuntimeException failure = null;
+        Throwable failure = null;
         boolean cancelled = false;
         String completionDetail = "";
         try {
             if (lease == null) {
-                lease = operationCoordinator.acquireDetachedAwait(LibraryOperationType.INDEX);
+                lease = operationCoordinator.acquireDetachedSharedAwait(LibraryOperationType.INDEX);
             }
             if (!isRebuildStillValid(task)) {
                 cancelled = true;
@@ -254,6 +254,12 @@ public class CollectionLifecycleService {
                 log.error("❌ Помилка coordinated Lucene rebuild", rebuildFailure);
                 failure = rebuildFailure;
             }
+        } catch (Error fatalFailure) {
+            // Fatal VM/linkage/native failures must never be published as a successful rebuild.
+            // The Error is rethrown by the worker after finally, but the lifecycle lease and public
+            // completion barrier still have to observe the same failure first.
+            log.error("❌ Критична помилка coordinated Lucene rebuild", fatalFailure);
+            failure = fatalFailure;
         } finally {
             // The Future is the public completion barrier for lifecycle callers. Release the
             // detached INDEX lease first, otherwise join() may return while the coordinator still

@@ -183,6 +183,11 @@ public final class SafeZipArchive implements AutoCloseable {
         return channel.size();
     }
 
+    /** SHA-256 of the exact bytes backing this already-open ZIP handle. */
+    public String sha256(String role) throws IOException {
+        return SafeFilePublication.sha256(channel, role);
+    }
+
     public byte[] readPrefix(int maxBytes) throws IOException {
         if (maxBytes < 0) throw new IllegalArgumentException("maxBytes must be >= 0");
         int length = (int) Math.min(channel.size(), (long) maxBytes);

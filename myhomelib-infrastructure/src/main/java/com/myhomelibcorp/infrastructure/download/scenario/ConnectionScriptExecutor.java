@@ -41,7 +41,8 @@ public final class ConnectionScriptExecutor {
     private static final long DEFAULT_MAX_DOWNLOAD_BYTES = 2L * 1024 * 1024 * 1024;
     private static final long DEFAULT_MIN_FREE_SPACE_BYTES = 256L * 1024 * 1024;
     private static final long FREE_SPACE_RECHECK_BYTES = 16L * 1024 * 1024;
-    public record Result(Path payload, URI responseUri, boolean checked, String resolvedArchiveEntry) { }
+    public record Result(Path payload, URI responseUri, boolean checked, String resolvedArchiveEntry,
+                         String validatedSha256) { }
     private record FormField(String name, String value) { }
     private record ResponseState(Path payload, URI requestedUri, URI responseUri) {
         boolean redirected() { return requestedUri != null && responseUri != null && !requestedUri.equals(responseUri); }
@@ -94,6 +95,7 @@ public final class ConnectionScriptExecutor {
         ResponseState state = null;
         boolean checked = false;
         String resolvedArchiveEntry = "";
+        String validatedSha256 = "";
 
         try {
             for (DownloadScenarioCommand command : commands) {
@@ -118,6 +120,7 @@ public final class ConnectionScriptExecutor {
                         state = send(client, "GET", uri, fields, responseFile, collection, cancel, progress);
                         checked = false;
                         resolvedArchiveEntry = "";
+                        validatedSha256 = "";
                         log.info("  GET response: uri={}, payload={}", SensitiveDataSanitizer.sanitizeUri(state.responseUri()), state.payload());
                     }
                     case POST -> {
@@ -127,6 +130,7 @@ public final class ConnectionScriptExecutor {
                         state = send(client, "POST", uri, fields, responseFile, collection, cancel, progress);
                         checked = false;
                         resolvedArchiveEntry = "";
+                        validatedSha256 = "";
                         log.info("  POST response: uri={}, payload={}", SensitiveDataSanitizer.sanitizeUri(state.responseUri()), state.payload());
                     }
                     case REDIR -> {
@@ -141,7 +145,13 @@ public final class ConnectionScriptExecutor {
                         if (state == null || state.payload() == null) {
                             throw new DownloadScenarioException("ConnectionScript CHECK: відсутній response payload");
                         }
-                        resolvedArchiveEntry = validator.validate(state.payload(), target, book, archived);
+                        SafeFilePublication.FileSnapshot validationSnapshot = SafeFilePublication.snapshot(
+                                state.payload(), "ConnectionScript CHECK payload");
+                        resolvedArchiveEntry = validator.validateOwned(
+                                state.payload(), target, book, archived, validationSnapshot.sha256());
+                        SafeFilePublication.requireOwnedPath(state.payload(), validationSnapshot.sha256(),
+                                "ConnectionScript CHECK payload");
+                        validatedSha256 = validationSnapshot.sha256();
                         checked = true;
                         log.debug("  CHECK passed");
                     }
@@ -157,12 +167,21 @@ public final class ConnectionScriptExecutor {
 
             if (!checked) {
                 log.debug("No CHECK command, validating payload anyway");
-                resolvedArchiveEntry = validator.validate(state.payload(), target, book, archived);
+                SafeFilePublication.FileSnapshot validationSnapshot = SafeFilePublication.snapshot(
+                        state.payload(), "ConnectionScript implicit validation payload");
+                resolvedArchiveEntry = validator.validateOwned(
+                        state.payload(), target, book, archived, validationSnapshot.sha256());
+                SafeFilePublication.requireOwnedPath(state.payload(), validationSnapshot.sha256(),
+                        "ConnectionScript implicit validation payload");
+                validatedSha256 = validationSnapshot.sha256();
+            }
+            if (validatedSha256.isBlank()) {
+                throw new DownloadScenarioException("ConnectionScript payload validation did not produce an ownership hash");
             }
 
             log.info("ConnectionScript SUCCESS: payload={}, responseUri={}, resolvedArchiveEntry={}",
                     state.payload(), SensitiveDataSanitizer.sanitizeUri(state.responseUri()), resolvedArchiveEntry);
-            return new Result(state.payload(), state.responseUri(), checked, resolvedArchiveEntry);
+            return new Result(state.payload(), state.responseUri(), checked, resolvedArchiveEntry, validatedSha256);
 
         } catch (Exception e) {
             log.error("ConnectionScript FAILED: {}", e.getMessage(), e);

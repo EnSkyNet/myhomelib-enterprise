@@ -344,14 +344,20 @@ public class BookDetailsController {
         backgroundExecutor.submitCollectionScoped(LibraryOperationType.EDIT,
                         () -> selectPreferredBookArtifactUseCase.execute(BookId.fromString(book.getId()), artifact.getId()))
                 .thenAccept(refreshed -> UiExecutor.runOnUiThread(() -> {
-                    if (java.util.Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId())) {
+                    BookDto stillSelected = currentBook();
+                    if (java.util.Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId())
+                            && stillSelected != null
+                            && java.util.Objects.equals(book.getId(), stillSelected.getId())) {
                         appState.getBookDetails().setCurrentBook(refreshed);
                     }
                 }))
                 .exceptionally(ex -> {
                     log.warn("Не вдалося змінити preferred artifact {}: {}", artifact.getId(), ex.getMessage());
                     UiExecutor.runOnUiThread(() -> {
-                        if (java.util.Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId())) {
+                        BookDto stillSelected = currentBook();
+                        if (java.util.Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId())
+                                && stillSelected != null
+                                && java.util.Objects.equals(book.getId(), stillSelected.getId())) {
                             setPreferredArtifactButton.setDisable(false);
                         }
                     });

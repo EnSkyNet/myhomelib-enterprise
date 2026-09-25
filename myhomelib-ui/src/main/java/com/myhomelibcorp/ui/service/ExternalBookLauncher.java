@@ -1,11 +1,16 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.usecase.book.ExternalReaderMaterializationCache;
 import com.myhomelibcorp.application.util.CommandTemplate;
+import com.myhomelibcorp.shared.util.ExecutablePathSafety;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.awt.Desktop;
@@ -23,16 +28,62 @@ public class ExternalBookLauncher {
     private final ApplicationSettingsPort settings;
     private final BookResourcePort resources;
     private final ExternalReaderMaterializationCache materializationCache;
+    private final LibraryOperationCoordinator operationCoordinator;
+    private final CollectionLifecyclePort collectionLifecycle;
 
+    /** Compatibility constructor for focused tests/non-Spring embedding. */
     public ExternalBookLauncher(ApplicationSettingsPort settings,
                                 BookResourcePort resources,
                                 ExternalReaderMaterializationCache materializationCache) {
+        this(settings, resources, materializationCache, null, null);
+    }
+
+    @Autowired
+    public ExternalBookLauncher(ApplicationSettingsPort settings,
+                                BookResourcePort resources,
+                                ExternalReaderMaterializationCache materializationCache,
+                                LibraryOperationCoordinator operationCoordinator,
+                                CollectionLifecyclePort collectionLifecycle) {
         this.settings = settings;
         this.resources = resources;
         this.materializationCache = materializationCache;
+        this.operationCoordinator = operationCoordinator;
+        this.collectionLifecycle = collectionLifecycle;
     }
 
     public void open(BookDto dto) throws Exception {
+        open(dto, null);
+    }
+
+    /**
+     * Opens the resource while holding a stable-reader lifecycle barrier. When an expected
+     * collection is supplied by an earlier async step, a stale completion fails closed instead
+     * of materializing/launching a book from the previous collection.
+     */
+    public void open(BookDto dto, String expectedCollectionId) throws Exception {
+        if (operationCoordinator == null || collectionLifecycle == null) {
+            openLocked(dto);
+            return;
+        }
+        LibraryOperationCoordinator.Lease lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.READER_STATE);
+        try {
+            if (expectedCollectionId != null && !expectedCollectionId.isBlank()) {
+                var active = collectionLifecycle.getCurrentCollection();
+                if (active == null || active.getId() == null || !expectedCollectionId.equals(active.getId())) {
+                    throw new IllegalStateException("Активна колекція змінилася до відкриття книги");
+                }
+            }
+            openLocked(dto);
+            lease.markCompleted("");
+        } catch (Exception | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private void openLocked(BookDto dto) throws Exception {
         if (dto == null) throw new IllegalArgumentException(UiText.text("ui.java.external_book_launcher.1215889a21"));
         String source = nonBlank(dto.getArchiveEntry(), dto.getFileName());
         String ext = extension(source);
@@ -52,6 +103,11 @@ public class ExternalBookLauncher {
                     "%FILE%", file.toAbsolutePath().toString(),
                     "%TITLE%", safe(dto.getTitle()),
                     "%AUTHOR%", safe(dto.getAuthorsText()))));
+            if (args.isEmpty() || args.getFirst().isBlank()) {
+                throw new IllegalArgumentException("Executable зовнішнього Reader не задано");
+            }
+            Path safeExecutable = ExecutablePathSafety.resolve(args.getFirst(), "External reader executable");
+            args.set(0, safeExecutable.toString());
             if (args.stream().noneMatch(a -> a.equals(file.toAbsolutePath().toString()))) {
                 args.add(file.toAbsolutePath().toString());
             }

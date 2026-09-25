@@ -2,16 +2,13 @@ package com.myhomelibcorp.epub.optimizer;
 
 import com.myhomelibcorp.epub.optimizer.fs.EpubPathSafety;
 import com.myhomelibcorp.epub.optimizer.acceptance.EpubAcceptanceValidator;
-import com.myhomelibcorp.epub.optimizer.graph.EpubResourceGraph;
-import com.myhomelibcorp.epub.optimizer.graph.EpubResourceGraphAnalyzer;
-import com.myhomelibcorp.epub.optimizer.graph.EpubExactDuplicateDeduplicator;
-import com.myhomelibcorp.epub.optimizer.graph.EpubResourcePruner;
-import com.myhomelibcorp.epub.optimizer.graph.EpubSafeMarkupNormalizer;
+import com.myhomelibcorp.epub.optimizer.graph.*;
 import com.myhomelibcorp.epub.optimizer.packaging.*;
 import com.myhomelibcorp.epub.optimizer.profile.EpubTargetStandard;
 import com.myhomelibcorp.epub.optimizer.profile.ReadingSystemProfile;
 import com.myhomelibcorp.epub.optimizer.profile.StandardReadingSystemProfile;
 import com.myhomelibcorp.epub.optimizer.semantic.EpubSemanticVerifier;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
@@ -33,8 +30,10 @@ public class EpubOptimizer {
     private final EpubSemanticVerifier semanticVerifier;
     private final EpubPackageVersionInspector packageVersionInspector;
     private final EpubBinaryResourceOptimizer binaryResourceOptimizer;
+    private final EpubPackageVersionPromoter packageVersionPromoter;
     private final List<EpubAcceptanceValidator> acceptanceValidators;
 
+    @Autowired
     public EpubOptimizer(EpubStructuralValidator validator,
                          EpubResourceGraphAnalyzer graphAnalyzer,
                          EpubPackager packager,
@@ -44,6 +43,7 @@ public class EpubOptimizer {
                          EpubSemanticVerifier semanticVerifier,
                          EpubPackageVersionInspector packageVersionInspector,
                          EpubBinaryResourceOptimizer binaryResourceOptimizer,
+                         EpubPackageVersionPromoter packageVersionPromoter,
                          List<EpubAcceptanceValidator> acceptanceValidators) {
         this.validator = validator;
         this.graphAnalyzer = graphAnalyzer;
@@ -54,7 +54,24 @@ public class EpubOptimizer {
         this.semanticVerifier = semanticVerifier;
         this.packageVersionInspector = packageVersionInspector;
         this.binaryResourceOptimizer = binaryResourceOptimizer;
+        this.packageVersionPromoter = packageVersionPromoter;
         this.acceptanceValidators = acceptanceValidators == null ? List.of() : List.copyOf(acceptanceValidators);
+    }
+
+    /** Backward-compatible constructor used by focused tests and non-Spring adapters. */
+    public EpubOptimizer(EpubStructuralValidator validator,
+                         EpubResourceGraphAnalyzer graphAnalyzer,
+                         EpubPackager packager,
+                         EpubExactDuplicateDeduplicator duplicateDeduplicator,
+                         EpubResourcePruner resourcePruner,
+                         EpubSafeMarkupNormalizer markupNormalizer,
+                         EpubSemanticVerifier semanticVerifier,
+                         EpubPackageVersionInspector packageVersionInspector,
+                         EpubBinaryResourceOptimizer binaryResourceOptimizer,
+                         List<EpubAcceptanceValidator> acceptanceValidators) {
+        this(validator, graphAnalyzer, packager, duplicateDeduplicator, resourcePruner, markupNormalizer,
+                semanticVerifier, packageVersionInspector, binaryResourceOptimizer,
+                new EpubPackageVersionPromoter(new EpubResourceReplacementWriter()), acceptanceValidators);
     }
 
     public EpubOptimizationReport optimize(Path source, Path target, EpubOptimizationProfile profile) throws Exception {
@@ -99,15 +116,38 @@ public class EpubOptimizer {
             checkCancelled();
             validator.validate(source);
             checkCancelled();
-            String sourcePackageVersion = packageVersionInspector.packageVersion(source);
-            if (profile == EpubOptimizationProfile.MODERN_EPUB34 && !packageVersionInspector.isEpub34(sourcePackageVersion)) {
-                throw new IllegalArgumentException("MODERN_EPUB34 requires an EPUB package that explicitly declares version 3.4; source declares " + sourcePackageVersion);
+            String inputPackageVersion = packageVersionInspector.packageVersion(source);
+            String promotionWarning = null;
+            if (profile == EpubOptimizationProfile.MODERN_EPUB34
+                    && !packageVersionInspector.isEpub34(inputPackageVersion)) {
+                if (!packageVersionInspector.isEpub3(inputPackageVersion)) {
+                    throw new IllegalArgumentException("MODERN_EPUB34 can safely promote only an EPUB 3.x package; source declares "
+                            + inputPackageVersion);
+                }
+                EpubResourceGraph inputGraph = graphAnalyzer.analyze(source);
+                Path promoted = optimizerWorkspace.resolve("source-epub34.epub");
+                packageVersionPromoter.promoteTo34(source, promoted, inputGraph.packagePath(), optimizerWorkspace);
+                checkCancelled();
+                validator.validate(promoted);
+                String promotedVersion = packageVersionInspector.packageVersion(promoted);
+                if (!packageVersionInspector.isEpub34(promotedVersion)) {
+                    throw new IllegalArgumentException("EPUB 3.4 promotion did not produce an OPF 3.4 package");
+                }
+                EpubSemanticVerifier.Verification promotionVerification = semanticVerifier.verify(source, promoted);
+                if (!promotionVerification.equivalent()) {
+                    throw new IllegalArgumentException("EPUB 3.4 promotion changed publication semantics: "
+                            + promotionVerification.differences());
+                }
+                source = promoted;
+                promotionWarning = "Promoted OPF package version from " + inputPackageVersion + " to " + promotedVersion + ".";
             }
+            String sourcePackageVersion = packageVersionInspector.packageVersion(source);
             EpubResourceGraph graph = graphAnalyzer.analyze(source);
             checkCancelled();
             long sourceSize = Files.size(source);
             List<String> warnings = new ArrayList<>(graph.warnings());
             warnings.add("EPUB package version: " + sourcePackageVersion + ".");
+            if (promotionWarning != null) warnings.add(promotionWarning);
             int duplicateCount = graph.exactDuplicateGroups().values().stream().mapToInt(list -> list.size() - 1).sum();
             if (duplicateCount > 0) warnings.add("Exact duplicate resources detected: " + duplicateCount + ".");
             if (!graph.warnings().isEmpty()) {

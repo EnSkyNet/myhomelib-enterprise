@@ -19,6 +19,7 @@ import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.controller.ExportController;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
+import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
 import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.service.NavigationService;
@@ -28,6 +29,7 @@ import com.myhomelibcorp.ui.table.TableProfileService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
 import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
+import com.myhomelibcorp.ui.util.UiSubscriptions;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.animation.PauseTransition;
@@ -58,7 +60,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 @RequiredArgsConstructor
 @Slf4j
-public class AuthorWorkspaceController {
+public class AuthorWorkspaceController implements WorkspaceLifecycle {
 
     private static final String PROFILE_KEY = "author-workspace";
     private static final String SORT_KEY = "author.workspace.sort";
@@ -109,6 +111,7 @@ public class AuthorWorkspaceController {
 
     private final AtomicLong metadataGeneration = new AtomicLong();
     private final AtomicLong booksGeneration = new AtomicLong();
+    private final UiSubscriptions subscriptions = new UiSubscriptions();
     private final List<BookViewModel> allBooks = new ArrayList<>();
     private final Set<String> collapsedSeries = new LinkedHashSet<>();
     private final LinkedHashMap<String, TableColumn<BookViewModel, ?>> profileColumns = new LinkedHashMap<>();
@@ -133,12 +136,12 @@ public class AuthorWorkspaceController {
         configureRowsAndKeyboard();
         configureFilters();
         configureProfilePersistence();
-        bookSelectionService.selectedCountProperty().addListener((obs, oldValue, newValue) -> {
+        subscriptions.listen(bookSelectionService.selectedCountProperty(), (obs, oldValue, newValue) -> {
             booksTableView.refresh();
             updateSelectionStatus();
         });
         updateSelectionStatus();
-        appState.currentLibraryCollectionProperty().addListener((obs, oldCollection, newCollection) -> {
+        subscriptions.listen(appState.currentLibraryCollectionProperty(), (obs, oldCollection, newCollection) -> {
             String oldId = oldCollection == null ? null : oldCollection.getId();
             String newId = newCollection == null ? null : newCollection.getId();
             if (!java.util.Objects.equals(oldId, newId)) {
@@ -628,13 +631,14 @@ public class AuthorWorkspaceController {
     private void onToggleAuthorFollowed() {
         AuthorId authorId = currentAuthorId;
         if (authorId == null || followAuthorButton == null) return;
+        String expectedCollectionId = appState.getCurrentLibraryCollectionId();
         boolean target = !currentAuthorFollowed;
         followAuthorButton.setDisable(true);
         executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
             catalogUpdateService.setAuthorFollowed(authorId, target);
             return target;
         }).thenAccept(followed -> UiExecutor.runOnUiThread(() -> {
-            if (!authorId.equals(currentAuthorId)) return;
+            if (!sameCollection(expectedCollectionId) || !authorId.equals(currentAuthorId)) return;
             currentAuthorFollowed = followed;
             currentAuthorNewBookCount = 0L;
             updateFollowButton();
@@ -642,8 +646,12 @@ public class AuthorWorkspaceController {
                     ? i18n.text("ui.author.follow.enabled_status")
                     : i18n.text("ui.author.follow.disabled_status"));
         })).exceptionally(ex -> {
-            log.error("Не вдалося змінити стеження за автором {}", authorId, ex);
-            UiExecutor.runOnUiThread(this::updateFollowButton);
+            if (sameCollection(expectedCollectionId) && authorId.equals(currentAuthorId)) {
+                log.error("Не вдалося змінити стеження за автором {}", authorId, ex);
+                UiExecutor.runOnUiThread(() -> {
+                    if (sameCollection(expectedCollectionId) && authorId.equals(currentAuthorId)) updateFollowButton();
+                });
+            }
             return null;
         });
     }
@@ -721,8 +729,11 @@ public class AuthorWorkspaceController {
             return;
         }
         javafx.stage.Window owner = booksTableView.getScene() == null ? null : booksTableView.getScene().getWindow();
+        String expectedCollectionId = appState.getCurrentLibraryCollectionId();
+        AuthorId expectedAuthorId = currentAuthorId;
         bookDownloadCoordinator.downloadBatch(ids, owner)
                 .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
+                    if (!sameCollection(expectedCollectionId) || !java.util.Objects.equals(expectedAuthorId, currentAuthorId)) return;
                     if (error == null) bookSelectionService.clear();
                     reloadBooks();
                 }));
@@ -731,8 +742,18 @@ public class AuthorWorkspaceController {
     @FXML
     private void onExportBooks() {
         String currentBookId = selectedConcreteBookId();
+        String expectedCollectionId = appState.getCurrentLibraryCollectionId();
+        AuthorId expectedAuthorId = currentAuthorId;
         exportController.handleExport(booksTableView.getScene() == null ? null : booksTableView.getScene().getWindow(),
-                () -> reloadBooks(currentBookId));
+                () -> {
+                    if (sameCollection(expectedCollectionId) && java.util.Objects.equals(expectedAuthorId, currentAuthorId)) {
+                        reloadBooks(currentBookId);
+                    }
+                });
+    }
+
+    private boolean sameCollection(String expectedCollectionId) {
+        return java.util.Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId());
     }
 
     private String selectedConcreteBookId() {
@@ -779,6 +800,20 @@ public class AuthorWorkspaceController {
             currentAuthor.setAnnotation(area.getText());
             bioLabel.setText(area.getText());
         }
+    }
+
+
+    @Override
+    public void dispose() {
+        UiAsyncRequestGuard.invalidate(metadataGeneration);
+        UiAsyncRequestGuard.invalidate(booksGeneration);
+        subscriptions.close();
+        profileSaveDelay.stop();
+        if (filterDebounce != null) filterDebounce.stop();
+        currentAuthorId = null;
+        currentAuthor = null;
+        allBooks.clear();
+        collapsedSeries.clear();
     }
 
     private record AuthorWorkspaceMetadata(

@@ -42,6 +42,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** Unified MHL-117 Library Health dashboard backed by the non-destructive MHL-116 artifact audit. */
 @Component
@@ -85,6 +86,7 @@ public class IntegrityCheckController {
     private LibraryHealthReport lastReport;
     private String lastReportText = "";
     private final AtomicBoolean contentIndexCancel = new AtomicBoolean();
+    private final AtomicLong contentIndexHealthGeneration = new AtomicLong();
     private Future<?> contentIndexRebuildTask;
 
     @FXML
@@ -123,26 +125,35 @@ public class IntegrityCheckController {
                 OperationStage.INTEGRITY_CHECKS, false);
         String expectedCollectionId = collection == null ? "" : collection.getId();
         executor.submit(() -> healthService.refresh(expectedCollectionId))
-                .whenComplete((report, error) -> UiExecutor.runOnUiThread(() -> {
-                    checkButton.setDisable(false);
-                    progressIndicator.setVisible(false);
-                    if (error != null) {
-                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                .whenComplete((report, error) -> {
+                    Throwable cause = error == null ? null : UiExceptionSupport.unwrapAsync(error);
+                    if (cause != null) {
                         operationCenter.fail(operationId, cause);
-                        statusLabel.setText(UiText.text("ui.java.integrity_check_controller.8af7f555ee") + UiExceptionSupport.message(cause));
-                        dialogService.showError(UiText.text("ui.fxml.integrity_check.library_health"), UiText.text("ui.java.integrity_check_controller.a94dc0c508") + UiExceptionSupport.message(cause));
                         log.error("Library Health refresh failed", cause);
-                        return;
+                    } else if (report != null) {
+                        operationCenter.complete(operationId, report.healthy()
+                                ? UiText.text("ui.java.integrity_check_controller.0fc7d16e90")
+                                : UiText.text("ui.java.integrity_check_controller.a355f59c6a") + formatNumber(report.totalProblemCount()));
                     }
-
-                    lastReport = report;
-                    lastReportText = formatExport(report);
-                    operationCenter.complete(operationId, report.healthy()
-                            ? UiText.text("ui.java.integrity_check_controller.0fc7d16e90")
-                            : UiText.text("ui.java.integrity_check_controller.a355f59c6a") + formatNumber(report.totalProblemCount()));
-                    displayReport(report);
-                    statusLabel.setText(UiText.text("ui.java.integrity_check_controller.239ef7a7ef") + DATE_TIME.format(report.generatedAt()));
-                }));
+                    UiExecutor.runOnUiThread(() -> {
+                        checkButton.setDisable(false);
+                        progressIndicator.setVisible(false);
+                        if (!expectedCollectionId.equals(currentCollectionId())) {
+                            log.debug("Пропущено stale Library Health callback для колекції {}", expectedCollectionId);
+                            return;
+                        }
+                        if (cause != null) {
+                            statusLabel.setText(UiText.text("ui.java.integrity_check_controller.8af7f555ee") + UiExceptionSupport.message(cause));
+                            dialogService.showError(UiText.text("ui.fxml.integrity_check.library_health"), UiText.text("ui.java.integrity_check_controller.a94dc0c508") + UiExceptionSupport.message(cause));
+                            return;
+                        }
+                        if (report == null) return;
+                        lastReport = report;
+                        lastReportText = formatExport(report);
+                        displayReport(report);
+                        statusLabel.setText(UiText.text("ui.java.integrity_check_controller.239ef7a7ef") + DATE_TIME.format(report.generatedAt()));
+                    });
+                });
     }
 
     private void displayReport(LibraryHealthReport report) {
@@ -212,11 +223,7 @@ public class IntegrityCheckController {
 
     @FXML
     public void onShowContentIndex() {
-        refreshContentIndexHealth();
-        String id = currentCollectionId();
-        if (id.isBlank()) return;
-        executor.submit(() -> contentIndexMaintenance.health(id))
-                .thenAccept(health -> UiExecutor.runOnUiThread(() -> detailArea.setText(formatContentIndexHealth(health))));
+        requestContentIndexHealth(true);
     }
 
     @FXML
@@ -243,7 +250,9 @@ public class IntegrityCheckController {
                             .withProgress(progress.processedBooks(), progress.totalBooks())
                             .withCurrentItem(progress.currentBook().isBlank() ? progress.phase() : progress.currentBook());
                     operationCenter.accept(operationTitle, id, OperationKind.INDEX_REBUILD, telemetry);
-                    UiExecutor.runOnUiThread(() -> updateContentProgress(progress));
+                    UiExecutor.runOnUiThread(() -> {
+                        if (id.equals(currentCollectionId())) updateContentProgress(progress);
+                    });
                 }))
                 .whenComplete((result, error) -> {
                     if (error != null) {
@@ -263,6 +272,10 @@ public class IntegrityCheckController {
                     }
                     UiExecutor.runOnUiThread(() -> {
                         setContentRebuildRunning(false);
+                        if (!id.equals(currentCollectionId())) {
+                            log.debug("Пропущено stale content-index rebuild callback для колекції {}", id);
+                            return;
+                        }
                         if (error != null) {
                             Throwable cause = UiExceptionSupport.unwrapAsync(error);
                             dialogService.showError(UiText.text("ui.fxml.integrity_check.full_text_index"), UiText.text("ui.java.integrity_check_controller.d503cc2bf1") + UiExceptionSupport.message(cause));
@@ -297,6 +310,11 @@ public class IntegrityCheckController {
     }
 
     private void refreshContentIndexHealth() {
+        requestContentIndexHealth(false);
+    }
+
+    private void requestContentIndexHealth(boolean showDetail) {
+        long generation = contentIndexHealthGeneration.incrementAndGet();
         String id = currentCollectionId();
         if (id.isBlank()) {
             if (contentIndexValue != null) contentIndexValue.setText("—");
@@ -304,14 +322,23 @@ public class IntegrityCheckController {
             return;
         }
         executor.submit(() -> contentIndexMaintenance.health(id))
-                .thenAccept(health -> UiExecutor.runOnUiThread(() -> displayContentIndexHealth(health)))
+                .thenAccept(health -> UiExecutor.runOnUiThread(() -> {
+                    if (!isCurrentContentIndexRequest(id, generation)) return;
+                    displayContentIndexHealth(health);
+                    if (showDetail) detailArea.setText(formatContentIndexHealth(health));
+                }))
                 .exceptionally(error -> {
                     UiExecutor.runOnUiThread(() -> {
+                        if (!isCurrentContentIndexRequest(id, generation)) return;
                         if (contentIndexValue != null) contentIndexValue.setText(UiText.text("common.error"));
                         if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText(UiExceptionSupport.message(error));
                     });
                     return null;
                 });
+    }
+
+    private boolean isCurrentContentIndexRequest(String collectionId, long generation) {
+        return generation == contentIndexHealthGeneration.get() && collectionId.equals(currentCollectionId());
     }
 
     private void displayContentIndexHealth(ContentIndexHealth health) {

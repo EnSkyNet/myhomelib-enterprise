@@ -49,9 +49,14 @@ public class BookActionUiService {
     }
 
     private void run(BookViewModel book, BookActionProfile profile) {
+        String expectedCollectionId = appState.getCurrentLibraryCollectionId();
         appState.getStatusBar().setStatusText(UiText.text("ui.java.book_action_ui_service.93e438617f") + profile.name());
         runBookActionUseCase.execute(BookId.fromString(book.getId()), profile.id())
                 .whenComplete((result, error) -> Platform.runLater(() -> {
+                    if (!java.util.Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId())) {
+                        log.debug("Пропущено stale book-action callback після зміни колекції: {}", profile.id());
+                        return;
+                    }
                     if (error != null) {
                         appState.getStatusBar().setStatusText(UiText.text("ui.java.book_action_ui_service.53fff1acbb"));
                         dialogs.showError(UiText.text("ui.java.book_action_ui_service.91d8d4f2be"), UiExceptionSupport.message(error));

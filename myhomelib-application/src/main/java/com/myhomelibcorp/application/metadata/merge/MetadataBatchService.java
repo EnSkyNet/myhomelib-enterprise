@@ -48,32 +48,27 @@ public class MetadataBatchService {
         if (cancelled.get() || ids.isEmpty()) {
             return CompletableFuture.completedFuture(new Result(collectionId, List.of(), cancelled.get()));
         }
-        LibraryOperationCoordinator.Lease lease;
-        try {
-            lease = operations.acquireDetachedShared(LibraryOperationType.QUERY);
+        // Validate the initiating collection under a short QUERY barrier, but do not retain that
+        // barrier while external metadata providers are running. Each queued catalogue read below
+        // re-validates the same collection id under its own QUERY lease.
+        try (var lease = operations.acquireDetachedShared(LibraryOperationType.QUERY)) {
+            requireCollection(collectionId);
         } catch (RuntimeException conflict) {
             return CompletableFuture.failedFuture(conflict);
         }
-        try {
-            requireCollection(collectionId);
-            Batch batch = new Batch(ids, cancelled, progress);
-            CompletableFuture<Result> result = new CompletableFuture<>();
-            result.whenComplete((value, error) -> {
-                if (result.isCancelled()) cancelled.set(true);
-            });
-            List<CompletableFuture<Void>> workers = new ArrayList<>();
-            for (int i = 0; i < Math.min(CONCURRENCY, ids.size()); i++) workers.add(batch.work());
-            CompletableFuture.allOf(workers.toArray(CompletableFuture[]::new)).whenComplete((ignored, error) -> {
-                // Keep the collection stable until workers actually stop, even if the returned future is cancelled.
-                lease.close();
-                if (error != null) result.completeExceptionally(error);
-                else result.complete(new Result(collectionId, batch.results(), cancelled.get()));
-            });
-            return result;
-        } catch (RuntimeException failed) {
-            lease.close();
-            return CompletableFuture.failedFuture(failed);
-        }
+
+        Batch batch = new Batch(collectionId, ids, cancelled, progress);
+        CompletableFuture<Result> result = new CompletableFuture<>();
+        result.whenComplete((value, error) -> {
+            if (result.isCancelled()) cancelled.set(true);
+        });
+        List<CompletableFuture<Void>> workers = new ArrayList<>();
+        for (int i = 0; i < Math.min(CONCURRENCY, ids.size()); i++) workers.add(batch.work());
+        CompletableFuture.allOf(workers.toArray(CompletableFuture[]::new)).whenComplete((ignored, error) -> {
+            if (error != null) result.completeExceptionally(error);
+            else result.complete(new Result(collectionId, batch.results(), cancelled.get()));
+        });
+        return result;
     }
 
     public List<Book> apply(String collectionId, List<ApplyMetadataCandidateUseCase.Request> requests,
@@ -116,6 +111,7 @@ public class MetadataBatchService {
     }
 
     private final class Batch {
+        private final String collectionId;
         private final List<BookId> ids;
         private final AtomicBoolean cancelled;
         private final Consumer<Progress> progress;
@@ -123,7 +119,8 @@ public class MetadataBatchService {
         private int next;
         private int completed;
 
-        Batch(List<BookId> ids, AtomicBoolean cancelled, Consumer<Progress> progress) {
+        Batch(String collectionId, List<BookId> ids, AtomicBoolean cancelled, Consumer<Progress> progress) {
+            this.collectionId = collectionId;
             this.ids = ids;
             this.cancelled = cancelled;
             this.progress = progress;
@@ -138,7 +135,7 @@ public class MetadataBatchService {
             }
             CompletableFuture<MetadataReviewLookupResult> future;
             try {
-                future = Objects.requireNonNull(review.lookup(ids.get(index),
+                future = Objects.requireNonNull(review.lookup(ids.get(index), collectionId,
                         MetadataLookupService.DEFAULT_PROVIDER_TIMEOUT, cancelled));
             } catch (RuntimeException failure) {
                 future = CompletableFuture.failedFuture(failure);

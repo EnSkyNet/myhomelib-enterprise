@@ -78,24 +78,34 @@ public class DatabaseToolsController {
 
         String operationId = operationCenter.start(
                 UiText.text("ui.database.operation.vacuum") + collection.getName(), collection.getId(), OperationStage.OPTIMIZING_DATABASE, false);
+        String expectedCollectionId = collection.getId();
         executor.submit(() -> {
-                    databaseToolsService.vacuumCurrent(collection.getId());
+                    databaseToolsService.vacuumCurrent(expectedCollectionId);
                     return null;
                 })
-                .whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
-                    appState.getStatusBar().setProgressVisible(false);
-                    if (error != null) {
-                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                .whenComplete((ignored, error) -> {
+                    Throwable cause = error == null ? null : UiExceptionSupport.unwrapAsync(error);
+                    if (cause != null) {
                         operationCenter.fail(operationId, cause);
                         log.error("Помилка оптимізації бази даних", cause);
-                        appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.54aea21f05"));
-                        dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.database_tools_controller.16eb4308b4") + UiExceptionSupport.message(cause));
                     } else {
                         operationCenter.complete(operationId, UiText.text("ui.java.database_tools_controller.27c663f71f"));
-                        appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.23711c3223"));
-                        dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.database_tools_controller.fdafb24283"));
                     }
-                }));
+                    UiExecutor.runOnUiThread(() -> {
+                        if (!isCurrentCollection(expectedCollectionId)) {
+                            log.debug("Пропущено stale VACUUM UI callback для колекції {}", expectedCollectionId);
+                            return;
+                        }
+                        appState.getStatusBar().setProgressVisible(false);
+                        if (cause != null) {
+                            appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.54aea21f05"));
+                            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.database_tools_controller.16eb4308b4") + UiExceptionSupport.message(cause));
+                        } else {
+                            appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.23711c3223"));
+                            dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.database_tools_controller.fdafb24283"));
+                        }
+                    });
+                });
     }
 
     @FXML
@@ -107,43 +117,67 @@ public class DatabaseToolsController {
             return;
         }
 
+        Collection collection = appState.getCurrentLibraryCollection();
+        if (collection == null || collection.getId() == null || collection.getId().isBlank()) {
+            dialogService.showWarning(UiText.text("ui.java.database_tools_controller.2032bb9afc"),
+                    UiText.text("ui.java.database_tools_controller.6686ed3c16"));
+            return;
+        }
+
         appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.b5f8b6c453"));
         appState.getStatusBar().setProgressVisible(true);
 
-        Collection collection = appState.getCurrentLibraryCollection();
-        String expectedCollectionId = collection == null ? "" : collection.getId();
+        String expectedCollectionId = collection.getId();
         String operationId = operationCenter.start(
                 UiText.text("ui.java.database_tools_controller.5a1503fdd4"), expectedCollectionId,
                 OperationStage.UPDATING_SEARCH_INDEX, false);
         databaseToolsService.rebuildIndexAsync()
-                .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
-                    appState.getStatusBar().setProgressVisible(false);
-                    if (error != null) {
-                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                        operationCenter.fail(operationId, cause);
-                        appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.c86922def7"));
-                        dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.database_tools_controller.4856ebd467") + UiExceptionSupport.message(cause));
-                    } else {
-                        Integer count = null;
+                .whenComplete((result, error) -> {
+                    Throwable cause = error == null ? null : UiExceptionSupport.unwrapAsync(error);
+                    Integer count = null;
+                    if (cause == null && isCurrentCollection(expectedCollectionId)) {
                         try {
                             count = databaseToolsService.getIndexedDocumentCount(expectedCollectionId);
                         } catch (RuntimeException staleResult) {
                             log.info("Index rebuild completed, but its count is no longer displayable for collection {}: {}",
                                     expectedCollectionId, staleResult.getMessage());
                         }
-                        if (count == null) {
+                    }
+                    if (cause != null) {
+                        operationCenter.fail(operationId, cause);
+                    } else {
+                        String detail = count == null
+                                ? UiText.text("ui.database.index_rebuilt")
+                                : UiText.text("ui.java.database_tools_controller.e6d0d15525") + count + UiText.text("ui.java.database_tools_controller.faf0c7e42c");
+                        operationCenter.complete(operationId, detail);
+                    }
+                    Integer finalCount = count;
+                    UiExecutor.runOnUiThread(() -> {
+                        if (!isCurrentCollection(expectedCollectionId)) {
+                            log.debug("Пропущено stale index-rebuild UI callback для колекції {}", expectedCollectionId);
+                            return;
+                        }
+                        appState.getStatusBar().setProgressVisible(false);
+                        if (cause != null) {
+                            appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.c86922def7"));
+                            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.database_tools_controller.4856ebd467") + UiExceptionSupport.message(cause));
+                        } else if (finalCount == null) {
                             String completed = UiText.text("ui.database.index_rebuilt");
-                            operationCenter.complete(operationId, completed);
                             appState.getStatusBar().setStatusText(completed);
                             dialogService.showInfo(UiText.text("common.success"), completed);
                         } else {
-                            operationCenter.complete(operationId, UiText.text("ui.java.database_tools_controller.e6d0d15525") + count + UiText.text("ui.java.database_tools_controller.faf0c7e42c"));
-                            appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.439b61118b") + count + UiText.text("ui.java.database_tools_controller.af17e2b02c"));
+                            appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.439b61118b") + finalCount + UiText.text("ui.java.database_tools_controller.af17e2b02c"));
                             dialogService.showInfo(UiText.text("common.success"),
-                                    UiText.text("ui.java.database_tools_controller.e62401de7e") + count + UiText.text("ui.java.database_tools_controller.af17e2b02c"));
+                                    UiText.text("ui.java.database_tools_controller.e62401de7e") + finalCount + UiText.text("ui.java.database_tools_controller.af17e2b02c"));
                         }
-                    }
-                }));
+                    });
+                });
+    }
+
+    private boolean isCurrentCollection(String expectedCollectionId) {
+        return expectedCollectionId != null
+                && !expectedCollectionId.isBlank()
+                && expectedCollectionId.equals(appState.getCurrentLibraryCollectionId());
     }
 
     @FXML

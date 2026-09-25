@@ -29,7 +29,7 @@ class MetadataDatabaseMigrationTest {
 
         flyway.migrate();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("11");
         JdbcTemplate jdbc = new JdbcTemplate(ds);
         Set<String> columns = jdbc.queryForList("PRAGMA table_info(library_organization_items)").stream()
                 .map(row -> row.get("name"))
@@ -43,5 +43,12 @@ class MetadataDatabaseMigrationTest {
                 "optimization_profile", "size_before", "size_after", "bytes_saved", "percent_saved",
                 "optimization_summary_json", "target_standard", "device_profile", "compression_backend",
                 "validation_status", "error_code", "error_message");
+
+        Set<String> collectionColumns = jdbc.queryForList("PRAGMA table_info(collections)").stream()
+                .map(row -> row.get("name"))
+                .filter(java.util.Objects::nonNull)
+                .map(Object::toString)
+                .collect(Collectors.toSet());
+        assertThat(collectionColumns).contains("owns_database");
     }
 }

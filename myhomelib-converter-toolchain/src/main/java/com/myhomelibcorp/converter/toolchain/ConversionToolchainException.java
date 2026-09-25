@@ -19,7 +19,10 @@ public class ConversionToolchainException extends Exception implements Conversio
 
     @Override
     public boolean mayTryNextProvider() {
-        return kind == ConversionFailureKind.UNAVAILABLE || kind == ConversionFailureKind.UNSUPPORTED;
+        return switch (kind) {
+            case UNAVAILABLE, UNSUPPORTED, ENGINE_CRASH, TIMEOUT, OUTPUT_INVALID -> true;
+            case INVALID_INPUT, SECURITY_REJECTED, CANCELLED, IO_FAILURE -> false;
+        };
     }
 }
 

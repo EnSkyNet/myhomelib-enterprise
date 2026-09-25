@@ -3,7 +3,9 @@ package com.myhomelibcorp.converter.toolchain.discovery;
 import com.myhomelibcorp.converter.toolchain.process.ExternalToolResult;
 import com.myhomelibcorp.converter.toolchain.process.ExternalToolRunner;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -43,6 +45,23 @@ class ConverterToolProbeTest {
         assertThat(probe("pandoc", "pandoc 3.11.0").available()).isTrue();
         assertThat(probe("pandoc", "pandoc 3.12").available()).isTrue();
         assertThat(probe("pandoc", "pandoc 4.0").available()).isTrue();
+    }
+
+    @Test
+    void rejectsIncompleteWindowsCalibreLayoutEvenWhenVersionProbeSucceeds(@TempDir Path dir) throws Exception {
+        Path executable = Files.createFile(dir.resolve("ebook-convert.exe"));
+        ExternalToolRunner runner = new ExternalToolRunner() {
+            @Override
+            public ExternalToolResult probe(List<String> argv, Path workingDirectory, Duration timeout) {
+                return new ExternalToolResult(0, "ebook-convert.exe (calibre 8.10.0)", "", false, false, 1);
+            }
+        };
+
+        ToolInstallation installation = new ConverterToolProbe(runner)
+                .probe("calibre", executable, List.of("--version"));
+
+        assertThat(installation.available()).isFalse();
+        assertThat(installation.diagnostic()).contains("calibre-parallel.exe");
     }
 
     @Test

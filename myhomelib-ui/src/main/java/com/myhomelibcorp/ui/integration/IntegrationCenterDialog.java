@@ -187,9 +187,20 @@ public final class IntegrationCenterDialog {
                 status.setText(UiText.text("ui.java.integration_center_dialog.63c43903ad"));
                 return;
             }
-            IntegrationBackend.Result resolved = backend.resolveWebDavConflict(attempt.conflictToken(), selection.get());
-            status.setText(renderMessage(resolved.userMessage()));
-            showResult(UiText.text("ui.integration.webdav_title"), resolved);
+            setBusy(buttons, true);
+            status.setText(UiText.text("ui.java.integration_center_dialog.4a28c00989"));
+            background.submitCollectionScoped(LibraryOperationType.SYNC,
+                            () -> backend.resolveWebDavConflict(attempt.conflictToken(), selection.get()))
+                    .whenComplete((resolved, resolveError) -> Platform.runLater(() -> {
+                        setBusy(buttons, false);
+                        if (resolveError != null) {
+                            status.setText(UiText.text("ui.java.integration_center_dialog.91ed83159c"));
+                            dialogs.showError(UiText.text("ui.integration.webdav_title"), rootMessage(resolveError));
+                            return;
+                        }
+                        status.setText(renderMessage(resolved.userMessage()));
+                        showResult(UiText.text("ui.integration.webdav_title"), resolved);
+                    }));
         }));
     }
 

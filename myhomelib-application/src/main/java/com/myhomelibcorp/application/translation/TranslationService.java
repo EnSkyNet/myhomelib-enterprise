@@ -74,16 +74,24 @@ public class TranslationService {
         }
 
         TextProviderRequestContext context = TextProviderRequestContext.create(timeout, cancellation);
-        CompletableFuture<TranslationLookupResult> submitted;
+        com.myhomelibcorp.application.port.out.executor.ExecutorPort.CancellableTask<TranslationLookupResult> submitted;
         try {
-            submitted = executor.submit(() -> callProvider(provider, query, context));
+            submitted = executor.submitCancellable(() -> callProvider(provider, query, context));
         } catch (RuntimeException rejected) {
             return CompletableFuture.completedFuture(failed(provider, TextProviderErrorKind.UNAVAILABLE));
         }
-        if (submitted == null) return CompletableFuture.completedFuture(failed(provider, TextProviderErrorKind.UNAVAILABLE));
+        if (submitted == null || submitted.future() == null) {
+            return CompletableFuture.completedFuture(failed(provider, TextProviderErrorKind.UNAVAILABLE));
+        }
 
-        return submitted.orTimeout(safeTimeoutMillis(timeout), TimeUnit.MILLISECONDS)
-                .handle((result, failure) -> failure == null ? result : mapFailure(provider, failure));
+        return submitted.future().orTimeout(safeTimeoutMillis(timeout), TimeUnit.MILLISECONDS)
+                .handle((result, failure) -> {
+                    if (failure != null && TextProviderFailures.unwrap(failure) instanceof TimeoutException) {
+                        cancellation.set(true);
+                        submitted.cancel();
+                    }
+                    return failure == null ? result : mapFailure(provider, failure);
+                });
     }
 
     private TranslationLookupResult callProvider(

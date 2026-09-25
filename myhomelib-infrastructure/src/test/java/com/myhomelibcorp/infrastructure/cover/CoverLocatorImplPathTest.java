@@ -15,20 +15,18 @@ class CoverLocatorImplPathTest {
     void emptyFolderStillResolvesAgainstCollectionRoot() {
         BookResourcePort resources = mock(BookResourcePort.class);
         Path expected = Path.of("/library/book.fb2");
-        when(resources.isArchive("")).thenReturn(false);
-        when(resources.buildFilePath("/library", "", "book.fb2")).thenReturn(expected);
+        when(resources.locateBookFile("book.fb2", "", "/library", null)).thenReturn(java.util.Optional.of(expected));
         CoverLocatorImpl locator = new CoverLocatorImpl(mock(ZipArchiveReader.class), resources);
         BookDto book = BookDto.builder().fileName("book.fb2").folder("").collectionRoot("/library").build();
 
         assertThat(locator.locateCoverFile(book)).contains(expected);
-        verify(resources).buildFilePath("/library", "", "book.fb2");
+        verify(resources).locateBookFile("book.fb2", "", "/library", null);
     }
 
     @Test
     void rejectedResourcePathProducesEmptyResultInsteadOfNullOptionalFailure() {
         BookResourcePort resources = mock(BookResourcePort.class);
-        when(resources.isArchive("../outside")).thenReturn(false);
-        when(resources.buildFilePath("/library", "../outside", "book.fb2")).thenReturn(null);
+        when(resources.locateBookFile("book.fb2", "../outside", "/library", null)).thenReturn(java.util.Optional.empty());
         CoverLocatorImpl locator = new CoverLocatorImpl(mock(ZipArchiveReader.class), resources);
         BookDto book = BookDto.builder().fileName("book.fb2").folder("../outside").collectionRoot("/library").build();
 

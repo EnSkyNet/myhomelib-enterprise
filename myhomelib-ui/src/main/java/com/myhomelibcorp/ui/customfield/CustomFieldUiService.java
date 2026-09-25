@@ -10,6 +10,7 @@ import com.myhomelibcorp.application.customfield.CustomFieldService.DefinitionVi
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.scene.Node;
@@ -26,14 +27,18 @@ public class CustomFieldUiService {
     private final CustomFieldService service;
     private final UiBackgroundExecutor background;
     private final DialogService dialogs;
+    private final ApplicationState state;
 
-    public CustomFieldUiService(CustomFieldService service, UiBackgroundExecutor background, DialogService dialogs) {
+    public CustomFieldUiService(CustomFieldService service, UiBackgroundExecutor background, DialogService dialogs,
+                                ApplicationState state) {
         this.service = service;
         this.background = background;
         this.dialogs = dialogs;
+        this.state = state;
     }
 
     public void manage(Window owner) {
+        String expectedCollectionId = currentCollectionId();
         List<String> actions = List.of(UiText.text("ui.java.custom_field_ui_service.f5cee4d194"), UiText.text("ui.java.custom_field_ui_service.f8e8c9c817"), UiText.text("ui.java.custom_field_ui_service.1eb483b0e2"));
         ChoiceDialog<String> choice = new ChoiceDialog<>(actions.getFirst(), actions);
         DialogLocalization.prepare(choice);
@@ -41,20 +46,23 @@ public class CustomFieldUiService {
         choice.setTitle(UiText.text("ui.java.custom_field_ui_service.42f9479a3a"));
         choice.setHeaderText(UiText.text("ui.java.custom_field_ui_service.f9be29f5a9"));
         choice.showAndWait().ifPresent(action -> {
-            if (actions.get(0).equals(action)) create(owner);
-            else if (actions.get(1).equals(action)) edit(owner);
-            else delete(owner);
+            if (!sameCollection(expectedCollectionId)) return;
+            if (actions.get(0).equals(action)) create(owner, expectedCollectionId);
+            else if (actions.get(1).equals(action)) edit(owner, expectedCollectionId);
+            else delete(owner, expectedCollectionId);
         });
     }
 
     public void editBookValues(Window owner, BookId bookId) {
         if (bookId == null) return;
+        String expectedCollectionId = currentCollectionId();
         List<DefinitionView> definitions = service.definitionViews();
         if (definitions.isEmpty()) {
             dialogs.showInfo(UiText.text("ui.java.custom_field_ui_service.42f9479a3a"), UiText.text("ui.java.custom_field_ui_service.d9c48bfdc2"));
             return;
         }
         Map<Long, String> existing = service.valueTexts(bookId);
+        if (!sameCollection(expectedCollectionId)) return;
         Dialog<ButtonType> dialog = new Dialog<>();
         DialogLocalization.prepare(dialog);
         dialog.initOwner(owner);
@@ -75,35 +83,45 @@ public class CustomFieldUiService {
         ScrollPane scroll = new ScrollPane(grid); scroll.setFitToWidth(true); scroll.setPrefViewportHeight(420); scroll.setPrefViewportWidth(560);
         dialog.getDialogPane().setContent(scroll);
         if (dialog.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+        if (!sameCollection(expectedCollectionId)) return;
         Map<Long, String> values = new LinkedHashMap<>();
         for (DefinitionView definition : definitions) values.put(definition.id(), valueOf(controls.get(definition.id())));
-        background.submitCollectionScoped(LibraryOperationType.EDIT, () -> { service.saveValues(bookId, values); return null; })
+        background.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
+                    service.saveValues(bookId, values, expectedCollectionId);
+                    return null;
+                })
                 .whenComplete((ignored, error) -> Platform.runLater(() -> {
+                    if (!sameCollection(expectedCollectionId)) return;
                     if (error != null) dialogs.showError(UiText.text("ui.java.custom_field_ui_service.42f9479a3a"), rootMessage(error));
                 }));
     }
 
-    private void create(Window owner) {
+    private void create(Window owner, String expectedCollectionId) {
         DefinitionInput input = definitionDialog(owner, null);
         if (input == null) return;
-        background.submitCollectionScoped(LibraryOperationType.EDIT, () -> service.saveDefinition(null, input.name(), input.type(), input.options()))
+        if (!sameCollection(expectedCollectionId)) return;
+        background.submitCollectionScoped(LibraryOperationType.EDIT,
+                        () -> service.saveDefinition(null, input.name(), input.type(), input.options(), expectedCollectionId))
                 .whenComplete((value, error) -> Platform.runLater(() -> {
+                    if (!sameCollection(expectedCollectionId)) return;
                     if (error != null) dialogs.showError(UiText.text("ui.java.custom_field_ui_service.42f9479a3a"), rootMessage(error));
                 }));
     }
 
-    private void edit(Window owner) {
+    private void edit(Window owner, String expectedCollectionId) {
         DefinitionView selected = chooseDefinition(owner, UiText.text("ui.java.custom_field_ui_service.f8e8c9c817"));
-        if (selected == null) return;
+        if (selected == null || !sameCollection(expectedCollectionId)) return;
         DefinitionInput input = definitionDialog(owner, selected);
-        if (input == null) return;
-        background.submitCollectionScoped(LibraryOperationType.EDIT, () -> service.saveDefinition(selected.id(), input.name(), input.type(), input.options()))
+        if (input == null || !sameCollection(expectedCollectionId)) return;
+        background.submitCollectionScoped(LibraryOperationType.EDIT,
+                        () -> service.saveDefinition(selected.id(), input.name(), input.type(), input.options(), expectedCollectionId))
                 .whenComplete((value, error) -> Platform.runLater(() -> {
+                    if (!sameCollection(expectedCollectionId)) return;
                     if (error != null) dialogs.showError(UiText.text("ui.java.custom_field_ui_service.42f9479a3a"), rootMessage(error));
                 }));
     }
 
-    private void delete(Window owner) {
+    private void delete(Window owner, String expectedCollectionId) {
         DefinitionView selected = chooseDefinition(owner, UiText.text("ui.java.custom_field_ui_service.1eb483b0e2"));
         if (selected == null) return;
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
@@ -112,8 +130,13 @@ public class CustomFieldUiService {
         DialogLocalization.prepare(confirm);
         confirm.initOwner(owner); confirm.setTitle(UiText.text("ui.java.custom_field_ui_service.42f9479a3a"));
         if (confirm.showAndWait().orElse(ButtonType.NO) != ButtonType.YES) return;
-        background.submitCollectionScoped(LibraryOperationType.EDIT, () -> { service.deleteDefinitionCascade(selected.id()); return null; })
+        if (!sameCollection(expectedCollectionId)) return;
+        background.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
+                    service.deleteDefinitionCascade(selected.id(), expectedCollectionId);
+                    return null;
+                })
                 .whenComplete((value, error) -> Platform.runLater(() -> {
+                    if (!sameCollection(expectedCollectionId)) return;
                     if (error != null) dialogs.showError(UiText.text("ui.java.custom_field_ui_service.42f9479a3a"), rootMessage(error));
                 }));
     }
@@ -190,6 +213,15 @@ public class CustomFieldUiService {
         if (node instanceof ComboBox<?> box) return box.getValue() == null ? "" : box.getValue().toString();
         if (node instanceof TextField text) return text.getText();
         return "";
+    }
+
+    private boolean sameCollection(String expectedCollectionId) {
+        return Objects.equals(expectedCollectionId, currentCollectionId());
+    }
+
+    private String currentCollectionId() {
+        var collection = state.getCurrentLibraryCollection();
+        return collection == null ? null : collection.getId();
     }
 
     private static String rootMessage(Throwable error) {

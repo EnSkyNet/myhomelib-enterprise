@@ -69,12 +69,14 @@ public class ImportController {
 
         Dialog<SyncOptions> dialog = createSyncOptionsDialog();
         dialog.showAndWait().ifPresent(options -> {
+            String expectedCollectionId = appState.getCurrentLibraryCollectionId();
             appState.getStatusBar().setStatusText(UiText.text("ui.java.import_controller.50b8f36135") + dir.getName());
             appState.getStatusBar().setProgressVisible(true);
 
             CompletableFuture<SyncResult> future = syncFolderUseCase.executeAsync(dir.toPath(), options);
 
             future.thenAccept(result -> UiExecutor.runOnUiThread(() -> {
+                        if (!java.util.Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId())) return;
                         appState.getStatusBar().setProgressVisible(false);
                         String summary = syncSummary(result);
                         appState.getStatusBar().setStatusText("✅ " + summary);
@@ -84,6 +86,7 @@ public class ImportController {
                     .exceptionally(ex -> {
                         Throwable cause = UiExceptionSupport.unwrapAsync(ex);
                         UiExecutor.runOnUiThread(() -> {
+                            if (!java.util.Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId())) return;
                             appState.getStatusBar().setProgressVisible(false);
                             appState.getStatusBar().setStatusText(UiText.text("ui.java.import_controller.1ac52df2c6"));
                             dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.import_controller.41fe14596b") + UiExceptionSupport.message(cause));

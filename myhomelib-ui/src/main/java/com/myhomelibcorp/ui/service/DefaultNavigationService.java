@@ -19,6 +19,7 @@ import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +43,7 @@ public class DefaultNavigationService implements NavigationService {
     private final BookDownloadCoordinator bookDownloadCoordinator;
     private final ExternalBookLauncher externalBookLauncher;
     private final LibraryOperationCoordinator operationCoordinator;
+    private final ApplicationState applicationState;
 
     /** Compatibility constructor for focused UI tests/non-Spring embedding. */
     public DefaultNavigationService(WorkspaceManager workspaceManager,
@@ -51,7 +53,7 @@ public class DefaultNavigationService implements NavigationService {
                                     BookDownloadCoordinator bookDownloadCoordinator,
                                     ExternalBookLauncher externalBookLauncher) {
         this(workspaceManager, seriesRepository, navigationPanelController, bookResourcePort,
-                bookDownloadCoordinator, externalBookLauncher, null);
+                bookDownloadCoordinator, externalBookLauncher, null, null);
     }
 
     @Autowired
@@ -61,7 +63,8 @@ public class DefaultNavigationService implements NavigationService {
                                     BookResourcePort bookResourcePort,
                                     BookDownloadCoordinator bookDownloadCoordinator,
                                     ExternalBookLauncher externalBookLauncher,
-                                    LibraryOperationCoordinator operationCoordinator) {
+                                    LibraryOperationCoordinator operationCoordinator,
+                                    ApplicationState applicationState) {
         this.workspaceManager = java.util.Objects.requireNonNull(workspaceManager, "workspaceManager");
         this.seriesRepository = java.util.Objects.requireNonNull(seriesRepository, "seriesRepository");
         this.navigationPanelController = java.util.Objects.requireNonNull(navigationPanelController, "navigationPanelController");
@@ -69,6 +72,7 @@ public class DefaultNavigationService implements NavigationService {
         this.bookDownloadCoordinator = java.util.Objects.requireNonNull(bookDownloadCoordinator, "bookDownloadCoordinator");
         this.externalBookLauncher = java.util.Objects.requireNonNull(externalBookLauncher, "externalBookLauncher");
         this.operationCoordinator = operationCoordinator;
+        this.applicationState = applicationState;
     }
 
     @PostConstruct
@@ -237,12 +241,20 @@ public class DefaultNavigationService implements NavigationService {
         }
         // One authoritative path for external opening: the same physical-file check,
         // online confirmation/download and archive materialization as the main toolbar.
+        String expectedCollectionId = applicationState == null ? null : applicationState.getCurrentLibraryCollectionId();
         bookDownloadCoordinator.ensureLocalForOpen(book).whenComplete((path, error) -> {
             if (error != null) return;
             try {
-                externalBookLauncher.open(book);
+                externalBookLauncher.open(book, expectedCollectionId);
             } catch (Exception ex) {
-                Platform.runLater(() -> log.error("Не вдалося відкрити книгу у зовнішній програмі: {}", book.getTitle(), ex));
+                if (applicationState != null
+                        && !java.util.Objects.equals(expectedCollectionId, applicationState.getCurrentLibraryCollectionId())) return;
+                Platform.runLater(() -> {
+                    if (applicationState == null
+                            || java.util.Objects.equals(expectedCollectionId, applicationState.getCurrentLibraryCollectionId())) {
+                        log.error("Не вдалося відкрити книгу у зовнішній програмі: {}", book.getTitle(), ex);
+                    }
+                });
             }
         });
     }

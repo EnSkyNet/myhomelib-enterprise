@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.Charset;
 import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -52,8 +53,11 @@ public class TxtImporter extends AbstractBookImporter {
     }
 
     private String firstMeaningfulLine(Path file, Charset charset) throws IOException {
+        var decoder = charset.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT);
         try (BufferedReader r = new BufferedReader(new InputStreamReader(
-                Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS), charset))) {
+                Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS), decoder))) {
             for (int i = 0; i < 20; i++) {
                 String line = r.readLine();
                 if (line == null) return null;

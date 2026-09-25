@@ -29,7 +29,10 @@ public final class OrganizerPathSafety {
         if (!Files.isDirectory(absolute, LinkOption.NOFOLLOW_LINKS)) {
             throw new NoSuchFileException(role + " is not an existing directory: " + absolute);
         }
-        return absolute.toRealPath(LinkOption.NOFOLLOW_LINKS);
+        // All existing components were already validated without following links. Re-resolving
+        // the pathname with toRealPath() would create a second parent-walk and reopen a TOCTOU
+        // window where a checked parent could be replaced before canonicalization.
+        return absolute;
     }
 
     /** Canonicalizes the existing prefix while preserving not-yet-created suffix components. */
@@ -42,18 +45,16 @@ public final class OrganizerPathSafety {
             if (attrs.isOther() || (!attrs.isDirectory() && !attrs.isRegularFile())) {
                 throw new IOException(role + " is a special filesystem entry: " + absolute);
             }
-            Path result = absolute.toRealPath(LinkOption.NOFOLLOW_LINKS);
-            validatePlatformLength(result, role);
-            return result;
+            validatePlatformLength(absolute, role);
+            return absolute;
         }
         Path existing = nearestExistingAncestor(absolute);
         rejectLinkLikeExistingComponents(existing, role);
         if (!Files.isDirectory(existing, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException(role + " existing ancestor is not a directory: " + existing);
         }
-        Path realExisting = existing.toRealPath(LinkOption.NOFOLLOW_LINKS);
         Path suffix = existing.relativize(absolute);
-        Path result = realExisting.resolve(suffix).normalize();
+        Path result = existing.resolve(suffix).normalize();
         validatePlatformLength(result, role);
         return result;
     }
@@ -65,7 +66,7 @@ public final class OrganizerPathSafety {
         if (Files.isSymbolicLink(absolute) || !Files.isRegularFile(absolute, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException(role + " is not a safe regular file: " + absolute);
         }
-        return absolute.toRealPath(LinkOption.NOFOLLOW_LINKS);
+        return absolute;
     }
 
     public static void rejectLinkLikeExistingComponents(Path path, String role) throws IOException {

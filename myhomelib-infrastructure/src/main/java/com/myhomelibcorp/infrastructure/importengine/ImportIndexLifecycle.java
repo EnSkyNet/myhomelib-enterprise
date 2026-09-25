@@ -26,8 +26,9 @@ final class ImportIndexLifecycle {
      * an empty catalog. They are intentionally not suspended for a refresh of an existing catalog:
      * rebuilding a large pre-existing index can cost more than maintaining it during UPSERTs.
      *
-     * The exact author-name lookup index and keyword_books(book_id) stay live because the import
-     * path can need them for safe author-cache fallback and idempotent relation replacement.
+     * The exact author-name lookup index stays live because the import path can need it for the
+     * safe author-cache fallback. Initial-baseline relation replacement is insert-only, so the
+     * book-side keyword/catalog-state indexes are also pure write amplification and may be rebuilt.
      */
     private static final List<String> INITIAL_BASELINE_EXTRA_SUSPEND_INDEXES = List.of(
             "idx_books_language",
@@ -46,7 +47,11 @@ final class ImportIndexLifecycle {
             "idx_books_active_language_title",
             "idx_books_active_id",
             "idx_book_authors_author_id",
-            "idx_book_genres_genre_code"
+            "idx_book_genres_genre_code",
+            "idx_keyword_books_book_id",
+            "idx_keyword_books_keyword_book",
+            "idx_catalog_book_state_source",
+            "idx_catalog_book_state_downloaded"
     );
 
     private final CollectionManager collectionManager;

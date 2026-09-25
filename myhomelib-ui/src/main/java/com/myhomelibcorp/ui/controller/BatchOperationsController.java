@@ -59,7 +59,9 @@ public class BatchOperationsController {
             return true;
         }
 
+        String expectedCollectionId = currentCollectionId();
         bookDownloadCoordinator.downloadBatch(selected, owner).whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
+            if (!isCurrentCollection(expectedCollectionId)) return;
             if (error != null) {
                 dialogService.showWarning(UiText.text("ui.import.stage.downloading"), UiText.text("ui.java.batch_operations_controller.1f8f127999") + UiExceptionSupport.message(error));
             } else {
@@ -83,7 +85,9 @@ public class BatchOperationsController {
             showNoBatchSelection();
             return true;
         }
+        String expectedCollectionId = currentCollectionId();
         bookDownloadCoordinator.removeLocalCopies(selected).whenComplete((count, error) -> UiExecutor.runOnUiThread(() -> {
+            if (!isCurrentCollection(expectedCollectionId)) return;
             if (error == null) {
                 handleClearSelection();
                 if (onComplete != null) onComplete.run();
@@ -101,8 +105,10 @@ public class BatchOperationsController {
         if (!dialogService.showConfirmation(UiText.text("ui.java.batch_operations_controller.026298e83a"),
                 UiText.text("ui.java.batch_operations_controller.1de483cf51") + selected.size() + "?",
                 UiText.text("ui.java.batch_operations_controller.eb95ca1047"))) return true;
-        executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> bookSaver.deleteBooks(selected))
+        String expectedCollectionId = currentCollectionId();
+        executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> bookSaver.deleteBooks(selected, expectedCollectionId))
                 .whenComplete((count, error) -> UiExecutor.runOnUiThread(() -> {
+            if (!isCurrentCollection(expectedCollectionId)) return;
             if (error == null) {
                 dialogService.showInfo(UiText.text("ui.java.batch_operations_controller.398c7d4f7b"), UiText.text("ui.java.batch_operations_controller.fdcebc8c27") + count);
                 handleClearSelection();
@@ -123,10 +129,12 @@ public class BatchOperationsController {
         List<Integer> rates = List.of(1, 2, 3, 4, 5);
         Optional<Integer> result = dialogService.showChoiceDialog(
                 rates, 5, UiText.text("ui.fxml.author_workspace.rating"), UiText.text("ui.java.batch_operations_controller.3618c0f9b1") + selected.size() + UiText.text("ui.java.batch_operations_controller.faf0c7e42c"), UiText.text("ui.java.batch_operations_controller.5caaf09cac"));
+        String expectedCollectionId = currentCollectionId();
         result.ifPresent(rate -> executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
             updateRateBatchUseCase.execute(selected, rate);
             return null;
         }).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
+            if (!isCurrentCollection(expectedCollectionId)) return;
             if (error != null) {
                 log.error("Помилка масового оновлення рейтингу", error);
                 dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.batch_operations_controller.dbb417d13e") + UiExceptionMessages.root(error));
@@ -163,10 +171,12 @@ public class BatchOperationsController {
             return;
         }
 
+        String expectedCollectionId = currentCollectionId();
         executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
             updateProgressBatchUseCase.execute(selected, progress);
             return null;
         }).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
+            if (!isCurrentCollection(expectedCollectionId)) return;
             if (error != null) {
                 log.error("Помилка масового оновлення прогресу", error);
                 dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.batch_operations_controller.1db8d3d954") + UiExceptionMessages.root(error));
@@ -186,10 +196,12 @@ public class BatchOperationsController {
         }
         if (dialogService.showConfirmation(UiText.text("common.confirmation"), UiText.text("ui.java.batch_operations_controller.9f79208acf"),
                 UiText.text("ui.java.batch_operations_controller.4b69ba705c") + selected.size() + UiText.text("ui.java.batch_operations_controller.af17e2b02c"))) {
+            String expectedCollectionId = currentCollectionId();
             executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
                 markAsReadBatchUseCase.execute(selected);
                 return null;
             }).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
+                if (!isCurrentCollection(expectedCollectionId)) return;
                 if (error != null) {
                     log.error("Помилка масового позначення прочитаним", error);
                     dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.batch_operations_controller.a46ab42550") + UiExceptionMessages.root(error));
@@ -211,6 +223,7 @@ public class BatchOperationsController {
         String expectedCollectionId = currentCollectionId();
         executor.submitCollectionScoped(LibraryOperationType.QUERY, loadGroupsUseCase::execute)
                 .whenComplete((groups, loadError) -> UiExecutor.runOnUiThread(() -> {
+                    if (!isCurrentCollection(expectedCollectionId)) return;
                     if (loadError != null) {
                         log.error("Помилка завантаження груп", loadError);
                         dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.batch_operations_controller.e75d77fb01") + UiExceptionMessages.root(loadError));
@@ -228,6 +241,7 @@ public class BatchOperationsController {
                         addToGroupBatchUseCase.execute(g.getId(), selected, expectedCollectionId);
                         return null;
                     }).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
+                        if (!isCurrentCollection(expectedCollectionId)) return;
                         if (error != null) {
                             log.error("Помилка масового додавання до групи", error);
                             dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.batch_operations_controller.ae7ef9ed1e") + UiExceptionMessages.root(error));
@@ -257,6 +271,10 @@ public class BatchOperationsController {
         dialogService.showWarning(UiText.text("ui.java.batch_operations_controller.ac1e0c3aad"),
                 UiText.text("ui.java.batch_operations_controller.ea4e147415"));
     }
+    private boolean isCurrentCollection(String expectedCollectionId) {
+        return java.util.Objects.equals(expectedCollectionId, currentCollectionId());
+    }
+
     private String currentCollectionId() {
         var collection = appState.getCurrentLibraryCollection();
         return collection == null ? null : collection.getId();

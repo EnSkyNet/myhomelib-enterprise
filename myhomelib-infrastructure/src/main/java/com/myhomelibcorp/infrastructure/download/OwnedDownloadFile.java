@@ -23,10 +23,8 @@ final class OwnedDownloadFile {
 
     static Snapshot snapshot(Path path, String role) throws IOException {
         if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return Snapshot.absent();
-        Path safe = SafeFilePublication.requireSafeRegularFile(path, role);
-        long size = Files.size(safe);
-        String hash = SafeFilePublication.sha256(safe, role + " snapshot");
-        return new Snapshot(size, hash);
+        SafeFilePublication.FileSnapshot file = SafeFilePublication.snapshot(path, role);
+        return new Snapshot(file.size(), file.sha256());
     }
 
     static Session open(Path path, Snapshot snapshot, boolean append, String role) throws IOException {
@@ -87,11 +85,9 @@ final class OwnedDownloadFile {
                 finished = true;
                 channel.close();
             }
+            // Matching SHA-256 proves both content and byte length; a second pathname-only
+            // Files.size() lookup would reopen a TOCTOU window without adding ownership evidence.
             SafeFilePublication.requireOwnedPath(path, handleHash, role + " pathname verification");
-            long pathSize = Files.size(SafeFilePublication.requireSafeRegularFile(path, role + " pathname"));
-            if (pathSize != size) {
-                throw new IOException(role + " size changed after write: " + path);
-            }
             return new Snapshot(size, handleHash);
         }
 

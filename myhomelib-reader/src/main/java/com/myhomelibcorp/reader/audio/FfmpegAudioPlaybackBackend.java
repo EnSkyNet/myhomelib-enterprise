@@ -1,10 +1,10 @@
 package com.myhomelibcorp.reader.audio;
 
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.shared.util.ExecutablePathSafety;
 import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -33,7 +33,8 @@ public final class FfmpegAudioPlaybackBackend implements AudioPlaybackBackend {
 
     @Override public AudioTrack probe(Path path) throws IOException {
         Path source = requireLocalAudio(path);
-        ProcessBuilder pb = new ProcessBuilder(ffprobe, "-v", "error", "-show_chapters",
+        String safeFfprobe = ExecutablePathSafety.resolve(ffprobe, "ffprobe executable").toString();
+        ProcessBuilder pb = new ProcessBuilder(safeFfprobe, "-v", "error", "-show_chapters",
                 "-show_entries", "format=duration", "-of", "default=noprint_wrappers=0", source.toString());
         ProcessExecutionSupport.Result captured;
         try {
@@ -53,8 +54,9 @@ public final class FfmpegAudioPlaybackBackend implements AudioPlaybackBackend {
 
     @Override public Playback start(Path path, long startMillis, double rate) throws IOException {
         Path source = requireLocalAudio(path);
+        String safeFfplay = ExecutablePathSafety.resolve(ffplay, "ffplay executable").toString();
         double safeRate = Math.max(0.5, Math.min(2.0, rate));
-        List<String> argv = new ArrayList<>(List.of(ffplay, "-nodisp", "-autoexit", "-loglevel", "error"));
+        List<String> argv = new ArrayList<>(List.of(safeFfplay, "-nodisp", "-autoexit", "-loglevel", "error"));
         if (startMillis > 0) argv.addAll(List.of("-ss", String.format(Locale.ROOT, "%.3f", startMillis / 1000.0)));
         if (Math.abs(safeRate - 1.0) > 0.0001) argv.addAll(List.of("-af", String.format(Locale.ROOT, "atempo=%.3f", safeRate)));
         argv.add(source.toString());
@@ -107,8 +109,9 @@ public final class FfmpegAudioPlaybackBackend implements AudioPlaybackBackend {
 
     private boolean commandAvailable(String command) {
         try {
+            String safeCommand = ExecutablePathSafety.resolve(command, "FFmpeg executable").toString();
             ProcessExecutionSupport.Result result = ProcessExecutionSupport.run(
-                    List.of(command, "-version"), null, Duration.ofSeconds(2), 4096);
+                    List.of(safeCommand, "-version"), null, Duration.ofSeconds(2), 4096);
             return result.exitCode() == 0;
         } catch (Exception ignored) { return false; }
     }
@@ -116,8 +119,7 @@ public final class FfmpegAudioPlaybackBackend implements AudioPlaybackBackend {
     private static Path requireLocalAudio(Path value) throws IOException {
         if (value == null) throw new IOException("Audio path is required");
         Path path = value.toAbsolutePath().normalize();
-        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) throw new IOException("Audio file is unavailable: " + path);
-        return path;
+        return AtomicFileSupport.requireSafeRegularFile(path, "Audio file");
     }
 
     private static double decimal(String value) {

@@ -3,6 +3,7 @@ package com.myhomelibcorp.converter.toolchain.process;
 import com.myhomelibcorp.converter.toolchain.ConversionFailureKind;
 import com.myhomelibcorp.converter.toolchain.ConversionToolchainException;
 import com.myhomelibcorp.converter.toolchain.fs.ConversionPathSafety;
+import com.myhomelibcorp.shared.util.ExecutablePathSafety;
 import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 import org.springframework.stereotype.Component;
 
@@ -56,14 +57,20 @@ public class ExternalToolRunner {
         };
 
         final Path safeWorkingDirectory;
+        final ArrayList<String> safeArgv = new ArrayList<>(request.argv());
         try {
             safeWorkingDirectory = ConversionPathSafety.requireSafeDirectoryPath(
                     request.workingDirectory(), "External converter working directory");
+            if (safeArgv.isEmpty() || safeArgv.getFirst().isBlank()) {
+                throw new IOException("External converter executable is empty");
+            }
+            safeArgv.set(0, ExecutablePathSafety.resolve(
+                    safeArgv.getFirst(), "External converter executable").toString());
         } catch (IOException | RuntimeException unsafeDirectory) {
             throw new ConversionToolchainException(ConversionFailureKind.SECURITY_REJECTED,
-                    "External converter working directory is unsafe", unsafeDirectory);
+                    "External converter executable or working directory is unsafe", unsafeDirectory);
         }
-        ProcessBuilder builder = new ProcessBuilder(new ArrayList<>(request.argv()))
+        ProcessBuilder builder = new ProcessBuilder(safeArgv)
                 .directory(safeWorkingDirectory.toFile());
         try {
             ProcessExecutionSupport.Result result = ProcessExecutionSupport.run(

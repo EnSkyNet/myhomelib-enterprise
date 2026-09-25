@@ -150,6 +150,21 @@ public final class AtomicFileSupport {
         }
     }
 
+    /** Validates every existing component of a directory path without following links/reparse entries. */
+    public static Path requireSafeDirectoryPath(Path directory, String role) throws IOException {
+        if (directory == null) throw new IllegalArgumentException("directory cannot be null");
+        Path absolute = directory.toAbsolutePath().normalize();
+        Path current = absolute.getRoot();
+        for (Path component : absolute) {
+            current = current == null ? component : current.resolve(component);
+            if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException(role + " does not exist: " + absolute);
+            }
+            requireSafeDirectory(current, role);
+        }
+        return absolute;
+    }
+
     public static Path requireSafeRegularFile(Path file, String role) throws IOException {
         Path absolute = file.toAbsolutePath().normalize();
         Path current = absolute.getRoot();

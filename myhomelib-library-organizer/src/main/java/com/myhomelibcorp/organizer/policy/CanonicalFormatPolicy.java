@@ -59,8 +59,26 @@ public final class CanonicalFormatPolicy {
         String s=BookConversionCapability.normalizeFormat(source),t=BookConversionCapability.normalizeFormat(target);
         if(s.equals(t))return true;
         String mode=settings==null?"AUTO":settings.get("converter.mode","AUTO");
-        for(BookConverter converter:converters) if(ConverterSelectionPolicy.allowed(converter,mode)&&converter.isAvailable()) for(BookConversionCapability capability:converter.capabilities())
-            if(capability.supportsSource(s)&&capability.targetFormat().equals(t))return true;
+        for (BookConverter converter : converters) {
+            if (!ConverterSelectionPolicy.allowed(converter, mode) || !safeAvailable(converter)) continue;
+            for (BookConversionCapability capability : safeCapabilities(converter)) {
+                if (capability.supportsSource(s) && capability.targetFormat().equals(t)) return true;
+            }
+        }
         return false;
+    }
+
+    private boolean safeAvailable(BookConverter converter) {
+        try { return converter != null && converter.isAvailable(); }
+        catch (RuntimeException failure) { return false; }
+    }
+
+    private List<BookConversionCapability> safeCapabilities(BookConverter converter) {
+        try {
+            Set<BookConversionCapability> capabilities = converter.capabilities();
+            return capabilities == null ? List.of() : capabilities.stream().filter(java.util.Objects::nonNull).toList();
+        } catch (RuntimeException failure) {
+            return List.of();
+        }
     }
 }

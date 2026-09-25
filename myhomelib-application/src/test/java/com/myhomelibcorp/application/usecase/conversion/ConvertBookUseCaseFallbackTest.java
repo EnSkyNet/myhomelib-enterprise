@@ -79,8 +79,12 @@ class ConvertBookUseCaseFallbackTest {
         ConvertBookUseCase useCase = new ConvertBookUseCase(books, List.of(calibre, brokenToolchain), resources, mutations);
 
         assertThatThrownBy(() -> useCase.execute(ConvertBookUseCase.Request.withDefaults(id, "epub", tempDir)))
-                .isInstanceOf(IOException.class)
-                .hasMessageContaining("invalid input");
+                .isInstanceOfSatisfying(BookConversionException.class, failure -> {
+                    assertThat(failure.stage()).isEqualTo(BookConversionException.Stage.PROVIDER);
+                    assertThat(failure.providerId()).isEqualTo("myhomelib-toolchain");
+                    assertThat(failure.getCause()).isInstanceOf(IOException.class)
+                            .hasMessageContaining("invalid input");
+                });
         assertThat(fallbackCalls).hasValue(0);
         verifyNoInteractions(mutations);
     }

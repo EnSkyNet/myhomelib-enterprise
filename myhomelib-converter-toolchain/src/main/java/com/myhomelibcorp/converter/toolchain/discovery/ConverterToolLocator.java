@@ -22,15 +22,19 @@ public class ConverterToolLocator {
     }
 
     public Optional<Path> locate(String id, String executableBaseName) {
-        String explicit = settings.get("converter.toolchain." + id + ".executable", "").trim();
+        String explicit = settings.get(settingKey(id), "").trim();
         if (!explicit.isBlank()) {
             Optional<Path> candidate = validateExplicit(Path.of(stripQuotes(explicit)).toAbsolutePath().normalize(), executableBaseName);
             if (candidate.isPresent()) return candidate;
+            // Calibre has a dedicated user-visible path field. If the user explicitly configured
+            // a path, do not silently ignore a broken value and report another auto-discovered
+            // installation as connected; diagnostics and actual selection must agree.
+            if ("calibre".equals(id)) return Optional.empty();
         }
 
         String executable = platformExecutable(executableBaseName);
         List<Path> bundled = bundledToolRoots().stream()
-                .map(root -> root.resolve("converters").resolve(id).resolve(executable))
+                .flatMap(root -> bundledCandidates(root, id, executable).stream())
                 .toList();
         for (Path candidate : bundled) {
             Optional<Path> valid = validate(candidate.toAbsolutePath().normalize());
@@ -66,6 +70,27 @@ public class ConverterToolLocator {
         );
     }
 
+    /**
+     * Known layouts of the optional converter compatibility bundle.  The canonical
+     * layout remains {@code converters/<id>/<executable>}; versioned/vendor directories
+     * are accepted as read-only compatibility aliases so an extracted tools bundle works
+     * without requiring users to rename third-party distributions.
+     */
+    List<Path> bundledCandidates(Path root, String id, String executable) {
+        Path converters = root.resolve("converters");
+        List<Path> candidates = new ArrayList<>();
+        candidates.add(converters.resolve(id).resolve(executable));
+        if ("fbc".equals(id)) {
+            candidates.add(converters.resolve("fbc-windows-amd64").resolve(executable));
+        } else if ("pandoc".equals(id)) {
+            candidates.add(converters.resolve("pandoc-3.11").resolve(executable));
+        } else if ("calibre".equals(id)) {
+            candidates.add(converters.resolve("Calibre").resolve(executable));
+            candidates.add(converters.resolve("calibre").resolve(executable));
+        }
+        return List.copyOf(candidates);
+    }
+
     private List<Path> standardCandidates(String id, String executable) {
         List<Path> candidates = new ArrayList<>();
         if (isWindows()) {
@@ -73,10 +98,17 @@ public class ConverterToolLocator {
             String pfx86 = System.getenv("ProgramFiles(x86)");
             if (pf != null) {
                 if ("pandoc".equals(id)) candidates.add(Path.of(pf, "Pandoc", executable));
+                if ("calibre".equals(id)) candidates.add(Path.of(pf, "Calibre2", executable));
                 candidates.add(Path.of(pf, "MyHomeLib", "tools", "converters", id, executable));
             }
-            if (pfx86 != null && "pandoc".equals(id)) candidates.add(Path.of(pfx86, "Pandoc", executable));
+            if (pfx86 != null) {
+                if ("pandoc".equals(id)) candidates.add(Path.of(pfx86, "Pandoc", executable));
+                if ("calibre".equals(id)) candidates.add(Path.of(pfx86, "Calibre2", executable));
+            }
         } else {
+            if ("calibre".equals(id) && isMac()) {
+                candidates.add(Path.of("/Applications/calibre.app/Contents/MacOS/ebook-convert"));
+            }
             candidates.add(Path.of("/usr/local/bin", executable));
             candidates.add(Path.of("/usr/bin", executable));
             Path home = Path.of(System.getProperty("user.home", "."));
@@ -112,6 +144,13 @@ public class ConverterToolLocator {
         return validateCandidate(path);
     }
 
+
+    private String settingKey(String id) {
+        return "calibre".equals(id)
+                ? "converter.calibre.executable"
+                : "converter.toolchain." + id + ".executable";
+    }
+
     private String platformExecutable(String base) {
         if (isWindows() && !base.toLowerCase(Locale.ROOT).endsWith(".exe")) return base + ".exe";
         return base;
@@ -119,6 +158,11 @@ public class ConverterToolLocator {
 
     private boolean isWindows() {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+    }
+
+    private boolean isMac() {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        return os.contains("mac") || os.contains("darwin");
     }
 
     private String stripQuotes(String value) {

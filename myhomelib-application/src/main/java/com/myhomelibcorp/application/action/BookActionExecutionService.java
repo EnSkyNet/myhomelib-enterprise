@@ -1,10 +1,11 @@
 package com.myhomelibcorp.application.action;
 
 import com.myhomelibcorp.application.util.CommandTemplate;
+import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.shared.util.ExecutablePathSafety;
 import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 import org.springframework.stereotype.Component;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -46,15 +47,14 @@ public class BookActionExecutionService {
             for (BookActionCommand command : profile.commands()) {
                 List<String> argv = argv(command, placeholders);
                 if (argv.isEmpty() || argv.getFirst().isBlank()) throw new IllegalArgumentException("Executable не задано");
+                argv = validateExplicitExecutable(argv);
                 ProcessBuilder builder = new ProcessBuilder(argv)
                         .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                         .redirectError(ProcessBuilder.Redirect.DISCARD);
                 String cwd = CommandTemplate.expandToken(command.workingDirectory(), placeholders).trim();
                 if (!cwd.isBlank()) {
                     Path dir = Path.of(cwd).toAbsolutePath().normalize();
-                    if (!Files.isDirectory(dir, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                        throw new IllegalArgumentException("Робоча папка не існує або є symbolic link: " + dir);
-                    }
+                    dir = SafeFilePublication.requireSafeDirectoryPath(dir, "Book action working directory");
                     builder.directory(dir.toFile());
                 }
                 Process process = builder.start();
@@ -89,6 +89,13 @@ public class BookActionExecutionService {
         } catch (Exception e) {
             return BookActionRunResult.failure(started, e.getMessage());
         }
+    }
+
+    private List<String> validateExplicitExecutable(List<String> argv) throws Exception {
+        Path safeExecutable = ExecutablePathSafety.resolve(argv.getFirst(), "Book action executable");
+        List<String> safeArgv = new ArrayList<>(argv);
+        safeArgv.set(0, safeExecutable.toString());
+        return List.copyOf(safeArgv);
     }
 
     private List<String> argv(BookActionCommand command, Map<String, String> placeholders) {

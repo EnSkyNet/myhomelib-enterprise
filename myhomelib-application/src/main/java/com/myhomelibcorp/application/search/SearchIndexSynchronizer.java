@@ -34,6 +34,8 @@ public class SearchIndexSynchronizer {
     private final BookQueryRepository bookQueryRepository;
     private final SearchIndexer searchIndexer;
     private final SearchIndexLifecycle searchIndexLifecycle;
+    /** Serializes Lucene atomic-update/rebuild phases across compatible parallel catalog operations. */
+    private final Object indexSyncMonitor = new Object();
 
     public void synchronizeAfterCommit(List<BookId> bookIds) {
         List<BookId> ids = normalize(bookIds);
@@ -65,36 +67,40 @@ public class SearchIndexSynchronizer {
     public boolean synchronizeSafelyNow(List<BookId> bookIds) {
         List<BookId> ids = normalize(bookIds);
         if (ids.isEmpty()) return true;
-        searchIndexLifecycle.markCurrentIndexDirty();
-        try {
-            applySelective(ids);
-            searchIndexLifecycle.markCurrentIndexSynchronized();
-            return true;
-        } catch (RuntimeException selectiveFailure) {
-            log.error("Selective Lucene synchronization failed for {} committed books; rebuilding derived index",
-                    ids.size(), selectiveFailure);
+        synchronized (indexSyncMonitor) {
+            searchIndexLifecycle.markCurrentIndexDirty();
             try {
-                searchIndexer.rebuildIndex();
+                applySelective(ids);
                 searchIndexLifecycle.markCurrentIndexSynchronized();
                 return true;
-            } catch (RuntimeException rebuildFailure) {
-                selectiveFailure.addSuppressed(rebuildFailure);
-                log.error("Full Lucene rebuild also failed after committed catalog mutation", rebuildFailure);
-                return false;
+            } catch (RuntimeException selectiveFailure) {
+                log.error("Selective Lucene synchronization failed for {} committed books; rebuilding derived index",
+                        ids.size(), selectiveFailure);
+                try {
+                    searchIndexer.rebuildIndex();
+                    searchIndexLifecycle.markCurrentIndexSynchronized();
+                    return true;
+                } catch (RuntimeException rebuildFailure) {
+                    selectiveFailure.addSuppressed(rebuildFailure);
+                    log.error("Full Lucene rebuild also failed after committed catalog mutation", rebuildFailure);
+                    return false;
+                }
             }
         }
     }
 
     /** Full rebuild with freshness marker semantics. A failed rebuild intentionally leaves the index dirty. */
     public boolean rebuildSafelyNow() {
-        searchIndexLifecycle.markCurrentIndexDirty();
-        try {
-            searchIndexer.rebuildIndex();
-            searchIndexLifecycle.markCurrentIndexSynchronized();
-            return true;
-        } catch (RuntimeException failure) {
-            log.error("Full Lucene rebuild failed; index remains marked stale for restart recovery", failure);
-            return false;
+        synchronized (indexSyncMonitor) {
+            searchIndexLifecycle.markCurrentIndexDirty();
+            try {
+                searchIndexer.rebuildIndex();
+                searchIndexLifecycle.markCurrentIndexSynchronized();
+                return true;
+            } catch (RuntimeException failure) {
+                log.error("Full Lucene rebuild failed; index remains marked stale for restart recovery", failure);
+                return false;
+            }
         }
     }
 
@@ -102,9 +108,11 @@ public class SearchIndexSynchronizer {
     void synchronizeNow(List<BookId> bookIds) {
         List<BookId> ids = normalize(bookIds);
         if (ids.isEmpty()) return;
-        searchIndexLifecycle.markCurrentIndexDirty();
-        applySelective(ids);
-        searchIndexLifecycle.markCurrentIndexSynchronized();
+        synchronized (indexSyncMonitor) {
+            searchIndexLifecycle.markCurrentIndexDirty();
+            applySelective(ids);
+            searchIndexLifecycle.markCurrentIndexSynchronized();
+        }
     }
 
     private void synchronizeDerivedIndexSafely(List<BookId> ids) {

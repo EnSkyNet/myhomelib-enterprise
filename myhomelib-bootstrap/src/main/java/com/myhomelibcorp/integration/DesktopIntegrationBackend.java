@@ -26,6 +26,7 @@ import com.myhomelibcorp.domain.model.sync.ChangeSet;
 import com.myhomelibcorp.domain.model.sync.SyncEntityType;
 import com.myhomelibcorp.domain.model.sync.SyncRecord;
 import com.myhomelibcorp.infrastructure.ai.OpenAiResponsesProvider;
+import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
 import com.myhomelibcorp.infrastructure.sync.folder.SyncBundleJsonCodec;
 import com.myhomelibcorp.infrastructure.sync.webdav.JdkWebDavHttpClient;
 import com.myhomelibcorp.infrastructure.sync.webdav.WebDavCredentialStore;
@@ -49,6 +50,7 @@ import com.myhomelibcorp.shared.security.SecretStore;
 import com.myhomelibcorp.shared.security.SecretStoreContext;
 import com.myhomelibcorp.shared.security.SecretStoreProvider;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.shared.util.SafeFileNameSupport;
 import com.myhomelibcorp.ui.integration.IntegrationBackend;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -95,8 +97,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 /** Production wiring for WebDAV user-data sync, plugin packages and optional AI providers. */
 @Component
@@ -1010,8 +1010,8 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                     .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar"))
                     .sorted().toList()) {
                 try {
-                    PluginManifest manifest = readPluginManifest(jar);
-                    PluginPackage pkg = new PluginPackage(jar.toAbsolutePath().normalize(), manifest, sha256(jar));
+                    PluginPackage pkg = inspectPluginPackage(jar);
+                    PluginManifest manifest = pkg.manifest();
                     PluginPackage previous = found.putIfAbsent(manifest.pluginId(), pkg);
                     if (previous != null) {
                         pluginFailures.put(manifest.pluginId(), "Знайдено кілька JAR з однаковим pluginId; використовується " + previous.jar().getFileName());
@@ -1036,30 +1036,47 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         found.forEach(pluginPackages::put);
     }
 
+    private PluginPackage inspectPluginPackage(Path jar) throws IOException {
+        Path safeJar = SafeFilePublication.requireSafeRegularFile(jar, "Plugin JAR");
+        try (SafeZipArchive archive = SafeZipArchive.open(safeJar, StandardCharsets.UTF_8, "Plugin JAR")) {
+            // Hash and manifest must describe the same already-open bytes. A plugin package can be
+            // replaced while the integration screen is open, so two pathname opens are not a
+            // coherent approval identity. enablePlugin() later re-stages and rechecks this hash.
+            String hash = archive.sha256("Plugin package");
+            PluginManifest manifest = readPluginManifest(archive);
+            return new PluginPackage(jar.toAbsolutePath().normalize(), manifest, hash);
+        }
+    }
+
     private PluginManifest readPluginManifest(Path jar) throws IOException {
         Path safeJar = SafeFilePublication.requireSafeRegularFile(jar, "Plugin JAR");
-        try (ZipFile zip = new ZipFile(safeJar.toFile())) {
-            ZipEntry entry = zip.getEntry(PLUGIN_MANIFEST);
-            if (entry == null || entry.isDirectory()) {
-                throw new IOException("У JAR відсутній " + PLUGIN_MANIFEST);
-            }
-            if (entry.getSize() > MAX_PLUGIN_MANIFEST_BYTES) throw new IOException("Маніфест плагіна завеликий");
-            Properties properties = new Properties();
-            try (InputStream in = zip.getInputStream(entry)) {
-                byte[] bytes = in.readNBytes(MAX_PLUGIN_MANIFEST_BYTES + 1);
-                if (bytes.length > MAX_PLUGIN_MANIFEST_BYTES) throw new IOException("Маніфест плагіна завеликий");
-                properties.load(new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8));
-            }
-            String id = requiredProperty(properties, "pluginId");
-            String name = requiredProperty(properties, "displayName");
-            String version = requiredProperty(properties, "version");
-            PluginApiVersion min = parseApiVersion(requiredProperty(properties, "apiMin"));
-            PluginApiVersion max = parseApiVersion(requiredProperty(properties, "apiMax"));
-            Set<PluginService> services = parseEnumSet(properties.getProperty("services", ""), PluginService.class);
-            Set<PluginService> overrides = parseEnumSet(properties.getProperty("overrides", ""), PluginService.class);
-            Set<PluginPermission> permissions = parseEnumSet(properties.getProperty("permissions", ""), PluginPermission.class);
-            return new PluginManifest(id, name, version, new PluginApiRange(min, max), services, overrides, permissions);
+        try (SafeZipArchive archive = SafeZipArchive.open(safeJar, StandardCharsets.UTF_8, "Plugin JAR")) {
+            return readPluginManifest(archive);
         }
+    }
+
+    private PluginManifest readPluginManifest(SafeZipArchive archive) throws IOException {
+        var zip = archive.zip();
+        var entry = zip.getEntry(PLUGIN_MANIFEST);
+        if (entry == null || entry.isDirectory()) {
+            throw new IOException("У JAR відсутній " + PLUGIN_MANIFEST);
+        }
+        if (entry.getSize() > MAX_PLUGIN_MANIFEST_BYTES) throw new IOException("Маніфест плагіна завеликий");
+        Properties properties = new Properties();
+        try (InputStream in = zip.getInputStream(entry)) {
+            byte[] bytes = in.readNBytes(MAX_PLUGIN_MANIFEST_BYTES + 1);
+            if (bytes.length > MAX_PLUGIN_MANIFEST_BYTES) throw new IOException("Маніфест плагіна завеликий");
+            properties.load(new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8));
+        }
+        String id = requiredProperty(properties, "pluginId");
+        String name = requiredProperty(properties, "displayName");
+        String version = requiredProperty(properties, "version");
+        PluginApiVersion min = parseApiVersion(requiredProperty(properties, "apiMin"));
+        PluginApiVersion max = parseApiVersion(requiredProperty(properties, "apiMax"));
+        Set<PluginService> services = parseEnumSet(properties.getProperty("services", ""), PluginService.class);
+        Set<PluginService> overrides = parseEnumSet(properties.getProperty("overrides", ""), PluginService.class);
+        Set<PluginPermission> permissions = parseEnumSet(properties.getProperty("permissions", ""), PluginPermission.class);
+        return new PluginManifest(id, name, version, new PluginApiRange(min, max), services, overrides, permissions);
     }
 
     private void autoEnableApprovedPlugins() {
@@ -1237,8 +1254,9 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
                     throw new IOException("Plugin export target must be absent before conversion: " + target);
                 }
-                String sourceExtension = context.sourceFormat() == null || context.sourceFormat().isBlank()
-                        ? ".book" : "." + context.sourceFormat().replace('_', '.');
+                String safeSourceFormat = SafeFileNameSupport.sanitizeComponent(
+                        context.sourceFormat() == null ? "" : context.sourceFormat().replace('_', '.'), 32);
+                String sourceExtension = safeSourceFormat.isBlank() ? ".book" : "." + safeSourceFormat;
                 Path workspace = SafeFilePublication.createPrivateWorkspace(
                         target.getParent(), ".mhl-plugin-export-", "Plugin export workspace");
                 try {
@@ -1556,10 +1574,6 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         } catch (Exception impossible) {
             throw new IllegalStateException("SHA-256 недоступний", impossible);
         }
-    }
-
-    private static String sha256(Path path) throws IOException {
-        return SafeFilePublication.sha256(path, "Plugin package");
     }
 
     private static byte[] readBounded(Path path, int maxBytes, String tooLargeMessage) throws IOException {

@@ -2958,7 +2958,7 @@
     "ui.search.title": "🔎 Търсене в библиотеката",
     "ui.settings.command_test.sample_author": "Тестов автор",
     "ui.settings.converters.calibre.executable": "Calibre ebook-convert",
-    "ui.settings.converters.calibre.info": "Препоръчителен модул: Calibre ebook-convert. Ако пътят е празен, MyHomeLib го търси в PATH и стандартната папка на Calibre. Външните шаблони по-долу остават резервна/специализирана опция.",
+    "ui.settings.converters.calibre.info": "Calibre вече се проверява заедно с другите конвертори. Празен път означава автоматично търсене в portable tools, PATH и стандартната папка на Calibre, затова Calibre може да остане достъпен и след изчистване на полето. За да изключите Calibre напълно от автоматичния избор, изберете режим „MyHomeLib Toolchain“.",
     "ui.settings.converters.calibre.timeout": "Времеви лимит за Calibre, сек.",
     "ui.settings.converters.external.timeout": "Времеви лимит, секунди",
     "ui.settings.converters.external_templates.help": "Шаблони за външни команди: %SRC% — източник, %DST% — резултат, %TITLE%, %BOOKID%.",
@@ -3594,7 +3594,14 @@
     "ui.conversion.provider.external": "Външна команда",
     "ui.conversion.provider.native": "MyHomeLib (вграден)",
     "ui.conversion.provider.plugin": "Плъгин",
-    "ui.conversion.provider.unknown": "Конвертор"
+    "ui.conversion.provider.unknown": "Конвертор",
+    "ui.conversion.error.source_read": "Файлът източник на книгата не можа да бъде прочетен.",
+    "ui.conversion.error.provider": "Конверторът %s не можа да създаде %s.",
+    "ui.conversion.error.output_validation": "Конверторът %s създаде невалиден или недостъпен файл %s.",
+    "ui.conversion.error.publication": "%s беше създаден в работното хранилище, но резултатът не можа да бъде безопасно записан в избраната папка.",
+    "ui.conversion.error.catalog_registration": "%s беше създаден, но регистрацията на новия артефакт на книгата не можа да бъде завършена.",
+    "ui.conversion.provider.single": "Модул: %s",
+    "ui.conversion.provider.priority": "Основен модул: %s; резервни: %s"
   },
   "genres": {
     "sf_history": "Алтернативна история",

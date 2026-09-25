@@ -26,12 +26,8 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
-import java.nio.channels.Channels;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.time.Instant;
@@ -672,21 +668,14 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             return;
         }
         try (OpdsDownloadService.Download download = opened.get()) {
-            Path path = SafeFilePublication.requireSafeRegularFile(
-                    download.content().path(), "OPDS download source");
-            try (FileChannel source = FileChannel.open(
-                    path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
-                long size = source.size();
-                Headers headers = exchange.getResponseHeaders();
-                headers.set("Content-Type", mime(download.fileName()));
-                headers.set("Content-Disposition", "attachment; filename*=UTF-8''" + encode(download.fileName()));
-                headers.set("Cache-Control", "no-store");
-                applyBrowserHardening(headers);
-                exchange.sendResponseHeaders(200, size);
-                try (InputStream in = Channels.newInputStream(source);
-                     OutputStream out = exchange.getResponseBody()) {
-                    in.transferTo(out);
-                }
+            Headers headers = exchange.getResponseHeaders();
+            headers.set("Content-Type", mime(download.fileName()));
+            headers.set("Content-Disposition", "attachment; filename*=UTF-8''" + encode(download.fileName()));
+            headers.set("Cache-Control", "no-store");
+            applyBrowserHardening(headers);
+            exchange.sendResponseHeaders(200, download.size());
+            try (OutputStream out = exchange.getResponseBody()) {
+                download.transferTo(out);
             }
         } catch (Exception e) {
             // Якщо сталася помилка під час відправки, закриття download вже виконано

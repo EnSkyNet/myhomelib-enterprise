@@ -2,10 +2,56 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $Root = Split-Path -Parent $PSScriptRoot
 $Epub = Join-Path $Root "tools\validators\epubcheck"
-$Libmobi = Join-Path $Root "tools\converters\libmobi"
+$Converters = Join-Path $Root "tools\converters"
+$Libmobi = Join-Path $Converters "libmobi"
 $Source = Join-Path $Libmobi "build-src"
 $Build = Join-Path $Libmobi "build-windows"
 $Out = Join-Path $Libmobi "mobitool.exe"
+
+function Find-ConverterBundle {
+    $Candidates = @(
+        (Join-Path $Root "tools.7z"),
+        (Join-Path (Split-Path $Root -Parent) "tools.7z")
+    )
+    foreach ($Candidate in $Candidates) {
+        if (Test-Path $Candidate -PathType Leaf) { return $Candidate }
+    }
+    return $null
+}
+
+function Expand-CompatibilityBundleIfNeeded {
+    $Fbc = Join-Path $Converters "fbc-windows-amd64\fbc.exe"
+    $Pandoc = Join-Path $Converters "pandoc-3.11\pandoc.exe"
+    $Calibre = Join-Path $Converters "Calibre\ebook-convert.exe"
+    $CalibreWorker = Join-Path $Converters "Calibre\calibre-parallel.exe"
+    if ((Test-Path $Fbc -PathType Leaf) -and (Test-Path $Pandoc -PathType Leaf) `
+            -and (Test-Path $Calibre -PathType Leaf) -and (Test-Path $CalibreWorker -PathType Leaf)) {
+        return
+    }
+
+    $Bundle = Find-ConverterBundle
+    if (-not $Bundle) { return }
+
+    Write-Host "Extracting converter compatibility bundle: $Bundle"
+    $SevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue
+    if (-not $SevenZip) { $SevenZip = Get-Command 7zz.exe -ErrorAction SilentlyContinue }
+    if ($SevenZip) {
+        & $SevenZip.Source x -y ("-o" + $Root) $Bundle | Out-Host
+    } else {
+        $Tar = Get-Command tar.exe -ErrorAction SilentlyContinue
+        if (-not $Tar) {
+            throw "Converter bundle found at '$Bundle', but neither 7z.exe/7zz.exe nor tar.exe is available. Extract tools.7z into '$Root' manually."
+        }
+        & $Tar.Source -xf $Bundle -C $Root
+    }
+    if ($LASTEXITCODE -ne 0) { throw "Failed to extract converter compatibility bundle: $Bundle" }
+
+    if (-not (Test-Path $Fbc -PathType Leaf)) {
+        throw "Converter bundle extraction completed, but fbc.exe was not found at '$Fbc'."
+    }
+}
+
+Expand-CompatibilityBundleIfNeeded
 
 $Jar = Join-Path $Epub "epubcheck.jar"
 if (-not (Test-Path $Jar -PathType Leaf)) { throw "EPUBCheck JAR missing: $Jar" }
@@ -56,4 +102,22 @@ $LibmobiVersion = (& $Out -v 2>&1 | Out-String)
 if ($LASTEXITCODE -ne 0 -or $LibmobiVersion -notmatch 'libmobi:\s+0\.12') {
     throw "libmobi 0.12 probe failed: $LibmobiVersion"
 }
-Write-Host "Runtime tools ready: EPUBCheck 5.4.0, libmobi 0.12"
+
+$Fbc = Join-Path $Converters "fbc-windows-amd64\fbc.exe"
+$Pandoc = Join-Path $Converters "pandoc-3.11\pandoc.exe"
+$Calibre = Join-Path $Converters "Calibre\ebook-convert.exe"
+$CalibreWorker = Join-Path $Converters "Calibre\calibre-parallel.exe"
+
+$Optional = @()
+if (Test-Path $Fbc -PathType Leaf) { $Optional += "fb2cng/fbc" } else { Write-Warning "FB2 conversion engine is missing: $Fbc" }
+if (Test-Path $Pandoc -PathType Leaf) { $Optional += "Pandoc 3.11" } else { Write-Warning "Pandoc compatibility engine is missing: $Pandoc" }
+if ((Test-Path $Calibre -PathType Leaf) -and (Test-Path $CalibreWorker -PathType Leaf)) {
+    $Optional += "Calibre fallback"
+} elseif (Test-Path $Calibre -PathType Leaf) {
+    Write-Warning "Calibre fallback is incomplete: required worker is missing: $CalibreWorker"
+} else {
+    Write-Warning "Calibre fallback is missing: $Calibre"
+}
+
+$Suffix = if ($Optional.Count -gt 0) { "; detected: " + ($Optional -join ", ") } else { "" }
+Write-Host "Runtime tools ready: EPUBCheck 5.4.0, libmobi 0.12$Suffix"

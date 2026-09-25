@@ -44,11 +44,10 @@ public class CoverLocatorImpl implements CoverLocator {
             return Optional.empty();
         }
 
-        Path resolvedPath = bookResourcePort.isArchive(folder)
-                ? bookResourcePort.buildFilePath(root, null, folder)
-                : bookResourcePort.buildFilePath(root, folder, fileName);
-        log.debug("locateCoverFile: resolved path: {}", resolvedPath);
-        return Optional.ofNullable(resolvedPath);
+        Optional<Path> resolvedPath = bookResourcePort.locateBookFile(
+                fileName, folder, root, book.getArchiveEntry());
+        log.debug("locateCoverFile: resolved safe path: {}", resolvedPath.orElse(null));
+        return resolvedPath;
     }
 
     @Override

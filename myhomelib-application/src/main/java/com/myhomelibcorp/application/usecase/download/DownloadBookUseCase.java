@@ -75,22 +75,58 @@ public class DownloadBookUseCase {
         downloadQueuePort.markInProgress(collection.getId(), bookId.asString());
         try {
             var result = downloadPort.download(book, collection, cancel, progress == null ? v -> {} : progress, forceRefresh);
+            // updateStorage is the authoritative commit for a successful physical download. Everything
+            // below it is derived/bookkeeping state and must not turn an already-local book into a false
+            // FAILED download if a secondary store/index is temporarily unavailable.
             bookCommandRepository.updateStorage(
                     bookId, result.root().toString(), result.folder(), result.fileName(), result.archiveEntry(), true);
-            catalogUpdateTrackingPort.markDownloadedBaseline(bookId);
-            searchIndexSynchronizer.synchronizeSafelyNow(java.util.List.of(bookId));
+            markDownloadedBaselineSafely(bookId);
+            synchronizeSearchIndexSafely(bookId);
             synchronizeContentIndexSafely(collection.getId(), bookId);
-            downloadQueuePort.markCompleted(collection.getId(), bookId.asString(), result.physicalPath());
+            markDownloadCompletedSafely(collection.getId(), bookId, result.physicalPath());
             invalidateStatisticsSafely();
             return result.physicalPath();
         } catch (Exception error) {
-            if (cancel.get() || isCancellation(error)) {
-                downloadQueuePort.markCancelled(collection.getId(), bookId.asString(), resumeHint);
-            } else {
-                downloadQueuePort.markFailed(collection.getId(), bookId.asString(),
-                        SensitiveDataSanitizer.sanitizeText(ThrowableMessages.rootMessage(error)), resumeHint);
+            try {
+                if (cancel.get() || isCancellation(error)) {
+                    downloadQueuePort.markCancelled(collection.getId(), bookId.asString(), resumeHint);
+                } else {
+                    downloadQueuePort.markFailed(collection.getId(), bookId.asString(),
+                            SensitiveDataSanitizer.sanitizeText(ThrowableMessages.rootMessage(error)), resumeHint);
+                }
+            } catch (RuntimeException queueFailure) {
+                // Queue persistence is diagnostic/restart metadata. Preserve the actual download/storage
+                // failure as the primary exception instead of masking it with a secondary metadata error.
+                error.addSuppressed(queueFailure);
+                log.warn("Не вдалося зберегти terminal download-queue state для {}", bookId, queueFailure);
             }
             throw error;
+        }
+    }
+
+    private void markDownloadedBaselineSafely(BookId bookId) {
+        try {
+            catalogUpdateTrackingPort.markDownloadedBaseline(bookId);
+        } catch (RuntimeException error) {
+            log.warn("Книгу вже завантажено, але не вдалося оновити catalog download baseline для {}", bookId, error);
+        }
+    }
+
+    private void synchronizeSearchIndexSafely(BookId bookId) {
+        try {
+            if (!searchIndexSynchronizer.synchronizeSafelyNow(java.util.List.of(bookId))) {
+                log.warn("Книгу вже завантажено, але Lucene-індекс лишився stale для {}", bookId);
+            }
+        } catch (RuntimeException error) {
+            log.warn("Книгу вже завантажено, але не вдалося синхронізувати Lucene для {}", bookId, error);
+        }
+    }
+
+    private void markDownloadCompletedSafely(String collectionId, BookId bookId, Path physicalPath) {
+        try {
+            downloadQueuePort.markCompleted(collectionId, bookId.asString(), physicalPath);
+        } catch (RuntimeException error) {
+            log.warn("Книгу вже завантажено, але не вдалося позначити download queue як COMPLETED для {}", bookId, error);
         }
     }
 

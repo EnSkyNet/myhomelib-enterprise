@@ -37,9 +37,11 @@ class ExportBatchCompletionContractTest {
 
         assertThat(author)
                 .contains("String currentBookId = selectedConcreteBookId()")
-                .contains("() -> reloadBooks(currentBookId)")
-                .contains("restoreCurrentBookSelection(preferredCurrentBookId)")
-                .doesNotContain("currentAuthorId = null");
+                                .contains("String expectedCollectionId = appState.getCurrentLibraryCollectionId()")
+                .contains("AuthorId expectedAuthorId = currentAuthorId")
+                .contains("sameCollection(expectedCollectionId)")
+                .contains("reloadBooks(currentBookId);")
+                .contains("restoreCurrentBookSelection(preferredCurrentBookId)");
 
         assertThat(tree).contains("this::refresh");
         assertThat(main)

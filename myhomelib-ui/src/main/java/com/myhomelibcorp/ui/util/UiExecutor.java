@@ -25,13 +25,22 @@ public final class UiExecutor {
      */
     public static <T> CompletableFuture<T> supplyOnUiThread(Supplier<T> supplier) {
         CompletableFuture<T> future = new CompletableFuture<>();
-        runOnUiThread(() -> {
+        Runnable task = () -> {
             try {
                 future.complete(supplier.get());
-            } catch (Exception e) {
-                future.completeExceptionally(e);
+            } catch (Throwable failure) {
+                future.completeExceptionally(failure);
             }
-        });
+        };
+        try {
+            if (Platform.isFxApplicationThread()) {
+                task.run();
+            } else {
+                Platform.runLater(task);
+            }
+        } catch (Throwable schedulingFailure) {
+            future.completeExceptionally(schedulingFailure);
+        }
         return future;
     }
 }

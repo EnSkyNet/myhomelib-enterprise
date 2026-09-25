@@ -39,6 +39,16 @@ public class JdbcBatchWriter {
      */
     public void batchInsertFull(List<Object[]> booksData,
                                 Map<String, String> authorResolution) {
+        batchInsertFull(booksData, authorResolution, true);
+    }
+
+    /**
+     * Writes a book batch. {@code replaceExistingRelations=false} is valid only for rows proven
+     * to be new in an initially empty catalog and avoids redundant DELETE probes for every batch.
+     */
+    public void batchInsertFull(List<Object[]> booksData,
+                                Map<String, String> authorResolution,
+                                boolean replaceExistingRelations) {
         if (booksData.isEmpty()) return;
 
         JdbcTemplate jt = getJdbcTemplate();
@@ -128,7 +138,8 @@ public class JdbcBatchWriter {
             bookUpsertNs = System.nanoTime() - phaseStarted;
             phaseStarted = System.nanoTime();
         }
-        KeywordIndexSupport.replaceForBooks(jt, keywordProjection);
+        if (replaceExistingRelations) KeywordIndexSupport.replaceForBooks(jt, keywordProjection);
+        else KeywordIndexSupport.insertForBooksFresh(jt, keywordProjection);
         if (IMPORT_PHASE_METRICS) {
             keywordNs = System.nanoTime() - phaseStarted;
             phaseStarted = System.nanoTime();
@@ -136,8 +147,10 @@ public class JdbcBatchWriter {
 
         // SQLite builds commonly expose a much smaller bind-variable limit than our 10k import batch.
         // Delete relationship rows in bounded chunks instead of producing one huge IN (?, ...).
-        deleteLinksByBookIds(jt, "book_authors", bookIds);
-        deleteLinksByBookIds(jt, "book_genres", bookIds);
+        if (replaceExistingRelations) {
+            deleteLinksByBookIds(jt, "book_authors", bookIds);
+            deleteLinksByBookIds(jt, "book_genres", bookIds);
+        }
         if (IMPORT_PHASE_METRICS) {
             relationDeleteNs = System.nanoTime() - phaseStarted;
             phaseStarted = System.nanoTime();

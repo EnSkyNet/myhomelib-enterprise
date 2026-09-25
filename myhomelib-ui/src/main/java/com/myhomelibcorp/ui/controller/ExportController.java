@@ -257,6 +257,7 @@ public class ExportController {
      * non-cancelled export with no failures/errors, after the exported checkbox selection is cleared.
      */
     public void handleExport(Window owner, Runnable onSuccessfulExport) {
+        String expectedCollectionId = appState.getCurrentLibraryCollectionId();
         List<BookId> selectedIds = bookSelectionService.snapshot();
         if (selectedIds.isEmpty()) {
             dialogService.showWarning(UiText.text("ui.java.export_controller.ac1e0c3aad"),
@@ -268,6 +269,10 @@ public class ExportController {
                         .flatMap(java.util.Optional::stream)
                         .toList())
                 .thenAccept(books -> Platform.runLater(() -> {
+                    if (!isCurrentCollection(expectedCollectionId)) {
+                        log.debug("Пропущено stale export-dialog callback для колекції {}", expectedCollectionId);
+                        return;
+                    }
                     List<BookViewModel> rows = books.stream().map(bookViewModelMapper::toViewModel).toList();
                     if (rows.isEmpty()) {
                         dialogService.showWarning(UiText.text("ui.fxml.integrity_check.export"), UiText.text("ui.java.export_controller.adab3b50f7"));
@@ -276,8 +281,11 @@ public class ExportController {
                     showExportDialog(owner, rows, onSuccessfulExport);
                 }))
                 .exceptionally(error -> {
-                    Platform.runLater(() -> dialogService.showError(UiText.text("ui.fxml.integrity_check.export"),
-                            UiText.text("ui.java.export_controller.b689e81f73") + UiExceptionSupport.message(error)));
+                    Platform.runLater(() -> {
+                        if (!isCurrentCollection(expectedCollectionId)) return;
+                        dialogService.showError(UiText.text("ui.fxml.integrity_check.export"),
+                                UiText.text("ui.java.export_controller.b689e81f73") + UiExceptionSupport.message(error));
+                    });
                     return null;
                 });
     }
@@ -345,10 +353,15 @@ public class ExportController {
                 .collectionUrl(currentCollection == null ? null : currentCollection.getUrl())
                 .connectionScript(currentCollection == null ? null : currentCollection.getConnectionScript())
                 .build();
+        String expectedCollectionId = request.getCollectionId();
 
         dialogService.showInfo(UiText.text("ui.fxml.integrity_check.export"), UiText.text("ui.java.export_controller.6af29821ae"));
         executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> exportToInpxUseCase.execute(request))
                 .whenComplete((result, error) -> Platform.runLater(() -> {
+                    if (!isCurrentCollection(expectedCollectionId)) {
+                        log.debug("Пропущено stale INPX export callback для колекції {}", expectedCollectionId);
+                        return;
+                    }
                     if (error != null) {
                         Throwable cause = com.myhomelibcorp.ui.util.UiExceptionSupport.unwrapAsync(error);
                         log.error("Помилка експорту в INPX", cause);
@@ -603,8 +616,15 @@ public class ExportController {
         // have to run a separate download command or see a "not local" error first.
         setExportRunning(true);
         exportButton.setText(UiText.text("ui.java.export_controller.f28ce2cee1"));
+        String expectedCollectionId = request.getCollectionId();
         bookDownloadCoordinator.prepareForExport(selectedBookIds, stage).whenComplete((downloadResult, downloadError) ->
                 Platform.runLater(() -> {
+                    if (!isCurrentCollection(expectedCollectionId)) {
+                        setExportRunning(false);
+                        log.debug("Пропущено stale export preparation callback для колекції {}", expectedCollectionId);
+                        closeDialog();
+                        return;
+                    }
                     if (downloadError != null) {
                         setExportRunning(false);
                         dialogService.showError(UiText.text("ui.fxml.integrity_check.export"), UiText.text("ui.java.export_controller.8d664ad092") + UiExceptionSupport.message(downloadError));
@@ -623,6 +643,7 @@ public class ExportController {
     }
 
     private void startExportWorker(ExportRequest request) {
+        String expectedCollectionId = request == null ? "" : request.getCollectionId();
         exportCancelFlag.set(false);
         appState.getStatusBar().setProgressVisible(true);
         appState.getStatusBar().setProgress(0);
@@ -630,6 +651,7 @@ public class ExportController {
 
         executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> exportToDeviceUseCase.execute(request, exportCancelFlag, progress ->
                         Platform.runLater(() -> {
+                            if (!isCurrentCollection(expectedCollectionId)) return;
                             double value = progress.total() <= 0 ? 0 : (double) progress.processed() / progress.total();
                             selectedBooksLabel.setText(String.format(UiText.text("ui.java.export_controller.6463ca5281"), progress.processed(), progress.total(), progress.title()));
                             exportButton.setText(String.format(UiText.text("ui.java.export_controller.44bb0d11ff"), progress.processed(), progress.total()));
@@ -637,6 +659,12 @@ public class ExportController {
                             appState.getStatusBar().setStatusText(String.format(UiText.text("ui.java.export_controller.6463ca5281"), progress.processed(), progress.total(), progress.title()));
                         }), this::resolveCollision))
                 .whenComplete((result, error) -> Platform.runLater(() -> {
+                    if (!isCurrentCollection(expectedCollectionId)) {
+                        setExportRunning(false);
+                        log.debug("Пропущено stale export completion callback для колекції {}", expectedCollectionId);
+                        closeDialog();
+                        return;
+                    }
                     if (error != null) {
                         log.error("Помилка експорту", error);
                         setExportRunning(false);
@@ -748,6 +776,11 @@ public class ExportController {
     }
 
     private void closeDialog() { if (stage != null) stage.close(); }
+    private boolean isCurrentCollection(String expectedCollectionId) {
+        String current = appState.getCurrentLibraryCollectionId();
+        return expectedCollectionId != null && expectedCollectionId.equals(current);
+    }
+
     private static String text(String value) { return value == null ? "" : value.trim(); }
     private static String formatDuration(long ms) {
         long seconds = Math.max(0, ms) / 1000; return String.format("%02d:%02d:%02d", seconds / 3600, (seconds % 3600) / 60, seconds % 60);

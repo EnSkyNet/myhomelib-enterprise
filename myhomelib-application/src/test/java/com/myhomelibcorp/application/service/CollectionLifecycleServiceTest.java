@@ -119,6 +119,9 @@ class CollectionLifecycleServiceTest {
         var future = f.service.rebuildSearchIndexAsync();
 
         org.junit.jupiter.api.Assertions.assertEquals(LibraryOperationType.INDEX, f.coordinator.activeOperation());
+        try (var query = f.coordinator.acquireDetachedShared(LibraryOperationType.QUERY)) {
+            org.junit.jupiter.api.Assertions.assertEquals(LibraryOperationType.INDEX, f.coordinator.activeOperation());
+        }
         assertThrows(LibraryOperationConflictException.class,
                 () -> f.coordinator.acquire(LibraryOperationType.SYNC));
         org.junit.jupiter.api.Assertions.assertFalse(future.isDone());

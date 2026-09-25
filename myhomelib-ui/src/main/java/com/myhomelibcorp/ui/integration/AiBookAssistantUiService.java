@@ -16,6 +16,9 @@ import com.myhomelibcorp.application.usecase.book.ResolveBookContentUseCase;
 import com.myhomelibcorp.application.usecase.book.ResolvedBookContent;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
+import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;
@@ -35,6 +38,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** Explicit, consent-gated AI actions for the currently selected book. */
 @Slf4j
@@ -45,17 +49,21 @@ public final class AiBookAssistantUiService {
     private final ContentExtractionService extraction;
     private final UiBackgroundExecutor background;
     private final DialogService dialogs;
+    private final ApplicationState state;
+    private final AtomicLong generation = new AtomicLong();
 
     public AiBookAssistantUiService(IntegrationBackend backend,
                                     ResolveBookContentUseCase resolveBookContent,
                                     ContentExtractionService extraction,
                                     UiBackgroundExecutor background,
-                                    DialogService dialogs) {
+                                    DialogService dialogs,
+                                    ApplicationState state) {
         this.backend = backend;
         this.resolveBookContent = resolveBookContent;
         this.extraction = extraction;
         this.background = background;
         this.dialogs = dialogs;
+        this.state = state;
     }
 
     public void summarize(Window owner, BookDto book) {
@@ -88,8 +96,10 @@ public final class AiBookAssistantUiService {
                 choice -> choice.info().displayName() + " [" + choice.info().id() + "]");
         if (selected.isEmpty()) return;
 
+        UiAsyncRequestToken token = UiAsyncRequestGuard.next(generation, state);
         dialogs.showInfo(UiText.text("ui.java.ai_book_assistant_ui_service.fdc40cc5d5"), UiText.text("ui.java.ai_book_assistant_ui_service.65e2f71a14"));
         background.submitCollectionScoped(LibraryOperationType.QUERY, () -> extract(book)).whenComplete((content, error) -> Platform.runLater(() -> {
+            if (!UiAsyncRequestGuard.isCurrent(token, generation, state)) return;
             if (error != null) {
                 dialogs.showError(UiText.text("ui.java.ai_book_assistant_ui_service.fdc40cc5d5"), UiText.text("ui.java.ai_book_assistant_ui_service.c8620fe912") + UiExceptionSupport.message(error));
                 return;
@@ -99,6 +109,7 @@ public final class AiBookAssistantUiService {
             background.submit(() -> backend.executeAi(provider.id(), book.getId(), operation, prompt, content.text(),
                             provider.networkRequired(), true))
                     .whenComplete((result, aiError) -> Platform.runLater(() -> {
+                        if (!UiAsyncRequestGuard.isCurrent(token, generation, state)) return;
                         if (aiError != null) {
                             dialogs.showError(UiText.text("ui.java.ai_book_assistant_ui_service.fdc40cc5d5"), UiText.text("ui.java.ai_book_assistant_ui_service.2eccfb44da") + UiExceptionSupport.message(aiError));
                         } else if (!result.success()) {

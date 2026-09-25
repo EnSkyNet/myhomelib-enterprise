@@ -9,6 +9,7 @@ import com.myhomelibcorp.application.navigation.NavigationQueryService;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
@@ -35,6 +36,7 @@ public class NavigationPanelController {
     private final NavigationQueryService navigationQueryService;
     private final AlphabetToolbarController alphabetToolbarController;
     private final LocalizationService localizationService;
+    private final ApplicationState appState;
 
     private Consumer<NavigationNodeDto> onNodeSelected;
 
@@ -242,9 +244,10 @@ public class NavigationPanelController {
 
     private void resolveFirstAuthorInitialAndLoad() {
         long generation = ++loadGeneration;
+        String collectionId = currentCollectionId();
         navigationListView.setDisable(true);
         navigationQueryService.findFirstAuthorInitial().thenAccept(initial -> UiExecutor.runOnUiThread(() -> {
-            if (generation != loadGeneration || currentMode != NavigationMode.AUTHORS) {
+            if (!isCurrent(generation, collectionId) || currentMode != NavigationMode.AUTHORS) {
                 return;
             }
             currentLetter = initial.orElse(null);
@@ -258,16 +261,17 @@ public class NavigationPanelController {
                 resetAuthorPaging();
             }
         })).exceptionally(ex -> {
-            handleLoadFailure(generation, NavigationMode.AUTHORS, ex);
+            handleLoadFailure(generation, collectionId, NavigationMode.AUTHORS, ex);
             return null;
         });
     }
 
     private void loadNodes(NavigationMode mode, Character initial) {
         long generation = ++loadGeneration;
+        String collectionId = currentCollectionId();
         navigationListView.setDisable(true);
         navigationQueryService.load(mode, initial).thenAccept(nodes -> UiExecutor.runOnUiThread(() -> {
-            if (generation != loadGeneration || currentMode != mode) {
+            if (!isCurrent(generation, collectionId) || currentMode != mode) {
                 return;
             }
             allNodes = nodes == null ? List.of() : List.copyOf(nodes);
@@ -276,7 +280,7 @@ public class NavigationPanelController {
             log.info("Завантажено {} navigation nodes для {}{}", allNodes.size(), mode,
                     mode == NavigationMode.AUTHORS ? " / " + initial : "");
         })).exceptionally(ex -> {
-            handleLoadFailure(generation, mode, ex);
+            handleLoadFailure(generation, collectionId, mode, ex);
             return null;
         });
     }
@@ -284,6 +288,7 @@ public class NavigationPanelController {
     private void loadAuthorPage(Character initial, boolean append) {
         if (initial == null || loadingMoreAuthors) return;
         long generation = ++loadGeneration;
+        String collectionId = currentCollectionId();
         NavigationQueryService.AuthorCursor requestCursor = append ? authorCursor : null;
         if (!append) {
             authorTotal = java.util.OptionalLong.empty();
@@ -297,7 +302,7 @@ public class NavigationPanelController {
 
         navigationQueryService.loadAuthorsAfter(initial, AUTHOR_PAGE_SIZE, requestCursor)
                 .thenAccept(page -> UiExecutor.runOnUiThread(() -> {
-                    if (generation != loadGeneration || currentMode != NavigationMode.AUTHORS
+                    if (!isCurrent(generation, collectionId) || currentMode != NavigationMode.AUTHORS
                             || !java.util.Objects.equals(currentLetter, initial)) {
                         return;
                     }
@@ -327,11 +332,11 @@ public class NavigationPanelController {
                     }
                 })).exceptionally(ex -> {
                     UiExecutor.runOnUiThread(() -> {
-                        if (generation != loadGeneration) return;
+                        if (!isCurrent(generation, collectionId)) return;
                         loadingMoreAuthors = false;
                         updateLoadMoreAuthorsButton();
                     });
-                    handleLoadFailure(generation, NavigationMode.AUTHORS, ex);
+                    handleLoadFailure(generation, collectionId, NavigationMode.AUTHORS, ex);
                     return null;
                 });
     }
@@ -361,12 +366,13 @@ public class NavigationPanelController {
         resetAuthorPaging();
         alphabetToolbarController.clearSelection();
         final long generation = ++loadGeneration;
+        final String collectionId = currentCollectionId();
         navigationListView.setDisable(true);
         updateNavigationTitle(normalized);
 
         navigationQueryService.searchAuthors(normalized, AUTHOR_SEARCH_LIMIT)
                 .thenAccept(nodes -> UiExecutor.runOnUiThread(() -> {
-                    if (generation != loadGeneration || currentMode != NavigationMode.AUTHORS
+                    if (!isCurrent(generation, collectionId) || currentMode != NavigationMode.AUTHORS
                             || !normalized.equals(currentQuery == null ? "" : currentQuery.trim())) return;
                     allNodes = nodes == null ? List.of() : List.copyOf(nodes);
                     navigationListView.setDisable(false);
@@ -375,7 +381,7 @@ public class NavigationPanelController {
                     updateLoadMoreAuthorsButton();
                     log.info("Server-side author search '{}': {} results", normalized, allNodes.size());
                 })).exceptionally(ex -> {
-                    handleLoadFailure(generation, NavigationMode.AUTHORS, ex);
+                    handleLoadFailure(generation, collectionId, NavigationMode.AUTHORS, ex);
                     return null;
                 });
     }
@@ -416,15 +422,24 @@ public class NavigationPanelController {
                     : UiText.text("ui.java.navigation_panel_controller.aae0c3c3c5") + allNodes.size() + ")");
     }
 
-    private void handleLoadFailure(long generation, NavigationMode mode, Throwable ex) {
+    private void handleLoadFailure(long generation, String collectionId, NavigationMode mode, Throwable ex) {
         UiExecutor.runOnUiThread(() -> {
-            if (generation == loadGeneration) {
+            if (isCurrent(generation, collectionId)) {
                 allNodes = List.of();
                 navigationListView.getItems().clear();
                 navigationListView.setDisable(false);
             }
         });
         log.error("Помилка завантаження навігації для {}", mode, ex);
+    }
+
+    private boolean isCurrent(long generation, String collectionId) {
+        return generation == loadGeneration && java.util.Objects.equals(collectionId, currentCollectionId());
+    }
+
+    private String currentCollectionId() {
+        var collection = appState.getCurrentLibraryCollection();
+        return collection == null ? null : collection.getId();
     }
 
     private void filterList() {
@@ -614,18 +629,19 @@ public class NavigationPanelController {
 
         if (mode == NavigationMode.AUTHORS) {
             long generation = ++loadGeneration;
+            String collectionId = currentCollectionId();
             currentMode = mode;
             navigationModeComboBox.setValue(mode);
             navigationListView.setDisable(true);
             navigationQueryService.findAuthorInitial(nodeId).thenAccept(initial -> UiExecutor.runOnUiThread(() -> {
-                if (generation != loadGeneration || currentMode != NavigationMode.AUTHORS) return;
+                if (!isCurrent(generation, collectionId) || currentMode != NavigationMode.AUTHORS) return;
                 currentLetter = initial.orElse(null);
                 if (currentLetter != null) {
                     alphabetToolbarController.selectLetter(currentLetter);
                 }
                 loadMode(mode);
             })).exceptionally(ex -> {
-                handleLoadFailure(generation, mode, ex);
+                handleLoadFailure(generation, collectionId, mode, ex);
                 return null;
             });
             return;

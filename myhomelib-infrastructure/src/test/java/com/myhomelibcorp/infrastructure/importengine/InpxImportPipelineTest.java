@@ -420,7 +420,7 @@ class InpxImportPipelineTest {
     }
 
     @Test
-    void authorPreloadGateOnlyAllowsLargeOnlineFullSnapshots() throws Exception {
+    void authorPreloadGateAllowsLargeFullSnapshotsAndSizeableOnlineDeltas() throws Exception {
         Method gate = InpxImportPipeline.class.getDeclaredMethod(
                 "shouldPreloadAuthorCache", boolean.class, boolean.class, long.class);
         gate.setAccessible(true);
@@ -428,9 +428,11 @@ class InpxImportPipelineTest {
         assertThat(gate.invoke(null, true, true, 562_307L)).isEqualTo(true);
         assertThat(gate.invoke(null, true, true, 100_000L)).isEqualTo(true);
         assertThat(gate.invoke(null, true, true, 99_999L)).isEqualTo(false);
-        assertThat(gate.invoke(null, true, false, 562_307L)).isEqualTo(false);
+        assertThat(gate.invoke(null, true, false, 23_841L)).isEqualTo(true);
+        assertThat(gate.invoke(null, true, false, 10_000L)).isEqualTo(true);
+        assertThat(gate.invoke(null, true, false, 9_999L)).isEqualTo(false);
         assertThat(gate.invoke(null, false, true, 562_307L)).isEqualTo(false);
-        assertThat(gate.invoke(null, false, false, 562_307L)).isEqualTo(false);
+        assertThat(gate.invoke(null, false, false, 23_841L)).isEqualTo(false);
     }
 
 }

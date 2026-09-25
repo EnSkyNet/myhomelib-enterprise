@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
+import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.catalog.LegacyOnlineBookLocation;
@@ -46,6 +47,7 @@ public class BookDownloadCoordinator {
     private final ApplicationEventPublisher eventPublisher;
     private final OperationCenterService operationCenter;
     private final Semaphore downloadSlots;
+    private final int maxParallelDownloads;
     private final Map<String, AtomicBoolean> active = new ConcurrentHashMap<>();
 
     public BookDownloadCoordinator(DownloadBookUseCase downloadBookUseCase, RemoveLocalBookCopyUseCase removeLocalBookCopyUseCase,
@@ -62,13 +64,22 @@ public class BookDownloadCoordinator {
         this.eventPublisher = eventPublisher;
         this.operationCenter = operationCenter;
         int permits = Math.max(1, Math.min(16, settings.getInt("online.maxParallelDownloads", 2)));
+        this.maxParallelDownloads = permits;
         this.downloadSlots = new Semaphore(permits, true);
     }
 
     public CompletableFuture<Path> ensureLocal(BookDto book) {
+        return ensureLocal(book, applicationState.getCurrentLibraryCollectionId());
+    }
+
+    /** Collection-stable variant for multi-stage UI flows that already captured the DTO in a prior async step. */
+    public CompletableFuture<Path> ensureLocal(BookDto book, String expectedCollectionId) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
-        return loadAuthoritative(book).thenCompose(authoritative ->
-                download(authoritative, false).whenComplete((path, error) -> {
+        if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Активну колекцію не вибрано"));
+        }
+        return loadAuthoritative(book, expectedCollectionId, LibraryOperationType.DOWNLOAD).thenCompose(authoritative ->
+                download(authoritative, false, true, true, expectedCollectionId).whenComplete((path, error) -> {
                     if (error == null) copyStorageState(authoritative, book);
                 }));
     }
@@ -76,10 +87,14 @@ public class BookDownloadCoordinator {
     /** Load the authoritative DB row first. List workspaces intentionally carry only a lightweight DTO. */
     public CompletableFuture<Path> ensureLocal(BookId bookId) {
         if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
-        return executor.submitCollectionScoped(LibraryOperationType.QUERY,
-                        () -> loadBookByIdUseCase.execute(bookId)
-                        .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.book_download_coordinator.7e6db1b645") + bookId)))
-                .thenCompose(book -> download(book, false));
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
+        return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD,
+                        () -> {
+                            requireCurrentCollection(expectedCollectionId, "завантаження книги");
+                            return loadBookByIdUseCase.execute(bookId)
+                                    .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.book_download_coordinator.7e6db1b645") + bookId));
+                        })
+                .thenCompose(book -> download(book, false, true, true, expectedCollectionId));
     }
 
     /**
@@ -91,18 +106,33 @@ public class BookDownloadCoordinator {
     }
 
     private CompletableFuture<EnsureLocalOutcome> ensureLocalWithStatus(BookId bookId, boolean showErrors) {
+        return ensureLocalWithStatus(bookId, showErrors, applicationState.getCurrentLibraryCollectionId());
+    }
+
+    private CompletableFuture<EnsureLocalOutcome> ensureLocalWithStatus(
+            BookId bookId, boolean showErrors, String expectedCollectionId) {
         if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
-        return executor.submitCollectionScoped(LibraryOperationType.QUERY,
-                        () -> loadBookByIdUseCase.execute(bookId)
-                        .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.book_download_coordinator.7e6db1b645") + bookId)))
+        // The complete "ensure local" workflow is download-scoped. Using QUERY here and
+        // DOWNLOAD in the continuation creates a QUERY -> DOWNLOAD lifecycle transition. Under
+        // a large batch, many pre-acquired QUERY leases coexist and almost every continuation is
+        // rejected while sibling QUERY leases are still queued.
+        return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD,
+                        () -> {
+                            requireCurrentCollection(expectedCollectionId, "завантаження книги");
+                            BookDto authoritative = loadBookByIdUseCase.execute(bookId)
+                                    .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.book_download_coordinator.7e6db1b645") + bookId));
+                            Collection collection = applicationState.getCurrentLibraryCollection();
+                            normalizeLegacyRemoteStorage(authoritative, collection);
+                            return authoritative;
+                        })
                 .thenCompose(book -> {
-                    normalizeLegacyRemoteStorage(book);
                     var existing = bookResourcePort.locateBookFile(
                             book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
                     if (existing.isPresent()) {
                         return CompletableFuture.completedFuture(new EnsureLocalOutcome(existing.get(), true));
                     }
-                    return download(book, false, showErrors, showErrors).thenApply(path -> new EnsureLocalOutcome(path, false));
+                    return download(book, false, showErrors, showErrors, expectedCollectionId)
+                            .thenApply(path -> new EnsureLocalOutcome(path, false));
                 });
     }
 
@@ -117,14 +147,19 @@ public class BookDownloadCoordinator {
      * A compact progress window shows connection, completed count and committed library saves.
      */
     public CompletableFuture<BatchDownloadResult> downloadBatch(List<BookId> bookIds, Window owner) {
+        return downloadBatch(bookIds, owner, applicationState.getCurrentLibraryCollectionId());
+    }
+
+    private CompletableFuture<BatchDownloadResult> downloadBatch(
+            List<BookId> bookIds, Window owner, String expectedCollectionId) {
         List<BookId> ids = bookIds == null ? List.of() : bookIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
         if (ids.isEmpty()) return CompletableFuture.completedFuture(new BatchDownloadResult(0, 0, 0, 0, List.of()));
         if (!Platform.isFxApplicationThread()) {
-            CompletableFuture<BatchDownloadResult> bridge = new CompletableFuture<>();
-            Platform.runLater(() -> downloadBatch(ids, owner).whenComplete((result, error) -> {
-                if (error == null) bridge.complete(result); else bridge.completeExceptionally(error);
-            }));
-            return bridge;
+            return UiExecutor.supplyOnUiThread(() -> downloadBatch(ids, owner, expectedCollectionId))
+                    .thenCompose(java.util.function.Function.identity());
+        }
+        if (!isCurrentCollection(expectedCollectionId)) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Активна колекція змінилася до початку завантаження"));
         }
 
         BookDownloadProgressDialog progressDialog = new BookDownloadProgressDialog(owner, ids.size());
@@ -137,26 +172,44 @@ public class BookDownloadCoordinator {
         java.util.concurrent.atomic.AtomicInteger failed = new java.util.concurrent.atomic.AtomicInteger();
         java.util.List<String> errors = new java.util.concurrent.CopyOnWriteArrayList<>();
 
-        CompletableFuture<?>[] tasks = ids.stream().map(id -> ensureLocalWithStatus(id, false).handle((outcome, error) -> {
-            if (error != null) {
-                failed.incrementAndGet();
-                errors.add(id + ": " + compactError(unwrap(error)));
-            } else if (outcome.alreadyLocal()) {
-                alreadyLocal.incrementAndGet();
-            } else {
-                downloaded.incrementAndGet();
+        // Do not enqueue the whole selection at once. UiBackgroundExecutor intentionally has a
+        // bounded queue, and collection-scoped tasks acquire their lifecycle lease before enqueue.
+        // Fan-out of hundreds of books can therefore overflow the queue and, before the download
+        // scope fix above, created QUERY -> DOWNLOAD conflicts. Keep only the configured number of
+        // download workflows in flight; each lane schedules its next book only after the previous one
+        // has reached a terminal state.
+        int lanesCount = Math.max(1, Math.min(maxParallelDownloads, ids.size()));
+        CompletableFuture<?>[] lanes = new CompletableFuture<?>[lanesCount];
+        for (int laneIndex = 0; laneIndex < lanesCount; laneIndex++) {
+            CompletableFuture<Void> lane = CompletableFuture.completedFuture(null);
+            for (int index = laneIndex; index < ids.size(); index += lanesCount) {
+                BookId id = ids.get(index);
+                lane = lane.thenCompose(ignored -> ensureLocalWithStatus(id, false, expectedCollectionId)
+                        .handle((outcome, error) -> {
+                            if (error != null) {
+                                failed.incrementAndGet();
+                                errors.add(id + ": " + compactError(unwrap(error)));
+                            } else if (outcome.alreadyLocal()) {
+                                alreadyLocal.incrementAndGet();
+                            } else {
+                                downloaded.incrementAndGet();
+                            }
+                            int done = completed.incrementAndGet();
+                            Platform.runLater(() -> progressDialog.update(done, ids.size(), downloaded.get(), alreadyLocal.get(), failed.get(),
+                                    UiText.text("ui.java.book_download_coordinator.ae22229ad2")));
+                            return null;
+                        }));
             }
-            int done = completed.incrementAndGet();
-            Platform.runLater(() -> progressDialog.update(done, ids.size(), downloaded.get(), alreadyLocal.get(), failed.get(),
-                    UiText.text("ui.java.book_download_coordinator.ae22229ad2")));
-            return null;
-        })).toArray(CompletableFuture[]::new);
+            lanes[laneIndex] = lane;
+        }
 
-        return CompletableFuture.allOf(tasks).thenApply(ignored -> {
+        return CompletableFuture.allOf(lanes).thenApply(ignored -> {
             BatchDownloadResult result = new BatchDownloadResult(ids.size(), downloaded.get(), alreadyLocal.get(), failed.get(), List.copyOf(errors));
             Platform.runLater(() -> {
                 progressDialog.complete(ids.size(), result.downloaded(), result.alreadyLocal(), result.failed());
-                if (result.downloaded() > 0) eventPublisher.publishEvent(new NavigationRefreshEvent());
+                if (result.downloaded() > 0 && isCurrentCollection(expectedCollectionId)) {
+                    eventPublisher.publishEvent(new NavigationRefreshEvent());
+                }
             });
             return result;
         });
@@ -171,8 +224,12 @@ public class BookDownloadCoordinator {
         List<BookId> ids = bookIds == null ? List.of() : bookIds.stream()
                 .filter(java.util.Objects::nonNull).distinct().toList();
         if (ids.isEmpty()) return CompletableFuture.completedFuture(new BatchDownloadResult(0, 0, 0, 0, List.of()));
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
 
         return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD, () -> {
+            if (!isCurrentCollection(expectedCollectionId)) {
+                throw new IllegalStateException("Активна колекція змінилася до підготовки експорту");
+            }
             java.util.ArrayList<BookId> missing = new java.util.ArrayList<>();
             int local = 0;
             for (BookId id : ids) {
@@ -181,7 +238,8 @@ public class BookDownloadCoordinator {
                     missing.add(id);
                     continue;
                 }
-                normalizeLegacyRemoteStorage(book);
+                Collection collection = applicationState.getCurrentLibraryCollection();
+                normalizeLegacyRemoteStorage(book, collection);
                 boolean present = bookResourcePort.locateBookFile(
                         book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry()).isPresent();
                 if (present) local++; else missing.add(id);
@@ -192,7 +250,7 @@ public class BookDownloadCoordinator {
                 return CompletableFuture.completedFuture(new BatchDownloadResult(
                         ids.size(), 0, preflight.alreadyLocal(), 0, List.of()));
             }
-            return downloadBatch(preflight.missing(), owner).thenApply(result -> new BatchDownloadResult(
+            return downloadBatch(preflight.missing(), owner, expectedCollectionId).thenApply(result -> new BatchDownloadResult(
                     ids.size(),
                     result.downloaded(),
                     preflight.alreadyLocal() + result.alreadyLocal(),
@@ -209,33 +267,44 @@ public class BookDownloadCoordinator {
      */
     public CompletableFuture<Path> ensureLocalForOpen(BookDto book) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
-        return loadAuthoritative(book).thenCompose(authoritative ->
-                ensureLocalForOpenAuthoritative(authoritative).whenComplete((path, error) -> {
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
+        return loadAuthoritative(book, expectedCollectionId, LibraryOperationType.DOWNLOAD).thenCompose(authoritative ->
+                ensureLocalForOpenAuthoritative(authoritative, expectedCollectionId).whenComplete((path, error) -> {
                     if (error == null) copyStorageState(authoritative, book);
                 }));
     }
 
     public CompletableFuture<Path> ensureLocalForOpen(BookId bookId) {
         if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
-        return executor.submitCollectionScoped(LibraryOperationType.QUERY,
-                        () -> loadBookByIdUseCase.execute(bookId)
-                        .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.book_download_coordinator.7e6db1b645") + bookId)))
-                .thenCompose(this::ensureLocalForOpenAuthoritative);
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
+        return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD,
+                        () -> {
+                            requireCurrentCollection(expectedCollectionId, "відкриття книги");
+                            BookDto authoritative = loadBookByIdUseCase.execute(bookId)
+                                    .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.book_download_coordinator.7e6db1b645") + bookId));
+                            Collection collection = applicationState.getCurrentLibraryCollection();
+                            normalizeLegacyRemoteStorage(authoritative, collection);
+                            return authoritative;
+                        })
+                .thenCompose(book -> ensureLocalForOpenAuthoritative(book, expectedCollectionId));
     }
 
-    private CompletableFuture<Path> ensureLocalForOpenAuthoritative(BookDto book) {
-        normalizeLegacyRemoteStorage(book);
+    private CompletableFuture<Path> ensureLocalForOpenAuthoritative(BookDto book, String expectedCollectionId) {
+        if (!isCurrentCollection(expectedCollectionId)) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Активна колекція змінилася до відкриття книги"));
+        }
+        Collection collection = applicationState.getCurrentLibraryCollection();
+        if (collection == null || !expectedCollectionId.equals(collection.getId())) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Активна колекція змінилася до відкриття книги"));
+        }
+        normalizeLegacyRemoteStorage(book, collection);
         var existing = bookResourcePort.locateBookFile(
                 book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
         if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
 
         if (!Platform.isFxApplicationThread()) {
-            CompletableFuture<Path> result = new CompletableFuture<>();
-            Platform.runLater(() -> ensureLocalForOpenAuthoritative(book).whenComplete((path, error) -> {
-                if (error == null) result.complete(path);
-                else result.completeExceptionally(error);
-            }));
-            return result;
+            return UiExecutor.supplyOnUiThread(() -> ensureLocalForOpenAuthoritative(book, expectedCollectionId))
+                    .thenCompose(java.util.function.Function.identity());
         }
 
         boolean approved = dialogService.showConfirmation(
@@ -246,51 +315,81 @@ public class BookDownloadCoordinator {
             return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException(
                     UiText.text("ui.java.book_download_coordinator.39fb6cb400")));
         }
-        return download(book, false);
+        return download(book, false, true, true, expectedCollectionId);
     }
 
     public CompletableFuture<Path> downloadUpdate(BookDto book) {
+        return downloadUpdate(book, applicationState.getCurrentLibraryCollectionId());
+    }
+
+    /** Collection-stable variant for update notifications loaded asynchronously. */
+    public CompletableFuture<Path> downloadUpdate(BookDto book, String expectedCollectionId) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
-        return loadAuthoritative(book).thenCompose(authoritative ->
-                download(authoritative, true).whenComplete((path, error) -> {
+        if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Активну колекцію не вибрано"));
+        }
+        return loadAuthoritative(book, expectedCollectionId, LibraryOperationType.DOWNLOAD).thenCompose(authoritative ->
+                download(authoritative, true, true, true, expectedCollectionId).whenComplete((path, error) -> {
                     if (error == null) copyStorageState(authoritative, book);
                 }));
     }
 
-    private CompletableFuture<BookDto> loadAuthoritative(BookDto fallback) {
-        if (fallback == null || fallback.getId() == null || fallback.getId().isBlank()) {
-            return CompletableFuture.completedFuture(fallback);
+    private CompletableFuture<BookDto> loadAuthoritative(BookDto fallback, String expectedCollectionId) {
+        return loadAuthoritative(fallback, expectedCollectionId, LibraryOperationType.QUERY);
+    }
+
+    private CompletableFuture<BookDto> loadAuthoritative(
+            BookDto fallback, String expectedCollectionId, LibraryOperationType operationType) {
+        if (fallback == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
+        }
+        if (fallback.getId() == null || fallback.getId().isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Book has no stable id"));
         }
         BookId id;
         try {
             id = BookId.fromString(fallback.getId());
         } catch (RuntimeException invalidId) {
-            return CompletableFuture.completedFuture(fallback);
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Book has an invalid stable id", invalidId));
         }
-        return executor.submitCollectionScoped(LibraryOperationType.QUERY,
-                () -> loadBookByIdUseCase.execute(id).orElse(fallback));
+        LibraryOperationType scope = operationType == null ? LibraryOperationType.QUERY : operationType;
+        return executor.submitCollectionScoped(scope, () -> {
+            requireCurrentCollection(expectedCollectionId, "завантаження даних книги");
+            return loadBookByIdUseCase.execute(id)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Книгу " + id + " не знайдено в очікуваній активній колекції"));
+        });
     }
 
     private CompletableFuture<Path> download(BookDto book, boolean force) {
-        return download(book, force, true, true);
+        return download(book, force, true, true, applicationState.getCurrentLibraryCollectionId());
     }
 
     private CompletableFuture<Path> download(BookDto book, boolean force, boolean showErrors) {
-        return download(book, force, showErrors, true);
+        return download(book, force, showErrors, true, applicationState.getCurrentLibraryCollectionId());
     }
 
     private CompletableFuture<Path> download(BookDto book, boolean force, boolean showErrors, boolean publishNavigationRefresh) {
+        return download(book, force, showErrors, publishNavigationRefresh, applicationState.getCurrentLibraryCollectionId());
+    }
+
+    private CompletableFuture<Path> download(BookDto book, boolean force, boolean showErrors,
+                                             boolean publishNavigationRefresh, String expectedCollectionId) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
-        normalizeLegacyRemoteStorage(book);
-
-        if (!force) {
-            var existing = bookResourcePort.locateBookFile(book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
-            if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
-        }
-
         Collection collection = applicationState.getCurrentLibraryCollection();
         if (collection == null) {
             return failedVisible(UiText.text("ui.java.book_download_coordinator.876d0b4d3f"));
+        }
+        if (expectedCollectionId == null || expectedCollectionId.isBlank()
+                || collection.getId() == null || !expectedCollectionId.equals(collection.getId())) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Активна колекція змінилася до початку завантаження"));
+        }
+
+        // Never normalize or resolve a DTO from collection A using collection B settings.
+        normalizeLegacyRemoteStorage(book, collection);
+        if (!force) {
+            var existing = bookResourcePort.locateBookFile(book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
+            if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
         }
         if ((collection.getUrl() == null || collection.getUrl().isBlank())
                 && (collection.getConnectionScript() == null || collection.getConnectionScript().isBlank())) {
@@ -310,6 +409,7 @@ public class BookDownloadCoordinator {
 
         // Показуємо початок завантаження
         Platform.runLater(() -> {
+            if (!isCurrentCollection(collectionId)) return;
             applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.28e9bf28d4") + book.getTitle());
             applicationState.getStatusBar().setProgressVisible(true);
             applicationState.getStatusBar().setProgress(0);
@@ -332,31 +432,41 @@ public class BookDownloadCoordinator {
 
                         // Оновлюємо статус
                         Platform.runLater(() -> {
+                            if (!isCurrentCollection(collectionId)) return;
                             applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.ceea793bc6") + book.getTitle() + UiText.text("ui.java.book_download_coordinator.0cafc3a4a6"));
                         });
 
-                        BookDto effectiveBook = loadBookByIdUseCase.execute(BookId.fromString(book.getId())).orElse(book);
-                        normalizeLegacyRemoteStorage(effectiveBook);
-                        return downloadBookUseCase.execute(effectiveBook, collection, cancel, value -> {
+                        if (!isCurrentCollection(collectionId)) {
+                            throw new IllegalStateException("Активна колекція змінилася до початку завантаження");
+                        }
+                        BookId authoritativeId = BookId.fromString(book.getId());
+                        BookDto effectiveBook = loadBookByIdUseCase.execute(authoritativeId)
+                                .orElseThrow(() -> new IllegalStateException(
+                                        "Книгу " + authoritativeId + " було видалено або вона більше не належить активній колекції"));
+                        normalizeLegacyRemoteStorage(effectiveBook, collection);
+                        Path downloadedPath = downloadBookUseCase.execute(effectiveBook, collection, cancel, value -> {
                             long processed = Math.max(0L, Math.min(1000L, Math.round(value * 1000.0)));
                             operationCenter.accept(operationTitle, collectionId, OperationKind.BOOK_DOWNLOAD,
                                     OperationProgress.stage(operationId, OperationStage.BOOK_DOWNLOAD, true)
                                             .withProgress(processed, 1000)
                                             .withCurrentItem(safeBookTitle(effectiveBook)));
                             Platform.runLater(() -> {
+                                if (!isCurrentCollection(collectionId)) return;
                                 applicationState.getStatusBar().setProgress(value);
                                 int percent = (int) Math.round(value * 100);
                                 applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.28e9bf28d4") + effectiveBook.getTitle() + " (" + percent + "%)");
                             });
                         }, force);
+                        BookDto refreshed = loadBookByIdUseCase.execute(BookId.fromString(book.getId())).orElse(effectiveBook);
+                        return new DownloadCompletion(downloadedPath, refreshed);
                     } finally {
                         if (acquired) downloadSlots.release();
                     }
                 })
-                .whenComplete((path, error) -> {
+                .whenComplete((completion, error) -> {
                     active.remove(book.getId(), cancel);
                     long duration = System.currentTimeMillis() - startTime;
-                    BookDto refreshed = error == null ? reloadSafely(book) : book;
+                    BookDto refreshed = error == null && completion != null ? completion.refreshed() : book;
                     // Complete the future only after the caller's DTO has authoritative storage metadata.
                     // External-open callbacks may run immediately when this stage completes and must not
                     // observe the pre-download remote folder/fileName.
@@ -372,6 +482,10 @@ public class BookDownloadCoordinator {
                         }
                     }
                     Platform.runLater(() -> {
+                        if (!isCurrentCollection(collectionId)) {
+                            log.debug("Пропущено stale download UI callback для колекції {}", collectionId);
+                            return;
+                        }
                         applicationState.getStatusBar().setProgressVisible(false);
                         if (error == null) {
                             applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.a10fff9611") + refreshed.getTitle() + " (" + duration / 1000 + UiText.text("ui.java.book_download_coordinator.3023b67d72"));
@@ -400,13 +514,14 @@ public class BookDownloadCoordinator {
                             }
                         }
                     });
-                });
+                })
+                .thenApply(DownloadCompletion::path);
     }
 
-    private void normalizeLegacyRemoteStorage(BookDto book) {
-        if (book == null) return;
-        Collection collection = applicationState.getCurrentLibraryCollection();
-        if (collection == null || collection.getId() == null || collection.getId().isBlank()) return;
+    private record DownloadCompletion(Path path, BookDto refreshed) { }
+
+    private void normalizeLegacyRemoteStorage(BookDto book, Collection collection) {
+        if (book == null || collection == null || collection.getId() == null || collection.getId().isBlank()) return;
 
         if (isTransientCatalogRoot(book.getCollectionRoot())) {
             Path root = collection.getRootFolder() != null
@@ -460,16 +575,6 @@ public class BookDownloadCoordinator {
                 || normalized.endsWith("/.myhomelibcorp/cache/catalog-updates");
     }
 
-    private BookDto reloadSafely(BookDto fallback) {
-        if (fallback == null || fallback.getId() == null || fallback.getId().isBlank()) return fallback;
-        try {
-            return loadBookByIdUseCase.execute(BookId.fromString(fallback.getId())).orElse(fallback);
-        } catch (RuntimeException error) {
-            log.warn("Книгу {} завантажено, але не вдалося перечитати оновлені metadata", fallback.getId(), error);
-            return fallback;
-        }
-    }
-
     private static void copyStorageState(BookDto source, BookDto target) {
         if (source == null || target == null) return;
         target.setCollectionRoot(source.getCollectionRoot());
@@ -500,14 +605,18 @@ public class BookDownloadCoordinator {
         if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
             return CompletableFuture.failedFuture(new IllegalStateException("Активну колекцію не вибрано"));
         }
-        return loadAuthoritative(book).thenCompose(authoritative ->
+        return loadAuthoritative(book, expectedCollectionId).thenCompose(authoritative ->
                 executor.submitCollectionScoped(LibraryOperationType.QUERY,
-                                () -> removeLocalBookCopyUseCase.preview(authoritative))
+                                () -> removeLocalBookCopyUseCase.preview(authoritative, expectedCollectionId))
                         .thenCompose(preview -> confirmSingleRemoval(authoritative, preview)
                                 .thenCompose(approved -> approved
                                         ? executor.submit(() -> removeLocalBookCopyUseCase.execute(authoritative, expectedCollectionId))
                                         : CompletableFuture.failedFuture(new java.util.concurrent.CancellationException(UiText.text("ui.java.book_download_coordinator.fd5c8520d7"))))))
                 .whenComplete((count, error) -> Platform.runLater(() -> {
+                    if (!isCurrentCollection(expectedCollectionId)) {
+                        log.debug("Пропущено stale local-copy UI callback для колекції {}", expectedCollectionId);
+                        return;
+                    }
                     if (error == null) {
                         book.setLocal(false);
                         book.setMissingSince(null);
@@ -533,7 +642,7 @@ public class BookDownloadCoordinator {
             for (BookId id : bookIds.stream().distinct().toList()) {
                 BookDto book = loadBookByIdUseCase.execute(id).orElse(null);
                 if (book == null) continue;
-                var preview = removeLocalBookCopyUseCase.preview(book);
+                var preview = removeLocalBookCopyUseCase.preview(book, expectedCollectionId);
                 String key = preview.sharedArchive() && preview.physicalPath() != null
                         ? "archive:" + preview.physicalPath().toAbsolutePath().normalize()
                         : "book:" + book.getId();
@@ -545,6 +654,10 @@ public class BookDownloadCoordinator {
             return executor.submit(() -> removeLocalBookCopyUseCase.executeBatch(
                     plans.stream().map(PlannedRemoval::book).toList(), expectedCollectionId));
         })).whenComplete((count, error) -> Platform.runLater(() -> {
+            if (!isCurrentCollection(expectedCollectionId)) {
+                log.debug("Пропущено stale batch local-copy UI callback для колекції {}", expectedCollectionId);
+                return;
+            }
             if (error == null) {
                 applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.04a43f7a95") + count);
                 eventPublisher.publishEvent(new NavigationRefreshEvent());
@@ -576,15 +689,7 @@ public class BookDownloadCoordinator {
     }
 
     private CompletableFuture<Boolean> confirmOnFx(String title, String header, String details) {
-        if (Platform.isFxApplicationThread()) {
-            return CompletableFuture.completedFuture(dialogService.showConfirmation(title, header, details));
-        }
-        CompletableFuture<Boolean> result = new CompletableFuture<>();
-        Platform.runLater(() -> {
-            try { result.complete(dialogService.showConfirmation(title, header, details)); }
-            catch (Throwable error) { result.completeExceptionally(error); }
-        });
-        return result;
+        return UiExecutor.supplyOnUiThread(() -> dialogService.showConfirmation(title, header, details));
     }
 
     private static String displayPath(Path path) {
@@ -592,6 +697,18 @@ public class BookDownloadCoordinator {
     }
 
     private record PlannedRemoval(BookDto book, RemoveLocalBookCopyUseCase.RemovalPreview preview) { }
+
+    private boolean isCurrentCollection(String expectedCollectionId) {
+        if (expectedCollectionId == null || expectedCollectionId.isBlank()) return false;
+        String current = applicationState.getCurrentLibraryCollectionId();
+        return expectedCollectionId.equals(current);
+    }
+
+    private void requireCurrentCollection(String expectedCollectionId, String operation) {
+        if (!isCurrentCollection(expectedCollectionId)) {
+            throw new IllegalStateException("Активна колекція змінилася до операції: " + operation);
+        }
+    }
 
     public boolean cancel(BookDto book) {
         if (book == null) return false;

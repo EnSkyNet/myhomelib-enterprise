@@ -68,12 +68,13 @@ public final class OnlineHttpPolicy {
                 password = decryptStoredSecret(storedPassword).toCharArray();
             }
             Path safePath = SafeFilePublication.requireSafeRegularFile(path, "TLS trust store");
-            if (Files.size(safePath) > MAX_TRUST_STORE_BYTES) {
+            SafeFilePublication.FileSnapshot trustStoreSnapshot = SafeFilePublication.snapshot(
+                    safePath, "TLS trust store snapshot");
+            if (trustStoreSnapshot.size() > MAX_TRUST_STORE_BYTES) {
                 throw new java.io.IOException("TLS trust store exceeds the safety size limit");
             }
-            String expectedHash = SafeFilePublication.sha256(safePath, "TLS trust store snapshot");
             byte[] trustStoreBytes = SafeFilePublication.readOwnedBytes(
-                    safePath, expectedHash, MAX_TRUST_STORE_BYTES, "TLS trust store");
+                    safePath, trustStoreSnapshot.sha256(), MAX_TRUST_STORE_BYTES, "TLS trust store");
             KeyStore keyStore = KeyStore.getInstance(type);
             try (ByteArrayInputStream input = new ByteArrayInputStream(trustStoreBytes)) {
                 keyStore.load(input, password.length == 0 ? null : password);

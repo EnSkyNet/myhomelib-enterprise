@@ -7,6 +7,7 @@ import com.myhomelibcorp.ui.service.BookLoaderService;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
 import com.myhomelibcorp.ui.service.HelpTopicRegistry;
 import com.myhomelibcorp.ui.service.LocalizationService;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import org.junit.jupiter.api.Test;
@@ -30,7 +31,7 @@ class WorkspaceManagerNavigationStateTest {
         when(loader.loadSearchWorkspace("alpha")).thenAnswer(inv -> new Pane());
 
         WorkspaceManager manager = new WorkspaceManager(
-                loader, localization, bookLoader, bookDownloadCoordinator, help, groups, session);
+                loader, localization, bookLoader, bookDownloadCoordinator, help, groups, session, mock(ApplicationState.class));
         manager.init(new StackPane());
 
         manager.showDashboard();
@@ -63,7 +64,7 @@ class WorkspaceManagerNavigationStateTest {
         when(loader.loadSearchWorkspace(org.mockito.ArgumentMatchers.anyString())).thenAnswer(inv -> new Pane());
 
         WorkspaceManager manager = new WorkspaceManager(
-                loader, localization, bookLoader, bookDownloadCoordinator, help, groups, session);
+                loader, localization, bookLoader, bookDownloadCoordinator, help, groups, session, mock(ApplicationState.class));
         manager.init(new StackPane());
 
         manager.showDashboard();

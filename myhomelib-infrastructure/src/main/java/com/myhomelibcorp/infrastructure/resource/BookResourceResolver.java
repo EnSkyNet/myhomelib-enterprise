@@ -332,20 +332,22 @@ public class BookResourceResolver implements BookResourcePort {
         }
 
         Path normalizedPath = path.toAbsolutePath().normalize();
-        if (Files.isSymbolicLink(normalizedPath)) {
-            throw new SecurityException("Refusing to delete a symbolic-link book resource: " + normalizedPath);
-        }
-        if (!Files.isRegularFile(normalizedPath, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IOException("Book resource is not a regular file: " + normalizedPath);
+        if (!normalizedPath.startsWith(normalizedRoot) || normalizedPath.equals(normalizedRoot)) {
+            throw new SecurityException("Refusing to delete a file outside the managed root: " + normalizedPath);
         }
 
-        // Resolve parent symlinks on both sides before comparing. This prevents a path that
-        // is textually inside the collection root from escaping through a symlinked directory.
-        Path canonicalRoot = normalizedRoot.toRealPath();
-        Path canonicalFile = normalizedPath.toRealPath();
-        if (!canonicalFile.startsWith(canonicalRoot) || canonicalFile.equals(canonicalRoot)) {
-            throw new SecurityException("Refusing to delete a file outside the managed root: " + canonicalFile);
+        // Do not canonicalize a caller-controlled deletion path with toRealPath(): that operation
+        // follows symlink/reparse parents before the containment decision. requireSafeRegularFile()
+        // validates the complete parent chain with NOFOLLOW semantics, so lexical containment plus
+        // a no-link chain is the stronger boundary and cannot be redirected outside managedRoot.
+        final Path safeFile;
+        try {
+            safeFile = SafeFilePublication.requireSafeRegularFile(normalizedPath, "Book resource staged deletion");
+        } catch (IOException unsafeFile) {
+            throw new SecurityException("Book resource is not a safe regular file: " + normalizedPath, unsafeFile);
         }
+        Path canonicalRoot = normalizedRoot;
+        Path canonicalFile = safeFile;
 
         if (collectionId == null || collectionId.isBlank()) {
             throw new IllegalArgumentException("Stable collection id is required for crash-safe deletion");

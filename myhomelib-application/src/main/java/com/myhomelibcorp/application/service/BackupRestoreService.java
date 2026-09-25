@@ -154,10 +154,11 @@ public class BackupRestoreService {
         if (errors.isEmpty()) {
             try {
                 if (!options.includeMetadata()) {
-                    Files.deleteIfExists(backupDir.resolve(UserDataTransferPort.FILE_NAME));
+                    SafeFilePublication.deleteSafeRegularFileIfExists(
+                            backupDir.resolve(UserDataTransferPort.FILE_NAME), "Stale portable user data cleanup");
                 }
                 writeBackupManifest(backupDir, dbName, dbSha256, options.includeMetadata(), userDataSha256);
-                Files.deleteIfExists(pendingMarker);
+                SafeFilePublication.deleteSafeRegularFileIfExists(pendingMarker, "Backup pending marker cleanup");
             } catch (Exception e) {
                 errors.add("Backup commit failed: " + safeErrorDetail(e));
                 log.error("Backup generation could not be committed", e);
@@ -455,8 +456,10 @@ public class BackupRestoreService {
 
     private static void deleteSqliteSidecars(Path database) throws IOException {
         if (database == null) return;
-        Files.deleteIfExists(Path.of(database.toString() + "-wal"));
-        Files.deleteIfExists(Path.of(database.toString() + "-shm"));
+        SafeFilePublication.deleteSafeRegularFileIfExists(
+                Path.of(database.toString() + "-wal"), "SQLite WAL sidecar cleanup");
+        SafeFilePublication.deleteSafeRegularFileIfExists(
+                Path.of(database.toString() + "-shm"), "SQLite SHM sidecar cleanup");
     }
 
     private record RestoreSwap(Path targetDb, Path previousDb, Path pendingMarker, boolean previousExisted,

@@ -74,16 +74,16 @@ public class MetadataLookupService {
             Duration timeout,
             AtomicBoolean cancelFlag) {
         MetadataRequestContext context = MetadataRequestContext.create(timeout, cancelFlag);
-        CompletableFuture<ProviderCall> submitted;
+        ExecutorPort.CancellableTask<ProviderCall> submitted;
         try {
-            submitted = executor.submit(() -> callProvider(provider, query, context));
+            submitted = executor.submitCancellable(() -> callProvider(provider, query, context));
         } catch (RuntimeException rejected) {
             return CompletableFuture.completedFuture(ProviderCall.failed(
                     provider,
                     MetadataProviderErrorKind.UNAVAILABLE,
                     issueMessage(MetadataProviderErrorKind.UNAVAILABLE)));
         }
-        if (submitted == null) {
+        if (submitted == null || submitted.future() == null) {
             return CompletableFuture.completedFuture(ProviderCall.failed(
                     provider,
                     MetadataProviderErrorKind.UNAVAILABLE,
@@ -96,8 +96,16 @@ public class MetadataLookupService {
         } catch (ArithmeticException overflow) {
             timeoutMillis = Long.MAX_VALUE;
         }
-        return submitted.orTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
-                .handle((value, failure) -> failure == null ? value : mapFailure(provider, failure));
+        return submitted.future().orTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
+                .handle((value, failure) -> {
+                    if (failure != null && unwrap(failure) instanceof TimeoutException) {
+                        // orTimeout settles only the CompletableFuture facade. Explicitly cancel the
+                        // backing executor task as well so a wedged provider cannot keep consuming a
+                        // shared worker after its result has already been discarded.
+                        submitted.cancel();
+                    }
+                    return failure == null ? value : mapFailure(provider, failure);
+                });
     }
 
     private ProviderCall callProvider(

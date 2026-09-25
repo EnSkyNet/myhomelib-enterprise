@@ -95,7 +95,7 @@ public final class ProcessExecutionSupport {
                 process.waitFor(waitMillis, TimeUnit.MILLISECONDS);
             }
 
-            awaitStdin(stdinWriter);
+            awaitStdin(stdinWriter, process.getOutputStream());
             CapturedStream out = awaitCaptured(stdout, process.getInputStream());
             CapturedStream err = awaitCaptured(stderr, process.getErrorStream());
             return new Result(process.exitValue(), out.bytes(), err.bytes(), out.truncated(), err.truncated());
@@ -152,9 +152,13 @@ public final class ProcessExecutionSupport {
         }
     }
 
-    private static void awaitStdin(Future<?> future) throws IOException, InterruptedException {
+    private static void awaitStdin(Future<?> future, OutputStream stream) throws IOException, InterruptedException {
         try {
-            future.get();
+            future.get(OUTPUT_DRAIN_GRACE.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            try { stream.close(); } catch (IOException ignored) { }
+            future.cancel(true);
+            throw new IOException("Process input did not close after process termination", e);
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
             if (cause instanceof IOException io) throw io;

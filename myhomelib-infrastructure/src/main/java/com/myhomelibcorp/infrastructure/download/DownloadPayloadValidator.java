@@ -55,23 +55,81 @@ public class DownloadPayloadValidator {
      */
     public String validate(Path payload, Path intendedTarget, BookDto book, boolean archived) throws IOException {
         if (payload == null) throw new IOException("Сервер повернув порожній payload");
-        final Path safePayload;
+        final SafeFilePublication.FileSnapshot snapshot;
         try {
-            safePayload = SafeFilePublication.requireSafeRegularFile(payload, "Downloaded payload");
+            snapshot = SafeFilePublication.snapshot(payload, "Downloaded payload");
         } catch (IOException unsafe) {
             throw new IOException("Завантажений payload відсутній або небезпечний", unsafe);
         }
-        if (Files.size(safePayload) <= 0) throw new IOException("Сервер повернув порожній payload");
-        rejectHtmlOrTextError(safePayload);
-        if (archived) {
-            String foundEntry = validateArchive(safePayload, intendedTarget, book);
-            log.info("Archive validated. Found entry: {}", foundEntry);
-            return foundEntry;
+        return validateOwned(payload, intendedTarget, book, archived, snapshot.sha256());
+    }
+
+    /**
+     * Validates exactly the caller-owned payload bytes. The source pathname may be predictable
+     * (`.part`), so parsing is performed through a private hard-link/copy whose hash must match
+     * the ownership snapshot. This prevents pathname replacement during multi-open validation.
+     */
+    public String validateOwned(Path payload, Path intendedTarget, BookDto book, boolean archived,
+                                String expectedPayloadHash) throws IOException {
+        if (payload == null) throw new IOException("Сервер повернув порожній payload");
+        if (expectedPayloadHash == null || expectedPayloadHash.isBlank()) {
+            throw new IllegalArgumentException("expectedPayloadHash is required");
         }
-        if (looksLikeFb2(intendedTarget, book)) {
-            validateFb2(safePayload);
+
+        final Path safePayload;
+        final SafeFilePublication.FileSnapshot sourceSnapshot;
+        try {
+            safePayload = SafeFilePublication.requireSafeRegularFile(payload, "Downloaded payload");
+            sourceSnapshot = SafeFilePublication.snapshot(safePayload, "Downloaded payload ownership");
+        } catch (IOException unsafe) {
+            throw new IOException("Завантажений payload відсутній або небезпечний", unsafe);
         }
-        return "";
+        if (!expectedPayloadHash.equalsIgnoreCase(sourceSnapshot.sha256())) {
+            throw new IOException("Завантажений payload змінився до початку валідації");
+        }
+        if (sourceSnapshot.size() <= 0) throw new IOException("Сервер повернув порожній payload");
+
+        Path parent = safePayload.getParent();
+        if (parent == null) throw new IOException("Downloaded payload has no parent directory");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                parent, ".payload-validation-", "Downloaded payload validation workspace");
+        String leaf = safeValidationLeaf(intendedTarget, "payload.bin");
+        Path stablePayload = workspace.resolve(leaf);
+        try {
+            try {
+                Files.createLink(stablePayload, safePayload);
+            } catch (UnsupportedOperationException | IOException hardLinkFailure) {
+                try (InputStream in = Files.newInputStream(safePayload, LinkOption.NOFOLLOW_LINKS)) {
+                    SafeFilePublication.copyFresh(in, stablePayload, "Downloaded payload validation copy");
+                } catch (IOException copyFailure) {
+                    copyFailure.addSuppressed(hardLinkFailure);
+                    throw copyFailure;
+                }
+            }
+
+            SafeFilePublication.requireOwnedPath(stablePayload, expectedPayloadHash,
+                    "Downloaded payload validation snapshot");
+            SafeFilePublication.requireOwnedPath(safePayload, expectedPayloadHash,
+                    "Downloaded payload source before validation");
+
+            rejectHtmlOrTextError(stablePayload);
+            String resolvedArchiveEntry = "";
+            if (archived) {
+                resolvedArchiveEntry = validateArchive(stablePayload, intendedTarget, book);
+                log.info("Archive validated. Found entry: {}", resolvedArchiveEntry);
+            } else if (looksLikeFb2(intendedTarget, book)) {
+                validateFb2(stablePayload);
+            }
+
+            SafeFilePublication.requireOwnedPath(stablePayload, expectedPayloadHash,
+                    "Downloaded payload validation snapshot after parse");
+            SafeFilePublication.requireOwnedPath(safePayload, expectedPayloadHash,
+                    "Downloaded payload source after validation");
+            return resolvedArchiveEntry;
+        } finally {
+            try { SafeFilePublication.cleanupPrivateWorkspace(workspace); }
+            catch (IOException ignored) { /* preserve unexpected replacement as evidence */ }
+        }
     }
 
     /**
@@ -83,8 +141,7 @@ public class DownloadPayloadValidator {
         if (parent == null) throw new IOException("Downloaded payload has no parent directory");
         Path workspace = SafeFilePublication.createPrivateWorkspace(
                 parent, ".validate-work-", "Download archive validation workspace");
-        String targetLeaf = target == null || target.getFileName() == null
-                ? "payload.zip" : target.getFileName().toString();
+        String targetLeaf = safeValidationLeaf(target, "payload.zip");
         Path alias = workspace.resolve(targetLeaf);
         try {
             try {
@@ -196,6 +253,13 @@ public class DownloadPayloadValidator {
 
     private static String normalizeToken(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static String safeValidationLeaf(Path target, String fallback) {
+        if (target == null || target.getFileName() == null) return fallback;
+        String leaf = target.getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_");
+        if (leaf.isBlank() || ".".equals(leaf) || "..".equals(leaf)) return fallback;
+        return leaf.length() > 240 ? leaf.substring(leaf.length() - 240) : leaf;
     }
 
     private boolean highReliabilityArchiveValidation() {

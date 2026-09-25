@@ -35,7 +35,7 @@ import java.util.stream.StreamSupport;
 public class SqliteBookQueryRepository implements BookQueryRepository {
 
     private static final int STREAM_PAGE_SIZE = 400;
-    private static final int SEARCH_STREAM_PAGE_SIZE = 5_000;
+    private static final int SEARCH_STREAM_PAGE_SIZE = 10_000;
     private final CollectionManager collectionManager;
     private final BookRowMapper bookRowMapper;
     private final BookListRowMapper bookListRowMapper;
@@ -221,7 +221,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
      * Dedicated Lucene projection. A 700k-row rebuild previously materialized full Book,
      * BookMetadata and BookFile aggregates in 400-row pages and then discarded most fields.
      * This path reads only searchable columns, skips tombstones in SQL and enriches relations
-     * with two bounded range scans per 5k page.
+     * with bounded range scans per page.
      */
     @Override
     public Stream<BookSnapshot> streamSearchSnapshots() {
@@ -354,6 +354,8 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         private List<BookSnapshot> currentPage = List.of();
         private int currentIndex;
         private boolean endReached;
+        private Boolean customFieldsPresent;
+        private Boolean annotationsPresent;
 
         private SearchSnapshotIterator(int pageSize) {
             this.pageSize = Math.max(100, Math.min(10_000, pageSize));
@@ -412,8 +414,12 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
             Map<String, RelatedText> authors = loadSearchAuthors(first, last, pageIds);
             Map<String, RelatedText> genres = loadSearchGenres(first, last, pageIds);
-            Map<String, List<CustomFieldValue>> customFields = loadSearchCustomFields(first, last, pageIds);
-            Map<String, AnnotationCounts> annotationCounts = loadSearchAnnotationCounts(first, last, pageIds);
+            if (customFieldsPresent == null) customFieldsPresent = hasAnyCustomFieldValues();
+            if (annotationsPresent == null) annotationsPresent = hasAnyAnnotations();
+            Map<String, List<CustomFieldValue>> customFields = customFieldsPresent
+                    ? loadSearchCustomFields(first, last, pageIds) : Map.of();
+            Map<String, AnnotationCounts> annotationCounts = annotationsPresent
+                    ? loadSearchAnnotationCounts(first, last, pageIds) : Map.of();
             List<BookSnapshot> snapshots = new ArrayList<>(baseRows.size());
             for (SearchBaseRow row : baseRows) {
                 RelatedText author = authors.get(row.id());
@@ -455,6 +461,18 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         }
     }
 
+
+    private boolean hasAnyCustomFieldValues() {
+        Integer present = getJdbcTemplate().queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM custom_field_values LIMIT 1)", Integer.class);
+        return present != null && present != 0;
+    }
+
+    private boolean hasAnyAnnotations() {
+        Integer present = getJdbcTemplate().queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM annotations LIMIT 1)", Integer.class);
+        return present != null && present != 0;
+    }
 
     private Map<String, AnnotationCounts> loadSearchAnnotationCounts(String firstId, String lastId, Set<String> pageIds) {
         Map<String, AnnotationCounts> result = new HashMap<>();

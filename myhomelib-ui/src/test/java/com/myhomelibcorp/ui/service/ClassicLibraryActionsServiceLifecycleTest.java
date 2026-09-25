@@ -56,7 +56,7 @@ class ClassicLibraryActionsServiceLifecycleTest {
         BookId id = mock(BookId.class);
         Book book = mock(Book.class);
         when(query.findById(id)).thenAnswer(invocation -> {
-            assertThat(operations.activeOperation()).isEqualTo(LibraryOperationType.EDIT);
+            assertThat(operations.activeOperation()).isEqualTo(LibraryOperationType.QUERY);
             return Optional.of(book);
         });
         when(settings.getBoolean(anyString(), anyBoolean())).thenReturn(false);

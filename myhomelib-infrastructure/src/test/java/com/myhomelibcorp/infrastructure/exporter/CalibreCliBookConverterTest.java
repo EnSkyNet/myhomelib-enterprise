@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.exporter;
 
 import com.myhomelibcorp.application.conversion.BookConversionContext;
+import com.myhomelibcorp.application.conversion.ConversionFailureSignal;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
@@ -115,10 +116,12 @@ class CalibreCliBookConverterTest {
             return new CalibreCliBookConverter.CommandResult(7, "bad input\nmore details");
         });
 
-        var error = assertThrows(IllegalStateException.class, () -> converter.convert(
+        var error = assertThrows(Exception.class, () -> converter.convert(
                 new BookConversionContext(book("book.fb2"), "fb2", "pdf",
                         new ByteArrayInputStream("source".getBytes()), temp.resolve("book.pdf"), () -> false, 1024)));
 
+        assertInstanceOf(ConversionFailureSignal.class, error);
+        assertTrue(((ConversionFailureSignal) error).mayTryNextProvider());
         assertTrue(error.getMessage().contains("code 7"));
         assertTrue(error.getMessage().contains("bad input"));
         assertFalse(Files.exists(source.get()));
@@ -180,6 +183,26 @@ class CalibreCliBookConverterTest {
                         new ByteArrayInputStream("source".getBytes()), target, () -> false, 128)));
         assertTrue(error.getMessage().contains("limit"), error::getMessage);
         assertFalse(Files.exists(target));
+    }
+
+    @Test
+    void discoversOptionalBundledCalibreCompatibilityPack() throws Exception {
+        String previousLaunchDir = System.getProperty("myhomelib.launchDir");
+        try {
+            System.setProperty("myhomelib.launchDir", temp.toString());
+            String executableName = System.getProperty("os.name", "").toLowerCase().contains("win")
+                    ? "ebook-convert.exe" : "ebook-convert";
+            Path executable = temp.resolve("tools/converters/Calibre").resolve(executableName);
+            Files.createDirectories(executable.getParent());
+            Files.writeString(executable, "tool");
+            executable.toFile().setExecutable(true);
+
+            CalibreCliBookConverter converter = new CalibreCliBookConverter(new MemorySettings(), "epub", ".epub");
+            assertTrue(converter.isAvailable());
+        } finally {
+            if (previousLaunchDir == null) System.clearProperty("myhomelib.launchDir");
+            else System.setProperty("myhomelib.launchDir", previousLaunchDir);
+        }
     }
 
     @Test

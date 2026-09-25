@@ -423,18 +423,15 @@ final class CollectionMaintenanceAnalyzer {
                 return null;
             }
             try {
+                // Never canonicalize a caller/catalog-controlled path by following links. The collection
+                // root and every existing parent component must themselves be ordinary directories.
+                // Existing resources additionally have to be ordinary files. This keeps a symlink/reparse
+                // parent from turning a lexically in-root catalog path into an out-of-root filesystem read.
+                Path safeRoot = SafeFilePublication.requireSafeDirectoryPath(
+                        normalizedRoot, "Maintenance collection root");
+                requireSafeExistingParents(normalizedCandidate, safeRoot);
                 if (Files.exists(normalizedCandidate, LinkOption.NOFOLLOW_LINKS)) {
-                    if (Files.isSymbolicLink(normalizedCandidate)) {
-                        log.warn("Maintenance ignored a symbolic-link book resource: {}", normalizedCandidate);
-                        return null;
-                    }
-                    Path canonicalRoot = normalizedRoot.toRealPath();
-                    Path canonicalCandidate = normalizedCandidate.toRealPath();
-                    if (!canonicalCandidate.startsWith(canonicalRoot)) {
-                        log.warn("Maintenance ignored a filesystem escape from the collection root: root={}, path={}",
-                                canonicalRoot, canonicalCandidate);
-                        return null;
-                    }
+                    SafeFilePublication.requireSafeRegularFile(normalizedCandidate, "Maintenance book resource");
                 }
             } catch (IOException | SecurityException unsafePath) {
                 log.warn("Maintenance could not safely resolve book path {}", normalizedCandidate, unsafePath);
@@ -443,12 +440,24 @@ final class CollectionMaintenanceAnalyzer {
             return normalizedCandidate;
         }
 
+        private void requireSafeExistingParents(Path candidate, Path safeRoot) throws IOException {
+            Path parent = candidate.getParent();
+            if (parent == null || parent.equals(safeRoot)) return;
+            Path relative = safeRoot.relativize(parent);
+            Path current = safeRoot;
+            for (Path component : relative) {
+                current = current.resolve(component);
+                if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) return;
+                SafeFilePublication.requireSafeDirectoryPath(current, "Maintenance book resource parent");
+            }
+        }
+
         private Path orphanScanRoot() {
             Path root = collection.getRootFolder();
             if (root == null) return null;
             try {
-                Path canonicalRoot = root.toAbsolutePath().normalize().toRealPath();
-                return Files.isDirectory(canonicalRoot, LinkOption.NOFOLLOW_LINKS) ? canonicalRoot : null;
+                return SafeFilePublication.requireSafeDirectoryPath(
+                        root.toAbsolutePath().normalize(), "Maintenance orphan-scan root");
             } catch (IOException | SecurityException unsafeRoot) {
                 log.warn("Cannot safely resolve collection root {} for orphan scan", root, unsafeRoot);
                 return null;
@@ -519,14 +528,9 @@ final class CollectionMaintenanceAnalyzer {
         }
 
         private static String pathKey(Path path) {
-            String key;
-            try {
-                key = Files.exists(path, LinkOption.NOFOLLOW_LINKS)
-                        ? path.toRealPath(LinkOption.NOFOLLOW_LINKS).toString()
-                        : path.toAbsolutePath().normalize().toString();
-            } catch (IOException e) {
-                key = path.toAbsolutePath().normalize().toString();
-            }
+            // Keep comparison lexical. Resolving a catalog-controlled path with toRealPath() can follow
+            // a symlink/reparse parent and silently turn an unsafe path into a trusted-looking canonical key.
+            String key = path.toAbsolutePath().normalize().toString();
             if (System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
                 key = key.toLowerCase(Locale.ROOT);
             }

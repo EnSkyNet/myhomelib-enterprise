@@ -239,8 +239,11 @@ public final class LocalCopyDeletionRecoveryStore {
         if (root.getParent() == null) {
             throw new IOException("Unsafe managed root in local-copy recovery marker: " + root);
         }
+        // Keep containment lexical after validating every existing component. Calling
+        // toRealPath() here would reopen a caller-influenced pathname and can follow a parent
+        // symlink introduced after validation (NOFOLLOW_LINKS protects only the final entry).
         Path canonicalRoot = SafeFilePublication.requireSafeDirectoryPath(
-                root, "local-copy recovery managed root").toRealPath(LinkOption.NOFOLLOW_LINKS);
+                root, "local-copy recovery managed root");
 
         Path original = record.original().toAbsolutePath().normalize();
         Path recovery = record.recovery().toAbsolutePath().normalize();
@@ -250,9 +253,9 @@ public final class LocalCopyDeletionRecoveryStore {
             throw new IOException("Recovery parent directory is unavailable or unsafe: " + original);
         }
         Path canonicalParent = SafeFilePublication.requireSafeDirectoryPath(
-                originalParent, "local-copy recovery original parent").toRealPath(LinkOption.NOFOLLOW_LINKS);
+                originalParent, "local-copy recovery original parent");
         Path canonicalRecoveryParent = SafeFilePublication.requireSafeDirectoryPath(
-                recoveryParent, "local-copy recovery staging parent").toRealPath(LinkOption.NOFOLLOW_LINKS);
+                recoveryParent, "local-copy recovery staging parent");
         if (!canonicalParent.startsWith(canonicalRoot) || !canonicalRecoveryParent.equals(canonicalParent)) {
             throw new IOException("Recovery marker escapes its managed root: " + original);
         }

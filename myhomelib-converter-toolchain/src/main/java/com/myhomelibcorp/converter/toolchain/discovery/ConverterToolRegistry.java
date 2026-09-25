@@ -22,10 +22,12 @@ public class ConverterToolRegistry {
     public ToolInstallation fbc() { return get("fbc", "fbc", List.of("--version")); }
     public ToolInstallation pandoc() { return get("pandoc", "pandoc", List.of("--version")); }
     public ToolInstallation libmobi() { return get("libmobi", "mobitool", List.of("-v")); }
+    public ToolInstallation calibre() { return get("calibre", "ebook-convert", List.of("--version")); }
 
     public ToolInstallation probeFbc(String explicit) { return probeExplicit("fbc", explicit, "fbc", List.of("--version")); }
     public ToolInstallation probePandoc(String explicit) { return probeExplicit("pandoc", explicit, "pandoc", List.of("--version")); }
     public ToolInstallation probeLibmobi(String explicit) { return probeExplicit("libmobi", explicit, "mobitool", List.of("-v")); }
+    public ToolInstallation probeCalibre(String explicit) { return probeExplicit("calibre", explicit, "ebook-convert", List.of("--version")); }
 
     public void refresh() { cache.clear(); }
 
@@ -39,7 +41,15 @@ public class ConverterToolRegistry {
     }
 
     private ToolInstallation probeExplicit(String id, String explicit, String executable, List<String> versionArgs) {
-        if (explicit == null || explicit.isBlank()) return get(id, executable, versionArgs);
+        if (explicit == null || explicit.isBlank()) {
+            // The user-facing "Check" action must perform a fresh probe. Reusing the discovery
+            // cache here can keep a stale AVAILABLE/UNAVAILABLE status after tools are added,
+            // removed or replaced while the settings dialog is open.
+            Path path = locator.locate(id, executable).orElse(null);
+            ToolInstallation installed = probe.probe(id, path, versionArgs);
+            cache.put(id, installed);
+            return installed;
+        }
         try {
             Path path = Path.of(stripQuotes(explicit.trim())).toAbsolutePath().normalize();
             Path safe = locator.validateExplicit(path, executable).orElse(null);

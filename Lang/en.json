@@ -2958,7 +2958,7 @@
     "ui.search.title": "🔎 Library search",
     "ui.settings.command_test.sample_author": "Test Author",
     "ui.settings.converters.calibre.executable": "Calibre ebook-convert",
-    "ui.settings.converters.calibre.info": "Recommended engine: Calibre ebook-convert. If the path is empty, MyHomeLib searches PATH and the standard Calibre folder. The external templates below remain a fallback/special-purpose option.",
+    "ui.settings.converters.calibre.info": "Calibre is checked together with the other converters. An empty path means automatic discovery in portable tools, PATH, and the standard Calibre folder, so Calibre can remain available after the field is cleared. To exclude Calibre from automatic selection entirely, choose “MyHomeLib Toolchain” mode.",
     "ui.settings.converters.calibre.timeout": "Calibre timeout, s",
     "ui.settings.converters.external.timeout": "Timeout, seconds",
     "ui.settings.converters.external_templates.help": "External command templates: %SRC% — source, %DST% — result, %TITLE%, %BOOKID%.",
@@ -3594,7 +3594,14 @@
     "ui.conversion.provider.external": "External command",
     "ui.conversion.provider.native": "MyHomeLib (built-in)",
     "ui.conversion.provider.plugin": "Plugin",
-    "ui.conversion.provider.unknown": "Converter"
+    "ui.conversion.provider.unknown": "Converter",
+    "ui.conversion.error.source_read": "The source book file could not be read.",
+    "ui.conversion.error.provider": "Converter %s could not create %s.",
+    "ui.conversion.error.output_validation": "Converter %s produced an invalid or inaccessible %s file.",
+    "ui.conversion.error.publication": "%s was created in the working storage, but the result could not be safely published to the selected folder.",
+    "ui.conversion.error.catalog_registration": "%s was created, but registration of the new book artifact could not be completed.",
+    "ui.conversion.provider.single": "Engine: %s",
+    "ui.conversion.provider.priority": "Primary engine: %s; fallbacks: %s"
   },
   "genres": {
     "sf_history": "Alternate history",

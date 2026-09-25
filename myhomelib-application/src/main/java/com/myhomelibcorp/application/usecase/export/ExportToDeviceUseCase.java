@@ -2,11 +2,13 @@ package com.myhomelibcorp.application.usecase.export;
 
 import com.myhomelibcorp.shared.util.SafeFileNameSupport;
 import com.myhomelibcorp.application.action.BookActionExecutionService;
+import com.myhomelibcorp.application.action.BookActionCommand;
 import com.myhomelibcorp.application.action.BookActionProfile;
 import com.myhomelibcorp.application.action.BookActionProfileService;
 import com.myhomelibcorp.application.dto.ExportRequest;
 import com.myhomelibcorp.application.conversion.BookConversionCapability;
 import com.myhomelibcorp.application.conversion.BookConversionContext;
+import com.myhomelibcorp.application.conversion.CancellableBoundedInputStream;
 import com.myhomelibcorp.application.conversion.ConverterSelectionPolicy;
 import com.myhomelibcorp.application.conversion.ConversionFailureSignal;
 import com.myhomelibcorp.application.export.ExportCollisionContext;
@@ -146,25 +148,42 @@ public class ExportToDeviceUseCase {
     /** Formats that every selected book can either provide as a local artifact or convert to. */
     public Set<ExportRequest.ExportFormat> supportedFormatsForBooks(List<BookId> bookIds) {
         if (bookIds == null || bookIds.isEmpty()) return Set.of();
-        EnumSet<ExportRequest.ExportFormat> common = EnumSet.allOf(ExportRequest.ExportFormat.class);
-        for (BookId id : bookIds) {
-            Book book = bookQueryRepository.findById(id).orElse(null);
-            if (book == null) return Set.of();
-            EnumSet<ExportRequest.ExportFormat> available = EnumSet.noneOf(ExportRequest.ExportFormat.class);
-            for (BookArtifact artifact : book.getArtifacts()) {
-                if (!artifact.isAvailable()) continue;
-                artifactFormat(artifact).ifPresent(available::add);
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        try {
+            EnumSet<ExportRequest.ExportFormat> common = EnumSet.allOf(ExportRequest.ExportFormat.class);
+            for (BookId id : bookIds) {
+                if (id == null) {
+                    common.clear();
+                    break;
+                }
+                Book book = bookQueryRepository.findById(id).orElse(null);
+                if (book == null) {
+                    common.clear();
+                    break;
+                }
+                EnumSet<ExportRequest.ExportFormat> available = EnumSet.noneOf(ExportRequest.ExportFormat.class);
+                for (BookArtifact artifact : book.getArtifacts()) {
+                    if (!artifact.isAvailable()) continue;
+                    artifactFormat(artifact).ifPresent(available::add);
+                }
+                for (ExportRequest.ExportFormat format : ExportRequest.ExportFormat.values()) {
+                    if (findConversion(format, book) != null) available.add(format);
+                }
+                if (book.getArtifacts().isEmpty()) {
+                    sourceFormat(book).ifPresent(available::add);
+                }
+                common.retainAll(available);
+                if (common.isEmpty()) break;
             }
-            for (ExportRequest.ExportFormat format : ExportRequest.ExportFormat.values()) {
-                if (findConversion(format, book) != null) available.add(format);
-            }
-            if (book.getArtifacts().isEmpty()) {
-                sourceFormat(book).ifPresent(available::add);
-            }
-            common.retainAll(available);
-            if (common.isEmpty()) break;
+            Set<ExportRequest.ExportFormat> result = Set.copyOf(common);
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
         }
-        return Set.copyOf(common);
     }
 
     public ExportResult execute(ExportRequest request) {
@@ -631,15 +650,6 @@ public class ExportToDeviceUseCase {
         return ext.replaceAll("[^.a-z0-9]", "");
     }
 
-    private BookConverter findAnyAvailableConverter(ExportRequest.ExportFormat format) {
-        String targetExt = formatExtensions.get(format);
-        if (targetExt == null) return null;
-        for (BookConverter converter : orderedConverters()) {
-            if (converter.isAvailable() && converterProduces(converter, format, targetExt)) return converter;
-        }
-        return null;
-    }
-
     private Conversion findConversion(ExportRequest.ExportFormat format, Book book) {
         List<Conversion> candidates = findConversions(format, book);
         return candidates.isEmpty() ? null : candidates.get(0);
@@ -682,12 +692,15 @@ public class ExportToDeviceUseCase {
             if (Files.exists(candidateTarget, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                 throw new java.nio.file.FileAlreadyExistsException(candidateTarget.toString());
             }
-            try (InputStream sourceStream = candidate.sourceArtifact() != null
+            try (InputStream rawSource = candidate.sourceArtifact() != null
                     ? getArtifactStream(candidate.sourceArtifact())
-                    : getBookStream(book)) {
+                    : getBookStream(book);
+                 InputStream sourceStream = new CancellableBoundedInputStream(
+                         rawSource, ConvertBookUseCase.DEFAULT_MAX_INPUT_BYTES, cancel::get)) {
                 candidate.converter().convert(new BookConversionContext(
                         book, candidate.sourceFormat(), candidate.format().name(), sourceStream, candidateTarget,
                         cancel::get, ConvertBookUseCase.DEFAULT_MAX_OUTPUT_BYTES));
+                verifyConvertedOutput(candidateTarget, ConvertBookUseCase.DEFAULT_MAX_OUTPUT_BYTES);
                 return candidateTarget;
             } catch (Exception failure) {
                 if (mayTryNextProvider(failure)) {
@@ -700,6 +713,15 @@ public class ExportToDeviceUseCase {
         if (lastFallbackFailure != null) throw lastFallbackFailure;
         throw new ExportUserException("ui.export.error.no_compatible_format",
                 "No usable converter remained for export format " + format, format);
+    }
+
+    private void verifyConvertedOutput(Path output, long maxBytes) throws java.io.IOException {
+        verifyExportedFile(output);
+        SafeFilePublication.FileSnapshot snapshot = SafeFilePublication.snapshot(output, "Export converted output");
+        if (snapshot.size() > maxBytes) {
+            throw new java.io.IOException("Converted export output exceeds limit: "
+                    + snapshot.size() + " > " + maxBytes + " bytes");
+        }
     }
 
     private static boolean mayTryNextProvider(Throwable failure) {
@@ -823,10 +845,16 @@ public class ExportToDeviceUseCase {
         String template = text(settings.get("export.postCommand", ""));
         if (template.isEmpty()) return;
         try {
-            List<String> args = CommandTemplate.expand(template, postActionPlaceholders(book, destination, file));
-            if (!args.isEmpty()) new ProcessBuilder(args)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                    .redirectError(ProcessBuilder.Redirect.DISCARD).start();
+            List<String> tokens = CommandTemplate.parse(template);
+            if (tokens.isEmpty()) return;
+            BookActionCommand command = new BookActionCommand(
+                    tokens.getFirst(), CommandTemplate.formatArguments(tokens.subList(1, tokens.size())), "", false);
+            BookActionProfile profile = new BookActionProfile(
+                    "legacy-post-command-runtime", "Legacy post-command", true, List.of(command));
+            var result = actionExecutionService.execute(profile, postActionPlaceholders(book, destination, file));
+            if (!result.success()) {
+                log.warn("Legacy post-send script failed for {}: {}", book.getTitle(), String.join("; ", result.errors()));
+            }
         } catch (Exception e) {
             log.warn("Legacy post-send script failed for {}: {}", book.getTitle(), e.getMessage());
         }

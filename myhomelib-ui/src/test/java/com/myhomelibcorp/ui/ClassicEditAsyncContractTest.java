@@ -12,15 +12,20 @@ class ClassicEditAsyncContractTest {
     @Test
     void classicEditUsesApplicationUseCaseAndNeverWritesRepositoryOrLuceneDirectly() throws Exception {
         String source = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/service/ClassicLibraryActionsService.java"), StandardCharsets.UTF_8);
-        assertThat(source).contains("EditBookUseCase", "backgroundExecutor.submit(() -> editBookUseCase.execute(request))");
+        assertThat(source).contains(
+                "EditBookUseCase",
+                "backgroundExecutor.submitCollectionScoped(LibraryOperationType.EDIT",
+                "editBookUseCase.execute(request, token.collectionId())");
         assertThat(source).doesNotContain("BookCommandRepository", "SearchIndexer", "commands.save(", "indexer.indexBook(", "indexer.commit(");
     }
 
     @Test
     void initialEditSnapshotIsAlsoLoadedOffFxThread() throws Exception {
         String source = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/service/ClassicLibraryActionsService.java"), StandardCharsets.UTF_8);
-        assertThat(source).contains("backgroundExecutor.submit(() -> query.findById(id).orElse(null))");
-        assertThat(source.indexOf("backgroundExecutor.submit(() -> query.findById(id).orElse(null))"))
-                .isLessThan(source.indexOf("showEditDialog(owner, book, onSuccess, lease, token)"));
+        assertThat(source).contains(
+                "backgroundExecutor.submitCollectionScoped(LibraryOperationType.QUERY",
+                "() -> query.findById(id).orElse(null)");
+        assertThat(source.indexOf("backgroundExecutor.submitCollectionScoped(LibraryOperationType.QUERY"))
+                .isLessThan(source.indexOf("showEditDialog(owner, book, onSuccess, token)"));
     }
 }

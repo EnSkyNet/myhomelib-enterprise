@@ -388,9 +388,14 @@ public final class LibraryOperationCoordinator {
 
         /** Marks the root operation as failed before closing its lease. */
         public Lease markFailed(Throwable failure) {
+            return markFailed(rootMessage(failure));
+        }
+
+        /** Marks the root operation as failed when a result object already carries the failure detail. */
+        public Lease markFailed(String detail) {
             if (!closed) {
                 outcome = LibraryOperationOutcome.FAILED;
-                detail = rootMessage(failure);
+                this.detail = detail == null || detail.isBlank() ? "Невідома помилка" : detail;
             }
             return this;
         }

@@ -173,7 +173,16 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося закрити активний workspace", e);
         }
 
-        // 2. Закриваємо AsyncConfig
+        // 2. Stop coordinated maintenance while its executor is still alive. Otherwise a long
+        // Lucene rebuild can keep AsyncConfig busy until the executor shutdown timeout expires.
+        try {
+            context.getBean(com.myhomelibcorp.application.service.CollectionLifecycleService.class)
+                    .cancelBackgroundRebuildAndAwait();
+        } catch (Exception e) {
+            log.warn("Не вдалося скасувати фонову перебудову індексу", e);
+        }
+
+        // 3. Закриваємо AsyncConfig
         try {
             var asyncConfig = context.getBean(com.myhomelibcorp.infrastructure.config.AsyncConfig.class);
             asyncConfig.shutdown();
@@ -181,7 +190,7 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося закрити AsyncConfig", e);
         }
 
-        // 3. Закриваємо UiBackgroundExecutor
+        // 4. Закриваємо UiBackgroundExecutor
         try {
             var uiExecutor = context.getBean(com.myhomelibcorp.ui.service.UiBackgroundExecutor.class);
             uiExecutor.shutdown();
@@ -189,9 +198,9 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося закрити UiBackgroundExecutor", e);
         }
 
-        // 4. Shared task/io/import/search executors are owned and stopped by AsyncConfig.
+        // 5. Shared task/io/import/search executors are owned and stopped by AsyncConfig.
 
-        // 5. Закриваємо активну колекцію через єдиний lifecycle:
+        // 6. Закриваємо активну колекцію через єдиний lifecycle:
         // Lucene commit/close -> SQLite close/checkpoint -> freshness seal.
         if (context != null) {
             try {

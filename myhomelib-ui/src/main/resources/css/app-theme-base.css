@@ -28,6 +28,9 @@
     -fx-text-base-color: #202124;
     -fx-accent: #1a73e8;
     -fx-focus-color: #1a73e8;
+    -fx-selection-bar: #1a73e8;
+    -fx-selection-bar-non-focused: #1a73e8;
+    -fx-selection-bar-text: #ffffff;
     -fx-faint-focus-color: transparent;
 }
 
@@ -82,12 +85,15 @@
 .list-cell:filled:selected:focused,
 .tree-cell:selected,
 .tree-cell:selected:focused {
-    -fx-background-color: -mhl-accent;
-    -fx-text-fill: -mhl-on-accent;
+    /* ComboBox popups live in a separate popup scene, where custom -mhl-* lookups are
+       not guaranteed to inherit from the application .root. Use Modena's typed selection
+       lookups here so popup list cells never resolve a custom colour token as raw String. */
+    -fx-background-color: -fx-selection-bar;
+    -fx-text-fill: -fx-selection-bar-text;
 }
 .list-cell:filled:selected .label,
 .tree-cell:selected .label {
-    -fx-text-fill: -mhl-on-accent;
+    -fx-text-fill: -fx-selection-bar-text;
 }
 .operation-center-row {
     -fx-border-color: transparent transparent -mhl-border transparent;

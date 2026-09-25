@@ -39,6 +39,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Production UI for exact/fuzzy duplicate review plus explicit undoable logical-book merge. */
 @Component
@@ -103,11 +105,14 @@ public class DuplicateReviewUiService {
         merge.setDisable(true);
         table.getSelectionModel().selectedItemProperty().addListener((obs, old, row) -> merge.setDisable(row == null));
         HBox actions = new HBox(10, refresh, merge, undo, loading);
+        AtomicReference<FuzzyDisplayContext> displayed = new AtomicReference<>();
+        AtomicLong loadGeneration = new AtomicLong();
 
-        Runnable load = () -> loadFuzzy(sourceTitle, sourceMeta, sourceArtifacts, status, table, refresh, loading);
+        Runnable load = () -> loadFuzzy(sourceTitle, sourceMeta, sourceArtifacts, status, table, refresh, loading,
+                displayed, loadGeneration);
         refresh.setOnAction(event -> load.run());
-        merge.setOnAction(event -> reviewAndMerge(table.getSelectionModel().getSelectedItem(), status, load));
-        undo.setOnAction(event -> undoLatest(status, load));
+        merge.setOnAction(event -> reviewAndMerge(table.getSelectionModel().getSelectedItem(), status, load, displayed));
+        undo.setOnAction(event -> undoLatest(status, load, displayed));
         Platform.runLater(load);
 
         VBox content = new VBox(8,
@@ -122,7 +127,10 @@ public class DuplicateReviewUiService {
     }
 
     private void loadFuzzy(Label sourceTitle, Label sourceMeta, Label sourceArtifacts, Label status,
-                           TableView<DuplicateReviewRow> table, Button refresh, ProgressIndicator loading) {
+                           TableView<DuplicateReviewRow> table, Button refresh, ProgressIndicator loading,
+                           AtomicReference<FuzzyDisplayContext> displayed, AtomicLong loadGeneration) {
+        long generation = loadGeneration.incrementAndGet();
+        displayed.set(null);
         String expectedCollectionId = appState.getCurrentLibraryCollectionId();
         BookDto selected = appState.getBookDetails().getCurrentBook();
         if (selected == null || selected.getId() == null || selected.getId().isBlank()) {
@@ -132,6 +140,7 @@ public class DuplicateReviewUiService {
             table.setItems(FXCollections.observableArrayList());
             return;
         }
+        String expectedSourceBookId = selected.getId();
         sourceTitle.setText(selected.getTitle());
         sourceMeta.setText(selected.getAuthorsText() == null ? "" : selected.getAuthorsText());
         sourceArtifacts.setText(presenter.artifacts(selected));
@@ -142,9 +151,14 @@ public class DuplicateReviewUiService {
         background.submitCollectionScoped(LibraryOperationType.QUERY,
                 () -> fuzzyReview.review(BookId.fromString(selected.getId()), ReviewBookDuplicatesUseCase.DEFAULT_LIMIT))
                 .whenComplete((suggestions, error) -> UiExecutor.runOnUiThread(() -> {
+                    if (generation != loadGeneration.get()) return;
                     refresh.setDisable(false);
                     loading.setVisible(false);
-                    if (!isCurrentCollection(expectedCollectionId)) return;
+                    if (!isCurrentBook(expectedCollectionId, expectedSourceBookId)) {
+                        table.setItems(FXCollections.observableArrayList());
+                        displayed.set(null);
+                        return;
+                    }
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         status.setText(UiText.text("ui.java.duplicate_review_ui_service.1f3a7d510c") + UiExceptionSupport.message(cause));
@@ -155,6 +169,7 @@ public class DuplicateReviewUiService {
                     sourceMeta.setText(presentation.sourceAuthors());
                     sourceArtifacts.setText(presentation.sourceArtifacts());
                     table.setItems(FXCollections.observableArrayList(presentation.rows()));
+                    displayed.set(new FuzzyDisplayContext(expectedCollectionId, expectedSourceBookId, generation));
                     status.setText(presentation.rows().isEmpty()
                             ? UiText.text("ui.java.duplicate_review_ui_service.e24097d3a7")
                             : UiText.text("ui.java.duplicate_review_ui_service.99a6c0fe1d") + presentation.rows().size()
@@ -163,29 +178,40 @@ public class DuplicateReviewUiService {
     }
 
 
-    private void reviewAndMerge(DuplicateReviewRow row, Label status, Runnable reload) {
-        String expectedCollectionId = appState.getCurrentLibraryCollectionId();
-        BookDto source = appState.getBookDetails().getCurrentBook();
-        if (source == null || row == null || row.candidateId() == null || row.candidateId().isBlank()) return;
+    private void reviewAndMerge(DuplicateReviewRow row, Label status, Runnable reload,
+                                AtomicReference<FuzzyDisplayContext> displayed) {
+        FuzzyDisplayContext context = displayed.get();
+        if (context == null || row == null || row.candidateId() == null || row.candidateId().isBlank()) return;
+        if (!isCurrentBook(context.collectionId(), context.sourceBookId())) {
+            displayed.set(null);
+            reload.run();
+            return;
+        }
         if (exactScanner.isRunning()) {
             dialogs.showWarning(UiText.text("ui.java.duplicate_review_ui_service.5b56aa66a8"), UiText.text("ui.java.duplicate_review_ui_service.b3adfac1df"));
             return;
         }
         status.setText(UiText.text("ui.java.duplicate_review_ui_service.36fc43e6f4"));
-        background.submitCollectionScoped(LibraryOperationType.QUERY,
-                () -> loadBook.execute(BookId.fromString(row.candidateId())))
-                .whenComplete((candidate, error) -> UiExecutor.runOnUiThread(() -> {
-                    if (!isCurrentCollection(expectedCollectionId)) return;
+        background.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
+                    requireCurrentCollection(context.collectionId());
+                    BookDto source = loadBook.execute(BookId.fromString(context.sourceBookId())).orElse(null);
+                    BookDto candidate = loadBook.execute(BookId.fromString(row.candidateId())).orElse(null);
+                    return new MergeReviewBooks(source, candidate);
+                })
+                .whenComplete((books, error) -> UiExecutor.runOnUiThread(() -> {
+                    if (!isCurrentCollection(context.collectionId()) || !Objects.equals(displayed.get(), context)) return;
                     if (error != null) {
                         status.setText(UiText.text("ui.java.duplicate_review_ui_service.0c21524590") + UiExceptionSupport.message(error));
                         return;
                     }
-                    if (candidate == null || candidate.isEmpty()) {
+                    if (books == null || books.source() == null || books.candidate() == null) {
                         status.setText(UiText.text("ui.java.duplicate_review_ui_service.6edc922d63"));
+                        displayed.set(null);
                         reload.run();
                         return;
                     }
-                    confirmMerge(source, candidate.get()).ifPresent(plan -> executeMerge(plan, expectedCollectionId, status, reload));
+                    confirmMerge(books.source(), books.candidate())
+                            .ifPresent(plan -> executeMerge(plan, context.collectionId(), context.sourceBookId(), status, reload));
                 }));
     }
 
@@ -234,7 +260,8 @@ public class DuplicateReviewUiService {
         return dialog.showAndWait();
     }
 
-    private void executeMerge(BookMergePlan plan, String expectedCollectionId, Label status, Runnable reload) {
+    private void executeMerge(BookMergePlan plan, String expectedCollectionId, String expectedSourceBookId,
+                              Label status, Runnable reload) {
         if (!isCurrentCollection(expectedCollectionId)) return;
         status.setText(UiText.text("ui.java.duplicate_review_ui_service.bb7cd21e20"));
         background.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
@@ -248,7 +275,9 @@ public class DuplicateReviewUiService {
                 status.setText(UiText.text("ui.java.duplicate_review_ui_service.1eac627fb3") + UiExceptionSupport.message(error));
                 return;
             }
-            if (value.survivor() != null) appState.getBookDetails().setCurrentBook(value.survivor());
+            if (value.survivor() != null && isCurrentBook(expectedCollectionId, expectedSourceBookId)) {
+                appState.getBookDetails().setCurrentBook(value.survivor());
+            }
             status.setText(UiText.text("ui.java.duplicate_review_ui_service.f7ee989cc7") + value.result().mergeId()
                     + (value.result().searchIndexSynchronized() ? UiText.text("ui.java.duplicate_review_ui_service.f163fed16a")
                     : UiText.text("ui.java.duplicate_review_ui_service.e12ccbbe50")));
@@ -256,18 +285,19 @@ public class DuplicateReviewUiService {
         }));
     }
 
-    private void undoLatest(Label status, Runnable reload) {
-        BookDto selected = appState.getBookDetails().getCurrentBook();
-        if (selected == null || selected.getId() == null || selected.getId().isBlank()) {
-            dialogs.showWarning(UiText.text("ui.java.duplicate_review_ui_service.136fa4aa18"), UiText.text("ui.java.duplicate_review_ui_service.160fa2aae4"));
+    private void undoLatest(Label status, Runnable reload, AtomicReference<FuzzyDisplayContext> displayed) {
+        FuzzyDisplayContext context = displayed.get();
+        if (context == null || !isCurrentBook(context.collectionId(), context.sourceBookId())) {
+            displayed.set(null);
+            reload.run();
             return;
         }
         if (exactScanner.isRunning()) {
             dialogs.showWarning(UiText.text("ui.java.duplicate_review_ui_service.136fa4aa18"), UiText.text("ui.java.duplicate_review_ui_service.a257177e71"));
             return;
         }
-        String selectedId = selected.getId();
-        String expectedCollectionId = appState.getCurrentLibraryCollectionId();
+        String selectedId = context.sourceBookId();
+        String expectedCollectionId = context.collectionId();
         status.setText(UiText.text("ui.java.duplicate_review_ui_service.ab9a18a7bc"));
         background.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
             requireCurrentCollection(expectedCollectionId);
@@ -282,7 +312,9 @@ public class DuplicateReviewUiService {
                 status.setText(UiText.text("ui.java.duplicate_review_ui_service.22c2b1d205") + UiExceptionSupport.message(error));
                 return;
             }
-            if (value.survivor() != null) appState.getBookDetails().setCurrentBook(value.survivor());
+            if (value.survivor() != null && isCurrentBook(expectedCollectionId, selectedId)) {
+                appState.getBookDetails().setCurrentBook(value.survivor());
+            }
             status.setText(UiText.text("ui.java.duplicate_review_ui_service.4e38f4437a") + value.result().mergeId()
                     + (value.result().searchIndexSynchronized() ? UiText.text("ui.java.duplicate_review_ui_service.f163fed16a")
                     : UiText.text("ui.java.duplicate_review_ui_service.dd32f90203")));
@@ -293,6 +325,12 @@ public class DuplicateReviewUiService {
     private boolean isCurrentCollection(String expectedCollectionId) {
         return expectedCollectionId != null
                 && Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId());
+    }
+
+    private boolean isCurrentBook(String expectedCollectionId, String expectedBookId) {
+        if (!isCurrentCollection(expectedCollectionId) || expectedBookId == null || expectedBookId.isBlank()) return false;
+        BookDto current = appState.getBookDetails().getCurrentBook();
+        return current != null && Objects.equals(expectedBookId, current.getId());
     }
 
     private void requireCurrentCollection(String expectedCollectionId) {
@@ -322,6 +360,8 @@ public class DuplicateReviewUiService {
         @Override public String toString() { return label; }
     }
 
+    private record FuzzyDisplayContext(String collectionId, String sourceBookId, long generation) { }
+    private record MergeReviewBooks(BookDto source, BookDto candidate) { }
     private record MergeUiResult(BookMergeResult result, BookDto survivor) {}
 
     private Tab exactTab() {
@@ -372,7 +412,9 @@ public class DuplicateReviewUiService {
             exactScanner.scanAsync(telemetry -> {
                         operationId.set(telemetry.operationId());
                         operationCenter.accept(UiText.text("ui.java.duplicate_review_ui_service.7bac3520ec"), collection.getId(), telemetry);
-                        UiExecutor.runOnUiThread(() -> applyProgress(telemetry, status, counters, progress));
+                        UiExecutor.runOnUiThread(() -> {
+                            if (isCurrentCollection(collection.getId())) applyProgress(telemetry, status, counters, progress);
+                        });
                     })
                     .whenComplete((result, error) -> {
                         String id = operationId.get();

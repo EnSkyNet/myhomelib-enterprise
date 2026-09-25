@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.conversion.BookConversionCapability;
 import com.myhomelibcorp.application.conversion.BookConversionContext;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.shared.util.ExecutablePathSafety;
 import com.myhomelibcorp.plugin.api.BookConverter;
 import com.myhomelibcorp.plugin.api.PluginApiRange;
 import com.myhomelibcorp.plugin.api.PluginApiVersion;
@@ -214,8 +215,13 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
                         if (validExecutable(candidate)) return Optional.of(candidate);
                     }
                 } catch (RuntimeException ignored) {
-                    // Invalid explicit path is treated as unavailable, then normal discovery continues.
+                    // Fall through to the explicit-path failure below.
                 }
+                // Match the built-in Calibre converter and settings diagnostics: once the user
+                // explicitly configured a path, a broken value must not be silently replaced by
+                // a different PATH/standard installation. Otherwise the UI can say that the
+                // configured Calibre is unavailable while the runtime still selects Calibre.
+                return Optional.empty();
             }
             String exe = isWindows() ? "ebook-convert.exe" : "ebook-convert";
             Optional<Path> onPath = findOnPath(exe);
@@ -268,7 +274,21 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
         }
 
         private static boolean validExecutable(Path path) {
-            return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && (isWindows() || Files.isExecutable(path));
+            try {
+                Path executable = ExecutablePathSafety.requireExecutable(path, "Calibre plugin executable");
+                if (isWindows()) {
+                    Path fileName = executable.getFileName();
+                    if (fileName != null && "ebook-convert.exe".equalsIgnoreCase(fileName.toString())) {
+                        Path parent = executable.getParent();
+                        if (parent == null) return false;
+                        ExecutablePathSafety.requireExecutable(
+                                parent.resolve("calibre-parallel.exe"), "Calibre plugin worker executable");
+                    }
+                }
+                return true;
+            } catch (Exception failure) {
+                return false;
+            }
         }
 
         private static boolean isWindows() {

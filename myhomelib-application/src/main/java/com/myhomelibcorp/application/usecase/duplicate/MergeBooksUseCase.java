@@ -56,7 +56,21 @@ public class MergeBooksUseCase {
 
     public Optional<BookMergeJournalEntry> latestActiveMerge(BookId bookId) {
         if (bookId == null) return Optional.empty();
-        return mergePort.findLatestActiveMerge(bookId);
+        return withQueryLease(() -> mergePort.findLatestActiveMerge(bookId));
+    }
+
+    private <T> T withQueryLease(java.util.function.Supplier<T> action) {
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        try {
+            T result = action.get();
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
     }
 
     private <T> T withEditLease(java.util.function.Supplier<T> action) {

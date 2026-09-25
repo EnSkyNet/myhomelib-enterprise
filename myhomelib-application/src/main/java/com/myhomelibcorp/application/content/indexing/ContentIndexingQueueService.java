@@ -138,8 +138,10 @@ public class ContentIndexingQueueService implements DisposableBean {
             // Exact incremental recovery is no longer provable, so fail closed to a full rebuild.
             try {
                 if (contentIndex.health(id).state() == com.myhomelibcorp.application.content.index.ContentIndexHealth.State.STALE) {
-                    rebuildRequiredCollections.add(id);
-                    checkpointCollection(id);
+                    synchronized (enqueueLock) {
+                        rebuildRequiredCollections.add(id);
+                        checkpointCollection(id);
+                    }
                 }
             } catch (RuntimeException failure) {
                 restoredCollections.remove(id);
@@ -148,19 +150,36 @@ public class ContentIndexingQueueService implements DisposableBean {
             return 0;
         }
         ContentIndexQueueCheckpoint state = loaded.get();
+        if (!id.equals(state.collectionId())) {
+            restoredCollections.remove(id);
+            throw new IllegalStateException("Content indexing checkpoint belongs to another collection: "
+                    + state.collectionId());
+        }
         if (state.tasks().size() > MAX_OUTSTANDING_TASKS) {
+            restoredCollections.remove(id);
             throw new IllegalStateException("Content indexing checkpoint exceeds queue capacity: " + state.tasks().size());
         }
-        if (state.paused()) paused.set(true);
-        if (state.rebuildRequired()) rebuildRequiredCollections.add(id);
-        if (state.rebuildRequired() || !state.tasks().isEmpty()) contentIndex.markStale(id);
-        int restored = 0;
         for (ContentIndexingTask task : state.tasks()) {
-            if (!outstanding.containsKey(task.taskId())) {
-                outstanding.put(task.taskId(), task);
-                artifactTaskIds.put(artifactKey(task), task.taskId());
-                pending.offer(task);
-                restored++;
+            if (task == null || !id.equals(task.collectionId())) {
+                restoredCollections.remove(id);
+                throw new IllegalStateException("Content indexing checkpoint contains a task for another collection");
+            }
+        }
+        int restored = 0;
+        synchronized (enqueueLock) {
+            // Restore is a single publication step relative to dispatch/freshness. Otherwise a
+            // worker could drain the first restored task and publish READY before the remaining
+            // checkpoint tasks have even been inserted into the in-memory queue.
+            if (state.paused()) paused.set(true);
+            if (state.rebuildRequired()) rebuildRequiredCollections.add(id);
+            if (state.rebuildRequired() || !state.tasks().isEmpty()) contentIndex.markStale(id);
+            for (ContentIndexingTask task : state.tasks()) {
+                if (!outstanding.containsKey(task.taskId())) {
+                    outstanding.put(task.taskId(), task);
+                    artifactTaskIds.put(artifactKey(task), task.taskId());
+                    pending.offer(task);
+                    restored++;
+                }
             }
         }
         notifyListeners();
@@ -236,18 +255,22 @@ public class ContentIndexingQueueService implements DisposableBean {
 
     public boolean cancel(String taskId) {
         if (taskId == null || taskId.isBlank()) return false;
-        // Resolve membership before publishing the cancellation token. Otherwise an active
-        // worker may observe the token, finish and remove the task between computeIfAbsent()
-        // and outstanding.get(), making a successful cancellation spuriously report false.
-        ContentIndexingTask task = outstanding.get(taskId);
-        if (task == null) return false;
-        AtomicBoolean token = cancellation.computeIfAbsent(taskId, ignored -> new AtomicBoolean());
-        token.set(true);
-        if (!active.contains(taskId)) {
-            pending.remove(task);
-            failedArtifactKeys.add(artifactKey(task));
-            finishOutstanding(task, false, null);
-            markFreshIfDrained(task.collectionId());
+        ContentIndexingTask task;
+        synchronized (enqueueLock) {
+            // Claiming pending work for execution and cancelling/superseding it must be one
+            // atomic state transition. Otherwise dispatch can poll a task, cancellation can
+            // remove its bookkeeping while it is not yet marked active, and dispatch can then
+            // start the orphaned task with a fresh cancellation token.
+            task = outstanding.get(taskId);
+            if (task == null) return false;
+            AtomicBoolean token = cancellation.computeIfAbsent(taskId, ignored -> new AtomicBoolean());
+            token.set(true);
+            if (!active.contains(taskId)) {
+                pending.remove(task);
+                failedArtifactKeys.add(artifactKey(task));
+                finishOutstanding(task, false, null);
+                markFreshIfDrained(task.collectionId());
+            }
         }
         notifyListeners();
         return true;
@@ -276,17 +299,21 @@ public class ContentIndexingQueueService implements DisposableBean {
         Set<String> stableIds = bookIds.stream().filter(Objects::nonNull).map(String::trim)
                 .filter(value -> !value.isBlank()).collect(java.util.stream.Collectors.toUnmodifiableSet());
         if (stableIds.isEmpty()) return true;
-        for (ContentIndexingTask task : List.copyOf(outstanding.values())) {
-            if (!collectionId.equals(task.collectionId()) || !stableIds.contains(task.bookId())) continue;
-            supersedeTask(task);
+        synchronized (enqueueLock) {
+            for (ContentIndexingTask task : List.copyOf(outstanding.values())) {
+                if (!collectionId.equals(task.collectionId()) || !stableIds.contains(task.bookId())) continue;
+                supersedeTask(task);
+            }
         }
         return awaitNoActive(collectionId, stableIds, Math.max(0L, timeoutMillis));
     }
 
     public boolean supersedeCollection(String collectionId, long timeoutMillis) {
         if (collectionId == null || collectionId.isBlank()) return true;
-        for (ContentIndexingTask task : List.copyOf(outstanding.values())) {
-            if (collectionId.equals(task.collectionId())) supersedeTask(task);
+        synchronized (enqueueLock) {
+            for (ContentIndexingTask task : List.copyOf(outstanding.values())) {
+                if (collectionId.equals(task.collectionId())) supersedeTask(task);
+            }
         }
         return awaitNoActive(collectionId, null, Math.max(0L, timeoutMillis));
     }
@@ -360,23 +387,29 @@ public class ContentIndexingQueueService implements DisposableBean {
     /** Holds the stale state while an exact committed mutation supersedes older background work. */
     public void holdStale(String collectionId) {
         if (collectionId == null || collectionId.isBlank()) return;
-        staleHolds.add(collectionId);
-        contentIndex.markStale(collectionId);
+        synchronized (enqueueLock) {
+            staleHolds.add(collectionId);
+            contentIndex.markStale(collectionId);
+        }
     }
 
     public void releaseStaleHold(String collectionId) {
         if (collectionId == null || collectionId.isBlank()) return;
-        staleHolds.remove(collectionId);
-        markFreshIfDrained(collectionId);
+        synchronized (enqueueLock) {
+            staleHolds.remove(collectionId);
+            markFreshIfDrained(collectionId);
+        }
     }
 
     /** A change set is too large/unknown for safe incremental repair; only a full rebuild may clear this state. */
     public void requireRebuild(String collectionId) {
         if (collectionId == null || collectionId.isBlank()) return;
         String id = collectionId.trim();
-        rebuildRequiredCollections.add(id);
-        contentIndex.markStale(id);
-        requestCheckpoint(id);
+        synchronized (enqueueLock) {
+            rebuildRequiredCollections.add(id);
+            contentIndex.markStale(id);
+            requestCheckpoint(id);
+        }
     }
 
     /** Clears stale state only when no queue work/failures and no full rebuild requirement remain. */
@@ -406,11 +439,15 @@ public class ContentIndexingQueueService implements DisposableBean {
         return Math.max(0, MAX_OUTSTANDING_TASKS - outstanding.size());
     }
 
-    /** True when the collection still owns queued or active work in this process. */
+    /** True when the collection still owns queued, active, or finalizing work in this process. */
     public boolean hasOutstandingForCollection(String collectionId) {
         if (collectionId == null || collectionId.isBlank()) return false;
         String id = collectionId.trim();
-        return outstanding.values().stream().anyMatch(task -> id.equals(task.collectionId()));
+        if (outstanding.values().stream().anyMatch(task -> id.equals(task.collectionId()))) return true;
+        // finishOutstanding() deliberately removes the durable queue entry before the worker's
+        // finally block has finished freshness/checkpoint publication. Keep SWITCH/DELETE aware
+        // of that finalization window through activeTasks as well.
+        return activeTasks.values().stream().anyMatch(task -> task != null && id.equals(task.collectionId()));
     }
 
     private void dispatchSafely() {
@@ -422,15 +459,33 @@ public class ContentIndexingQueueService implements DisposableBean {
                 return;
             }
             int limit = settings.workerThreads(processors);
-            while (!closed.get() && !paused.get() && active.size() < limit) {
-                ContentIndexingTask task = pending.poll();
-                if (task == null) break;
-                if (!outstanding.containsKey(task.taskId())) continue;
-                if (!active.add(task.taskId())) continue;
-                activeTasks.put(task.taskId(), task);
-                AtomicBoolean token = cancellation.computeIfAbsent(task.taskId(), ignored -> new AtomicBoolean(false));
+            while (!closed.get() && !paused.get()) {
+                ContentIndexingTask task;
+                AtomicBoolean token;
+                synchronized (enqueueLock) {
+                    if (active.size() >= limit) break;
+                    task = pending.poll();
+                    if (task == null) break;
+                    if (!outstanding.containsKey(task.taskId())) continue;
+                    if (!active.add(task.taskId())) continue;
+                    activeTasks.put(task.taskId(), task);
+                    token = cancellation.computeIfAbsent(task.taskId(), ignored -> new AtomicBoolean(false));
+                }
                 requestCheckpoint(task.collectionId());
-                workers.submit(() -> processOne(task, token, settings));
+                try {
+                    ContentIndexingTask claimedTask = task;
+                    AtomicBoolean claimedToken = token;
+                    workers.submit(() -> processOne(claimedTask, claimedToken, settings));
+                } catch (java.util.concurrent.RejectedExecutionException rejected) {
+                    synchronized (enqueueLock) {
+                        activeTasks.remove(task.taskId());
+                        active.remove(task.taskId());
+                        // During ordinary operation preserve the task for a later dispatch. During
+                        // shutdown the final checkpoint already persists outstanding work for restart.
+                        if (!closed.get() && outstanding.containsKey(task.taskId())) pending.offer(task);
+                    }
+                    throw rejected;
+                }
             }
             notifyListeners();
         } catch (RuntimeException failure) {
@@ -559,25 +614,31 @@ public class ContentIndexingQueueService implements DisposableBean {
     public void acknowledgeFresh(String collectionId) {
         if (collectionId == null || collectionId.isBlank()) return;
         String id = collectionId.trim();
-        failedArtifactKeys.removeIf(key -> key.startsWith(id + "\u0000"));
-        rebuildRequiredCollections.remove(id);
-        staleHolds.remove(id);
-        // Durable queue/rebuild state must be cleared before the public freshness marker.
-        // Otherwise a crash can resurrect already-completed work on the next start.
-        checkpointCollection(id);
-        contentIndex.markFresh(id);
+        synchronized (enqueueLock) {
+            failedArtifactKeys.removeIf(key -> key.startsWith(id + "\u0000"));
+            rebuildRequiredCollections.remove(id);
+            staleHolds.remove(id);
+            // Durable queue/rebuild state must be cleared before the public freshness marker.
+            // Otherwise a crash can resurrect already-completed work on the next start. Use the
+            // normal drained check as a final guard in case unexpected work appeared concurrently.
+            markFreshIfDrained(id);
+        }
     }
 
     private void markFreshIfDrained(String collectionId) {
         if (collectionId == null || collectionId.isBlank()) return;
-        boolean hasOutstanding = outstanding.values().stream().anyMatch(task -> collectionId.equals(task.collectionId()));
-        boolean hasFailure = failedArtifactKeys.stream().anyMatch(key -> key.startsWith(collectionId + "\u0000"));
-        boolean rebuildRequired = rebuildRequiredCollections.contains(collectionId);
-        boolean heldStale = staleHolds.contains(collectionId);
-        if (!hasOutstanding && !hasFailure && !rebuildRequired && !heldStale) {
-            // Seal the durable queue state before exposing the index as fresh.
-            checkpointCollection(collectionId);
-            contentIndex.markFresh(collectionId);
+        synchronized (enqueueLock) {
+            boolean hasOutstanding = outstanding.values().stream().anyMatch(task -> collectionId.equals(task.collectionId()));
+            boolean hasFailure = failedArtifactKeys.stream().anyMatch(key -> key.startsWith(collectionId + "\u0000"));
+            boolean rebuildRequired = rebuildRequiredCollections.contains(collectionId);
+            boolean heldStale = staleHolds.contains(collectionId);
+            if (!hasOutstanding && !hasFailure && !rebuildRequired && !heldStale) {
+                // Seal the durable queue state before exposing the index as fresh. Sharing the
+                // enqueue lock with markStale/enqueue/rebuild transitions prevents READY from
+                // being published between markStale() and publication of a newly queued task.
+                checkpointCollection(collectionId);
+                contentIndex.markFresh(collectionId);
+            }
         }
     }
 

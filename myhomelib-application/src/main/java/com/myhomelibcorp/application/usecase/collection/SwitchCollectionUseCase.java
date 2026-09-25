@@ -74,7 +74,7 @@ public class SwitchCollectionUseCase {
                     ? "" : result.collection().getName().trim();
             lease.markCompleted(name.isBlank() ? "Колекцію перемкнено" : "Активна колекція: " + name);
             return result;
-        } catch (RuntimeException failure) {
+        } catch (RuntimeException | Error failure) {
             lease.markFailed(failure);
             throw failure;
         } finally {

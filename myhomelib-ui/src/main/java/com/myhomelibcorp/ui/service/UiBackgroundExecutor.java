@@ -65,7 +65,16 @@ public class UiBackgroundExecutor {
         if (operationType == null) throw new IllegalArgumentException("operationType is required");
         if (task == null) throw new IllegalArgumentException("task is required");
 
-        LibraryOperationCoordinator.Lease lease = operationCoordinator.acquireDetachedShared(operationType);
+        final LibraryOperationCoordinator.Lease lease;
+        try {
+            lease = operationCoordinator.acquireDetachedShared(operationType);
+        } catch (RuntimeException acquisitionFailure) {
+            // submit* is an asynchronous API. Returning an exceptional future keeps caller cleanup
+            // chains (whenComplete/handle) attached even when the lifecycle barrier is busy. A
+            // synchronous throw here can otherwise leak UI operation rows created immediately before
+            // submission and leave them permanently in the "running" state.
+            return CompletableFuture.failedFuture(acquisitionFailure);
+        }
         CompletableFuture<T> result = new CompletableFuture<>();
         try {
             executor.execute(() -> {

@@ -106,12 +106,18 @@ public class MainBookCommandCoordinator {
     public void openExternal() {
         BookDto selected = requireBook();
         if (selected == null) return;
+        String expectedCollectionId = appState.getCurrentLibraryCollectionId();
         bookDownloadCoordinator.ensureLocalForOpen(selected).whenComplete((path, error) -> {
             if (error != null) return;
             try {
-                externalBookLauncher.open(selected);
+                externalBookLauncher.open(selected, expectedCollectionId);
             } catch (Exception ex) {
-                Platform.runLater(() -> dialogService.showError(UiText.text("ui.java.main_book_command_coordinator.c2232feff0"), UiExceptionSupport.message(ex)));
+                if (!java.util.Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId())) return;
+                Platform.runLater(() -> {
+                    if (java.util.Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId())) {
+                        dialogService.showError(UiText.text("ui.java.main_book_command_coordinator.c2232feff0"), UiExceptionSupport.message(ex));
+                    }
+                });
             }
         });
     }

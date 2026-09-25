@@ -6,6 +6,9 @@ import java.util.UUID;
 
 /** Stable logical identity helpers. Remote sync must use the collection id, never a downloaded temp path. */
 public final class CatalogSourceIdentity {
+    /** Placeholder persisted by remote preflight state before the first catalog payload is applied. */
+    public static final String UNAPPLIED_FINGERPRINT = "sync-state:unapplied";
+
     private CatalogSourceIdentity() { }
 
     public static String remoteCollection(String collectionId) {

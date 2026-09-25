@@ -77,7 +77,7 @@ public class MetadataMergeUiService {
         Label count = new Label(i18n.format("ui.metadata.lookup_progress", 0, bookIds.size()));
         Dialog<ButtonType> progress = showProgress(owner, count, bar, finished, cancelled);
         batch.lookup(token.collectionId(), List.copyOf(bookIds), cancelled, update -> Platform.runLater(() -> {
-            if (finished.get()) return;
+            if (finished.get() || !UiAsyncRequestGuard.isCurrent(token, generation, state)) return;
             bar.setProgress((double) update.completed() / update.total());
             count.setText(i18n.format("ui.metadata.lookup_progress", update.completed(), update.total()));
         })).whenComplete((result, error) -> Platform.runLater(() -> {

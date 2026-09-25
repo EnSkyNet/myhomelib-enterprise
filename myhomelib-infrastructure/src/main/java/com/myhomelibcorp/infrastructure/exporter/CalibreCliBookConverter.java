@@ -2,10 +2,12 @@ package com.myhomelibcorp.infrastructure.exporter;
 
 import com.myhomelibcorp.application.conversion.BookConversionCapability;
 import com.myhomelibcorp.application.conversion.BookConversionContext;
+import com.myhomelibcorp.application.conversion.ConversionFailureSignal;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.shared.util.ExecutablePathSafety;
 import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import lombok.extern.slf4j.Slf4j;
@@ -161,7 +163,7 @@ public final class CalibreCliBookConverter implements BookConverter {
                 log.debug("calibre {} conversion output: {}", targetFormat, result.output());
             }
             if (result.exitCode() != 0) {
-                throw new IllegalStateException("calibre ebook-convert exited with code " + result.exitCode()
+                throw new RetryableCalibreException("calibre ebook-convert exited with code " + result.exitCode()
                         + failureSuffix(result.output()));
             }
             checkCancelled(cancelled);
@@ -194,6 +196,11 @@ public final class CalibreCliBookConverter implements BookConverter {
         }
 
         String exe = isWindows() ? "ebook-convert.exe" : "ebook-convert";
+        for (Path path : bundledInstallCandidates(exe)) {
+            Optional<Path> candidate = validateExecutable(path);
+            if (candidate.isPresent()) return candidate;
+        }
+
         Optional<Path> onPath = findOnPath(exe);
         if (onPath.isPresent()) return onPath;
 
@@ -227,12 +234,26 @@ public final class CalibreCliBookConverter implements BookConverter {
 
     private static Optional<Path> validateExecutable(Path path) {
         try {
-            if (!Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
-            if (!isWindows() && !Files.isExecutable(path)) return Optional.empty();
-            return Optional.of(path);
-        } catch (RuntimeException failure) {
+            Path executable = ExecutablePathSafety.requireExecutable(path, "Calibre executable");
+            requireWindowsWorkerIfNeeded(executable);
+            return Optional.of(executable);
+        } catch (Exception failure) {
             return Optional.empty();
         }
+    }
+
+    /**
+     * Frozen Windows calibre launches background jobs through calibre-parallel.exe located next
+     * to ebook-convert.exe. A stripped bundle containing only ebook-convert.exe passes --version
+     * but fails every real conversion with WinError 2, so that layout is not usable.
+     */
+    private static void requireWindowsWorkerIfNeeded(Path executable) throws IOException {
+        if (executable == null || !isWindows()) return;
+        Path fileName = executable.getFileName();
+        if (fileName == null || !"ebook-convert.exe".equalsIgnoreCase(fileName.toString())) return;
+        Path parent = executable.getParent();
+        if (parent == null) throw new IOException("Calibre installation directory is unavailable");
+        ExecutablePathSafety.requireExecutable(parent.resolve("calibre-parallel.exe"), "Calibre worker executable");
     }
 
     private static CommandResult runProcess(List<String> argv,
@@ -248,10 +269,12 @@ public final class CalibreCliBookConverter implements BookConverter {
             String output = mergeProcessOutput(result);
             return new CommandResult(result.exitCode(), output);
         } catch (ProcessExecutionSupport.ProcessTimeoutException timeoutError) {
-            throw new IllegalStateException(
+            throw new RetryableCalibreException(
                     "calibre ebook-convert timed out after " + timeout.toSeconds() + " s", timeoutError);
         } catch (CancellationException cancelledError) {
             throw new CancellationException("Book conversion cancelled");
+        } catch (IOException launchFailure) {
+            throw new RetryableCalibreException("Cannot start calibre ebook-convert", launchFailure);
         }
     }
 
@@ -327,6 +350,22 @@ public final class CalibreCliBookConverter implements BookConverter {
         return normalized.contains("mac") || normalized.contains("darwin");
     }
 
+    static List<Path> bundledInstallCandidates(String executable) {
+        Path launch = AppPaths.launchDir().toAbsolutePath().normalize();
+        List<Path> roots = List.of(
+                launch.resolve("tools").normalize(),
+                launch.resolve("app/tools").normalize(),
+                launch.resolve("../lib/app/tools").normalize(),
+                launch.resolve("../app/tools").normalize()
+        );
+        List<Path> result = new ArrayList<>();
+        for (Path root : roots) {
+            result.add(root.resolve("converters").resolve("Calibre").resolve(executable).normalize());
+            result.add(root.resolve("converters").resolve("calibre").resolve(executable).normalize());
+        }
+        return List.copyOf(result);
+    }
+
     static List<Path> standardInstallCandidates(String osName, java.util.Map<String, String> environment) {
         List<Path> result = new ArrayList<>();
         java.util.Map<String, String> env = environment == null ? java.util.Map.of() : environment;
@@ -352,5 +391,12 @@ public final class CalibreCliBookConverter implements BookConverter {
 
     record CommandResult(int exitCode, String output) {
         CommandResult { output = output == null ? "" : output; }
+    }
+
+    /** Provider-local Calibre failure: AUTO mode may safely try the next source/provider. */
+    private static final class RetryableCalibreException extends Exception implements ConversionFailureSignal {
+        private RetryableCalibreException(String message) { super(message); }
+        private RetryableCalibreException(String message, Throwable cause) { super(message, cause); }
+        @Override public boolean mayTryNextProvider() { return true; }
     }
 }

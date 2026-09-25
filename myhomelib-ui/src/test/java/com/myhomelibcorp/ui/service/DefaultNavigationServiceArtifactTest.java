@@ -84,7 +84,7 @@ class DefaultNavigationServiceArtifactTest {
             return java.util.Optional.empty();
         });
         DefaultNavigationService service = new DefaultNavigationService(
-                workspace, series, panel, resources, downloads, launcher, coordinator);
+                workspace, series, panel, resources, downloads, launcher, coordinator, mock(com.myhomelibcorp.ui.viewmodel.ApplicationState.class));
 
         service.navigateToSeriesByName("Saga");
 
@@ -99,7 +99,8 @@ class DefaultNavigationServiceArtifactTest {
         LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
         DefaultNavigationService service = new DefaultNavigationService(
                 workspace, series, mock(NavigationPanelController.class), mock(BookResourcePort.class),
-                mock(BookDownloadCoordinator.class), mock(ExternalBookLauncher.class), coordinator);
+                mock(BookDownloadCoordinator.class), mock(ExternalBookLauncher.class), coordinator,
+                mock(com.myhomelibcorp.ui.viewmodel.ApplicationState.class));
 
         try (var ignored = coordinator.acquire(LibraryOperationType.SWITCH)) {
             service.navigateToSeriesByName("Saga");

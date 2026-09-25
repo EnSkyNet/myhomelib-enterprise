@@ -36,7 +36,7 @@ public class PostImportMaintenanceService {
             LibraryStatistics statistics = statisticsService.getStatistics();
             lease.markCompleted("Collection derived-state maintenance completed");
             return statistics;
-        } catch (RuntimeException failure) {
+        } catch (RuntimeException | Error failure) {
             lease.markFailed(failure);
             throw failure;
         } finally {

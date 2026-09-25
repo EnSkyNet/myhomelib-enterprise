@@ -40,6 +40,7 @@ import java.util.function.DoubleConsumer;
 @Slf4j
 public class InpxImportPipeline {
     private static final long AUTHOR_PRELOAD_MIN_RECORDS = 100_000L;
+    private static final long AUTHOR_DELTA_PRELOAD_MIN_RECORDS = 10_000L;
     private static final int AUTHOR_SEEN_FILTER_BITS = 1 << 24; // 2 MiB Bloom filter
     private static final int AUTHOR_SEEN_FILTER_MASK = AUTHOR_SEEN_FILTER_BITS - 1;
     private static final long SELECTIVE_PREVIEW_MIN_RECORDS = 100_000L;
@@ -350,9 +351,9 @@ public class InpxImportPipeline {
         // Never infer deletion from absence in one snapshot; a partial/corrupt catalog must not hide
         // previously imported books. Catalog tracking still records revisions for rows that are present.
 
-        // Preloading the complete author table only pays off for a large full online snapshot.
-        // A small delta/local import must not spend hundreds of milliseconds reading tens of
-        // thousands of unrelated authors before touching its few records.
+        // Preloading the persistent author table pays off for a large full snapshot and for a
+        // sizeable online delta. Without it, a 20k+ delta repeatedly resolves author-name triples
+        // through SQL even when the whole author table fits in the bounded cache.
         if (shouldPreloadAuthorCache(onlineCollection, catalogFullSnapshot, totalRecords)) {
             preloadAuthorCacheIfFits(authorTableInitiallyEmpty);
         }
@@ -711,7 +712,7 @@ public class InpxImportPipeline {
         BatchClassification classification = null;
         if (fastInitialBaseline) {
             classifyInitialSearchChanges(books, changes);
-            batchWriter.batchInsertFull(books.stream().map(NormalizedBook::row).toList(), authorResolution);
+            batchWriter.batchInsertFull(books.stream().map(NormalizedBook::row).toList(), authorResolution, false);
         } else {
             classification = classifySearchChanges(books, changes, tracked);
             if (!classification.persistenceBooks().isEmpty()) {
@@ -988,7 +989,10 @@ public class InpxImportPipeline {
     }
 
     private static boolean shouldPreloadAuthorCache(boolean onlineCollection, boolean catalogFullSnapshot, long totalRecords) {
-        return onlineCollection && catalogFullSnapshot && totalRecords >= AUTHOR_PRELOAD_MIN_RECORDS;
+        if (!onlineCollection) return false;
+        return catalogFullSnapshot
+                ? totalRecords >= AUTHOR_PRELOAD_MIN_RECORDS
+                : totalRecords >= AUTHOR_DELTA_PRELOAD_MIN_RECORDS;
     }
 
     private void preloadAuthorCacheIfFits(boolean authorTableInitiallyEmpty) {

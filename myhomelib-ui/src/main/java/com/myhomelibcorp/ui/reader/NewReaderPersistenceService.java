@@ -234,11 +234,14 @@ public class NewReaderPersistenceService {
     }
 
     public List<Bookmark> loadBookmarks(String bookId) {
+        return loadBookmarks(activeCollectionId(), bookId);
+    }
+
+    /** Collection-stable variant for async Reader flows. */
+    public List<Bookmark> loadBookmarks(String collectionId, String bookId) {
         if (bookId == null) {
             return List.of();
         }
-
-        String collectionId = activeCollectionId();
         try {
             return withReaderState(collectionId, () -> bookmarkRepository.findByBookId(bookId));
         } catch (Exception e) {

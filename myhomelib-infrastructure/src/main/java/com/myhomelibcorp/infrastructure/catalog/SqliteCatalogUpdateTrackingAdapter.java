@@ -65,15 +65,22 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
         }
 
         SourceRow row = existing.getFirst();
+        // Remote update preflight creates catalog_sources before the INPX payload is applied. That
+        // placeholder is not a real synchronization baseline and must not disable the empty-catalog
+        // import fast path or advance the first real source revision to 2.
+        boolean unappliedPlaceholder = row.fingerprint() == null
+                || row.fingerprint().isBlank()
+                || CatalogSourceIdentity.UNAPPLIED_FINGERPRINT.equals(row.fingerprint());
         long revision = row.revision();
-        boolean changed = !sourceFingerprint.equals(row.fingerprint());
-        if (changed) revision++;
+        boolean changed = unappliedPlaceholder || !sourceFingerprint.equals(row.fingerprint());
+        if (changed && !unappliedPlaceholder) revision++;
         jdbc().update("""
                 UPDATE catalog_sources
                    SET source_location = ?, source_revision = ?, source_fingerprint = ?, last_synced_at = ?
                  WHERE source_key = ?
                 """, safeLocation, revision, sourceFingerprint, now, normalizedKey);
-        return new CatalogSyncSession(row.sourceId(), normalizedKey, revision, sourceFingerprint, false, changed);
+        return new CatalogSyncSession(row.sourceId(), normalizedKey, revision, sourceFingerprint,
+                unappliedPlaceholder, changed);
     }
 
     @Override

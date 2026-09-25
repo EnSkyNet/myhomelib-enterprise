@@ -53,6 +53,8 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
 
     private volatile boolean disposed;
     private long loadGeneration;
+    /** Collection identity that owns the rows currently rendered in followedTable. */
+    private String displayedCollectionId = "";
 
     @FXML
     public void initialize() {
@@ -118,13 +120,16 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
     }
 
     private void runMutation(String status, Runnable action) {
+        String expectedCollectionId = displayedCollectionId;
+        if (expectedCollectionId.isBlank() || !expectedCollectionId.equals(currentCollectionId())) return;
         setBusy(true);
         detailLabel.setText(status);
         executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
+            requireCurrentCollection(expectedCollectionId);
             action.run();
             return null;
         }).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
-            if (disposed) return;
+            if (disposed || !expectedCollectionId.equals(currentCollectionId())) return;
             setBusy(false);
             if (error != null) {
                 Throwable cause = UiExceptionSupport.unwrapAsync(error);
@@ -154,6 +159,7 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
                                 + UiExceptionSupport.message(cause));
                         return;
                     }
+                    displayedCollectionId = collectionId;
                     applyRows(rows == null ? List.of() : rows);
                 }));
     }
@@ -197,6 +203,12 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
         return followedTable.getSelectionModel().getSelectedItem();
     }
 
+    private void requireCurrentCollection(String expectedCollectionId) {
+        if (!expectedCollectionId.equals(currentCollectionId())) {
+            throw new IllegalStateException("Активна колекція змінилася до виконання операції з відстежуваними авторами");
+        }
+    }
+
     private String currentCollectionId() {
         var current = appState.getCurrentLibraryCollection();
         return current == null || current.getId() == null ? "" : current.getId();
@@ -205,6 +217,7 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
     @Override
     public void dispose() {
         disposed = true;
+        displayedCollectionId = "";
         loadGeneration++;
     }
 }

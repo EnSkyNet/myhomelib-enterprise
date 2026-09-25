@@ -20,6 +20,7 @@ import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
 import com.myhomelibcorp.ui.service.HelpTopicRegistry;
 import com.myhomelibcorp.ui.service.LocalizationService;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.search.SearchWorkspaceController;
 import com.myhomelibcorp.ui.table.BookTableController;
 import javafx.application.Platform;
@@ -47,6 +48,7 @@ public class WorkspaceManager {
     private final HelpTopicRegistry helpTopicRegistry;
     private final LoadGroupUseCase loadGroupUseCase;
     private final SessionService sessionService;
+    private final ApplicationState applicationState;
 
     private final ReadOnlyBooleanWrapper canGoBack = new ReadOnlyBooleanWrapper(false);
     private final ReadOnlyBooleanWrapper canGoForward = new ReadOnlyBooleanWrapper(false);
@@ -323,12 +325,19 @@ public class WorkspaceManager {
      */
     public void showNewReaderWorkspace(BookId bookId) {
         if (bookId == null) return;
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
         bookDownloadCoordinator.ensureLocalForOpen(bookId).whenComplete((path, error) -> {
             if (error != null) {
                 log.warn("Не вдалося відкрити Reader для книги {}: {}", bookId, error.getMessage());
                 return;
             }
-            Runnable open = () -> openNewReaderWorkspaceLocal(bookId);
+            Runnable open = () -> {
+                if (!java.util.Objects.equals(expectedCollectionId, applicationState.getCurrentLibraryCollectionId())) {
+                    log.debug("Пропущено stale Reader-open для книги {} після зміни колекції", bookId);
+                    return;
+                }
+                openNewReaderWorkspaceLocal(bookId);
+            };
             if (Platform.isFxApplicationThread()) open.run();
             else Platform.runLater(open);
         });
@@ -342,12 +351,19 @@ public class WorkspaceManager {
     public void showAnnotationInReader(String bookId, String annotationId) {
         if (bookId == null || bookId.isBlank() || annotationId == null || annotationId.isBlank()) return;
         BookId id = BookId.fromString(bookId.trim());
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
         bookDownloadCoordinator.ensureLocalForOpen(id).whenComplete((path, error) -> {
             if (error != null) {
                 log.warn("Не вдалося відкрити annotation {} у Reader для книги {}: {}", annotationId, bookId, error.getMessage());
                 return;
             }
-            Runnable open = () -> openNewReaderWorkspaceLocal(id, annotationId.trim());
+            Runnable open = () -> {
+                if (!java.util.Objects.equals(expectedCollectionId, applicationState.getCurrentLibraryCollectionId())) {
+                    log.debug("Пропущено stale annotation-open {} після зміни колекції", annotationId);
+                    return;
+                }
+                openNewReaderWorkspaceLocal(id, annotationId.trim());
+            };
             if (Platform.isFxApplicationThread()) open.run();
             else Platform.runLater(open);
         });
@@ -363,12 +379,17 @@ public class WorkspaceManager {
     public void showContentHitInReader(String bookId, String artifactId, long offset) {
         if (bookId == null || bookId.isBlank()) return;
         BookId id = BookId.fromString(bookId.trim());
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
         bookDownloadCoordinator.ensureLocalForOpen(id).whenComplete((path, error) -> {
             if (error != null) {
                 log.warn("Не вдалося відкрити content hit у Reader для книги {}: {}", bookId, error.getMessage());
                 return;
             }
             Runnable open = () -> {
+                if (!java.util.Objects.equals(expectedCollectionId, applicationState.getCurrentLibraryCollectionId())) {
+                    log.debug("Пропущено stale content-hit open для книги {} після зміни колекції", bookId);
+                    return;
+                }
                 Pane workspace = fxmlLoaderFactory.loadNewReaderWorkspace(id, null, artifactId, Math.max(0L, offset));
                 setWorkspace(workspace);
                 push("new-reader", id.asString());

@@ -1,15 +1,18 @@
 package com.myhomelibcorp.application.usecase.conversion;
 
 import com.myhomelibcorp.shared.util.SafeFileNameSupport;
+import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.conversion.BookConversionCapability;
 import com.myhomelibcorp.application.conversion.BookConversionContext;
+import com.myhomelibcorp.application.conversion.CancellableBoundedInputStream;
 import com.myhomelibcorp.application.conversion.ConverterSelectionPolicy;
 import com.myhomelibcorp.application.conversion.ConversionFailureSignal;
 import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
@@ -22,7 +25,6 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -58,24 +60,34 @@ public class ConvertBookUseCase {
     private final BookResourcePort resources;
     private final CommittedCatalogMutationService mutations;
     private final LibraryOperationCoordinator operationCoordinator;
+    private final CollectionLifecyclePort collectionLifecycle;
     private RuntimeExtensionRegistry runtimeExtensions = new RuntimeExtensionRegistry();
     private ApplicationSettingsPort settings;
 
     /** Compatibility constructor for focused non-Spring tests and integrations. */
     public ConvertBookUseCase(BookQueryRepository books, List<BookConverter> converters,
                               BookResourcePort resources, CommittedCatalogMutationService mutations) {
-        this(books, converters, resources, mutations, new LibraryOperationCoordinator());
+        this(books, converters, resources, mutations, new LibraryOperationCoordinator(), null);
+    }
+
+    /** Compatibility constructor for focused tests/integrations that do not need collection identity checks. */
+    public ConvertBookUseCase(BookQueryRepository books, List<BookConverter> converters,
+                              BookResourcePort resources, CommittedCatalogMutationService mutations,
+                              LibraryOperationCoordinator operationCoordinator) {
+        this(books, converters, resources, mutations, operationCoordinator, null);
     }
 
     @Autowired
     public ConvertBookUseCase(BookQueryRepository books, List<BookConverter> converters,
                               BookResourcePort resources, CommittedCatalogMutationService mutations,
-                              LibraryOperationCoordinator operationCoordinator) {
+                              LibraryOperationCoordinator operationCoordinator,
+                              CollectionLifecyclePort collectionLifecycle) {
         this.books = books;
         this.converters = converters == null ? List.of() : List.copyOf(converters);
         this.resources = resources;
         this.mutations = mutations;
         this.operationCoordinator = operationCoordinator;
+        this.collectionLifecycle = collectionLifecycle;
     }
 
     @Autowired
@@ -136,25 +148,50 @@ public class ConvertBookUseCase {
      * book's available artifacts can be accepted by that converter.
      */
     public List<CapabilityView> capabilityMatrix(BookId bookId) {
+        return capabilityMatrix(bookId, null);
+    }
+
+    /**
+     * Collection-stable capability discovery for UI/async callers. The expected collection is
+     * verified only after the QUERY barrier has been acquired, closing the check/use race.
+     */
+    public List<CapabilityView> capabilityMatrix(BookId bookId, String expectedCollectionId) {
         Objects.requireNonNull(bookId, "bookId");
-        Book book = books.findById(bookId)
-                .orElseThrow(() -> new IllegalArgumentException("Book not found: " + bookId));
-        List<Source> sources = sourceCandidates(book);
-        List<CapabilityView> matrix = new ArrayList<>();
-        for (BookConverter converter : orderedConverters()) {
-            boolean available = safeAvailable(converter);
-            for (BookConversionCapability capability : safeCapabilities(converter)) {
-                boolean compatible = available && sources.stream().anyMatch(source ->
-                        capability.supportsSource(source.format()) && safeSupports(converter, book, source.format()));
-                if (compatible) matrix.add(new CapabilityView(converter.id(), true, capability));
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        try {
+            assertExpectedCollection(expectedCollectionId);
+            Book book = books.findById(bookId)
+                    .orElseThrow(() -> new IllegalArgumentException("Book not found: " + bookId));
+            List<Source> sources = sourceCandidates(book);
+            List<CapabilityView> matrix = new ArrayList<>();
+            for (BookConverter converter : orderedConverters()) {
+                boolean available = safeAvailable(converter);
+                for (BookConversionCapability capability : safeCapabilities(converter)) {
+                    boolean compatible = available && sources.stream().anyMatch(source ->
+                            capability.supportsSource(source.format()) && safeSupports(converter, book, source.format()));
+                    if (compatible) matrix.add(new CapabilityView(converter.id(), true, capability));
+                }
             }
+            List<CapabilityView> result = List.copyOf(matrix);
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
         }
-        return List.copyOf(matrix);
     }
 
     public Result execute(Request request) throws Exception {
+        return execute(request, null);
+    }
+
+    /** Executes a conversion only if the captured collection is still active under the CONVERSION barrier. */
+    public Result execute(Request request, String expectedCollectionId) throws Exception {
         var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.CONVERSION);
         try {
+            assertExpectedCollection(expectedCollectionId);
             Result result = executeLocked(request);
             lease.markCompleted("");
             return result;
@@ -169,6 +206,18 @@ public class ConvertBookUseCase {
         }
     }
 
+    private void assertExpectedCollection(String expectedCollectionId) {
+        if (expectedCollectionId == null || expectedCollectionId.isBlank()) return;
+        if (collectionLifecycle == null) {
+            throw new IllegalStateException("Collection lifecycle is unavailable for collection-scoped conversion");
+        }
+        var current = collectionLifecycle.getCurrentCollection();
+        String currentId = current == null ? null : current.getId();
+        if (!Objects.equals(expectedCollectionId, currentId)) {
+            throw new IllegalStateException("Active collection changed during conversion request");
+        }
+    }
+
     private Result executeLocked(Request request) throws Exception {
         Objects.requireNonNull(request, "request");
         long startedAt = System.nanoTime();
@@ -178,16 +227,27 @@ public class ConvertBookUseCase {
                 .orElseThrow(() -> new IllegalArgumentException("Book not found: " + request.bookId()));
         List<SelectedJob> candidates = selectJobs(book, request.targetFormat());
 
-        Path root = SafeFilePublication.createDirectoriesNoLinks(
-                request.outputDirectory().toAbsolutePath().normalize(), "Conversion output directory");
-        if (!Files.isDirectory(root, java.nio.file.LinkOption.NOFOLLOW_LINKS) || !Files.isWritable(root)) {
-            throw new IllegalStateException("Conversion output directory is not writable: " + root);
+        // The destination comes from an explicit DirectoryChooser selection, not from catalog metadata.
+        // Resolve it once to its real directory so ordinary Windows junction/OneDrive-style paths do not
+        // get rejected by the stricter no-link policy used for untrusted/catalog-controlled paths.
+        Path root = SafeFilePublication.requireUserSelectedDirectory(
+                request.outputDirectory(), "Conversion output directory");
+        if (!Files.isWritable(root)) {
+            throw new IOException("Conversion output directory is not writable: " + root);
         }
+
+        // Converter staging must not live under the selected destination. External/user-selected roots can
+        // contain legitimate junctions/reparse points, while converter workspaces require a strict no-link
+        // boundary. Keep all intermediate files under the application-owned cache and publish only the final
+        // verified artifact to the selected directory.
+        Path stagingRoot = SafeFilePublication.createDirectoriesNoLinks(
+                AppPaths.cacheDir().resolve("conversion-staging"), "Conversion staging root");
 
         SelectedJob successfulJob = null;
         Path staged = null;
         Path successfulWorkspace = null;
         Exception lastFallbackFailure = null;
+        SelectedJob lastFallbackJob = null;
         for (SelectedJob candidate : candidates) {
             checkCancelled(request.cancelled());
             Source source = candidate.source();
@@ -198,27 +258,46 @@ public class ConvertBookUseCase {
 
             String candidateExtension = safeExtension(candidate.converter().capability().targetExtension());
             Path candidateWorkspace = SafeFilePublication.createPrivateWorkspace(
-                    root, ".mhl-convert-work-", "Conversion staging workspace");
+                    stagingRoot, ".mhl-convert-work-", "Conversion staging workspace");
             Path candidateStaged = candidateWorkspace.resolve("output" + candidateExtension);
             boolean keepCandidate = false;
             try {
-                try (InputStream raw = source.open();
+                InputStream raw;
+                try {
+                    raw = source.open();
+                } catch (Exception sourceFailure) {
+                    throw new BookConversionException(BookConversionException.Stage.SOURCE_READ,
+                            candidate.converter().converter().id(), source.format(), request.targetFormat(), sourceFailure);
+                }
+                try (raw;
                      InputStream bounded = new CancellableBoundedInputStream(raw, request.maxInputBytes(), request.cancelled())) {
                     BookConversionContext context = new BookConversionContext(
                             book, source.format(), request.targetFormat(), bounded, candidateStaged,
                             request.cancelled(), request.maxOutputBytes());
                     candidate.converter().converter().convert(context);
+                } catch (CancellationException cancelled) {
+                    throw cancelled;
+                } catch (BookConversionException classified) {
+                    throw classified;
                 } catch (Exception failure) {
                     if (mayTryNextProvider(failure)) {
                         lastFallbackFailure = failure;
+                        lastFallbackJob = candidate;
                         continue;
                     }
-                    throw failure;
+                    throw new BookConversionException(BookConversionException.Stage.PROVIDER,
+                            candidate.converter().converter().id(), source.format(), request.targetFormat(), failure);
                 }
 
                 checkCancelled(request.cancelled());
-                // Invalid/empty/oversized output is a hard stop by policy; do not hide it with fallback.
-                validateOutput(candidateStaged, request.maxOutputBytes());
+                // Empty/oversized/unsafe output is a hard stop. Provider-classified invalid output may
+                // already have fallen through to another provider before reaching this boundary.
+                try {
+                    validateOutput(candidateStaged, request.maxOutputBytes());
+                } catch (IOException invalidOutput) {
+                    throw new BookConversionException(BookConversionException.Stage.OUTPUT_VALIDATION,
+                            candidate.converter().converter().id(), source.format(), request.targetFormat(), invalidOutput);
+                }
                 successfulJob = candidate;
                 staged = candidateStaged;
                 successfulWorkspace = candidateWorkspace;
@@ -230,7 +309,11 @@ public class ConvertBookUseCase {
         }
 
         if (successfulJob == null || staged == null) {
-            if (lastFallbackFailure != null) throw lastFallbackFailure;
+            if (lastFallbackFailure != null && lastFallbackJob != null) {
+                throw new BookConversionException(BookConversionException.Stage.PROVIDER,
+                        lastFallbackJob.converter().converter().id(), lastFallbackJob.source().format(),
+                        request.targetFormat(), lastFallbackFailure);
+            }
             throw new IllegalArgumentException("No usable converter for target " + request.targetFormat());
         }
 
@@ -251,13 +334,16 @@ public class ConvertBookUseCase {
             SafeFilePublication.FileSnapshot stagedSnapshot =
                     SafeFilePublication.snapshot(staged, "Conversion staged output");
             stagedSha256 = stagedSnapshot.sha256();
-            SafeFilePublication.moveNoReplace(staged, finalFile, "Conversion artifact publication");
-            finalMoved = true;
             SafeFilePublication.FileSnapshot publishedSnapshot =
-                    validateOutput(finalFile, request.maxOutputBytes());
+                    SafeFilePublication.publishFreshToUserSelectedPath(
+                            staged, finalFile, "Conversion artifact publication");
+            finalMoved = true;
 
             long size = publishedSnapshot.size();
             String sha256 = publishedSnapshot.sha256();
+            if (size <= 0 || size > request.maxOutputBytes()) {
+                throw new IOException("Published conversion artifact has invalid size: " + size);
+            }
             if (!stagedSnapshot.sha256().equalsIgnoreCase(sha256) || stagedSnapshot.size() != size) {
                 throw new IOException("Published conversion artifact fingerprint mismatch");
             }
@@ -285,17 +371,29 @@ public class ConvertBookUseCase {
                     .metadata(metadata)
                     .build();
 
-            mutations.upsertArtifact(book.getId(), artifact, request.makePreferred());
+            try {
+                mutations.upsertArtifact(book.getId(), artifact, request.makePreferred());
+            } catch (RuntimeException registrationFailure) {
+                throw new BookConversionException(BookConversionException.Stage.CATALOG_REGISTRATION,
+                        selected.converter().id(), source.format(), request.targetFormat(), registrationFailure);
+            }
             registered = true;
 
             long durationMs = Math.max(0L, (System.nanoTime() - startedAt) / 1_000_000L);
             return new Result(selected.converter().id(), artifact, durationMs);
-        } catch (Exception failure) {
+        } catch (BookConversionException failure) {
             publicationFailure = failure;
             throw failure;
+        } catch (Exception failure) {
+            BookConversionException classified = new BookConversionException(
+                    BookConversionException.Stage.PUBLICATION, selected.converter().id(),
+                    source.format(), request.targetFormat(), failure);
+            publicationFailure = classified;
+            throw classified;
         } finally {
             if (finalMoved && !registered && stagedSha256 != null) {
-                try { SafeFilePublication.removeIfOwned(finalFile, stagedSha256, "Conversion artifact rollback"); }
+                try { SafeFilePublication.removeUserSelectedFileIfOwned(
+                        finalFile, stagedSha256, "Conversion artifact rollback"); }
                 catch (IOException rollbackFailure) {
                     if (publicationFailure != null) publicationFailure.addSuppressed(rollbackFailure);
                     else throw rollbackFailure;
@@ -342,18 +440,39 @@ public class ConvertBookUseCase {
     private List<Source> sourceCandidates(Book book) {
         List<Source> result = new ArrayList<>();
         Optional<BookArtifact> preferred = book.getPreferredArtifact().filter(BookArtifact::isAvailable);
-        preferred.ifPresent(artifact -> result.add(sourceFromArtifact(artifact)));
-        for (BookArtifact artifact : book.getArtifacts()) {
-            if (!artifact.isAvailable()) continue;
-            if (preferred.isPresent() && preferred.get().getId().equals(artifact.getId())) continue;
-            result.add(sourceFromArtifact(artifact));
-        }
+
+        // A converted artifact is a useful reading/export preference, but it must not silently
+        // become the preferred *conversion source*.  Chaining conversions through a derived PDF
+        // (FB2 -> PDF -> EPUB) loses structure and can force AUTO mode onto Calibre even though
+        // the original FB2 has a native/toolchain route.  Prefer original/imported artifacts,
+        // while still respecting the user's preferred artifact within the same provenance tier.
+        List<BookArtifact> available = book.getArtifacts().stream()
+                .filter(BookArtifact::isAvailable)
+                .sorted(Comparator
+                        .comparingInt((BookArtifact artifact) -> isDerivedConversionArtifact(artifact) ? 1 : 0)
+                        .thenComparingInt(artifact -> preferred.isPresent()
+                                && preferred.get().getId().equals(artifact.getId()) ? 0 : 1))
+                .toList();
+        for (BookArtifact artifact : available) result.add(sourceFromArtifact(artifact));
+
         if (result.isEmpty()) {
             String format = sourceFormat("", book.getFile());
             result.add(new Source(format, book.getFileSize(), null, () -> resources.readBookData(book)
                     .orElseThrow(() -> new IllegalArgumentException("Book source is not readable: " + book.getId()))));
         }
         return List.copyOf(result);
+    }
+
+    private static boolean isDerivedConversionArtifact(BookArtifact artifact) {
+        if (artifact == null) return false;
+        String sourceId = artifact.getSourceId();
+        if (sourceId != null && sourceId.regionMatches(true, 0, "conversion:", 0, "conversion:".length())) {
+            return true;
+        }
+        Map<String, String> metadata = artifact.getMetadata();
+        return metadata != null && (metadata.containsKey("conversion.sourceFormat")
+                || metadata.containsKey("conversion.provider")
+                || metadata.containsKey("conversion.createdAt"));
     }
 
     private Source sourceFromArtifact(BookArtifact artifact) {
@@ -460,49 +579,5 @@ public class ConvertBookUseCase {
 
     private record SelectedConverter(BookConverter converter, BookConversionCapability capability) { }
     private record SelectedJob(Source source, SelectedConverter converter) { }
-
-    /** Bounded source wrapper: providers cannot read past the job input limit and reads observe cancellation. */
-    private static final class CancellableBoundedInputStream extends FilterInputStream {
-        private final long maxBytes;
-        private final BooleanSupplier cancelled;
-        private long count;
-
-        private CancellableBoundedInputStream(InputStream delegate, long maxBytes, BooleanSupplier cancelled) {
-            super(delegate);
-            this.maxBytes = maxBytes;
-            this.cancelled = cancelled == null ? () -> false : cancelled;
-        }
-
-        @Override public int read() throws IOException {
-            check();
-            int value = super.read();
-            if (value >= 0) increment(1);
-            return value;
-        }
-
-        @Override public int read(byte[] buffer, int offset, int length) throws IOException {
-            check();
-            long remaining = maxBytes - count;
-            if (remaining <= 0) {
-                int extra = super.read();
-                if (extra < 0) return -1;
-                count++;
-                throw new IOException("Conversion input exceeds limit: " + maxBytes + " bytes");
-            }
-            int boundedLength = (int) Math.min(length, remaining);
-            int read = super.read(buffer, offset, boundedLength);
-            if (read > 0) increment(read);
-            return read;
-        }
-
-        private void increment(long delta) throws IOException {
-            count += delta;
-            if (count > maxBytes) throw new IOException("Conversion input exceeds limit: " + maxBytes + " bytes");
-        }
-
-        private void check() {
-            if (cancelled.getAsBoolean()) throw new CancellationException("Book conversion cancelled");
-        }
-    }
 
 }

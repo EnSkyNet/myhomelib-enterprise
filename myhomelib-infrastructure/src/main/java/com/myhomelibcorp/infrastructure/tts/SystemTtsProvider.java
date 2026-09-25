@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.tts;
 
+import com.myhomelibcorp.shared.util.ExecutablePathSafety;
 import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 
 import com.myhomelibcorp.application.tts.TtsProvider;
@@ -241,8 +242,9 @@ public class SystemTtsProvider implements TtsProvider {
         @Override public boolean commandExists(String command) {
             if (command == null || command.isBlank()) return false;
             try {
+                List<String> safe = safeCommand(List.of(command, versionArg(command)), "TTS executable");
                 ProcessExecutionSupport.run(
-                        List.of(command, versionArg(command)), null, java.time.Duration.ofSeconds(3), 16 * 1024);
+                        safe, null, java.time.Duration.ofSeconds(3), 16 * 1024);
                 return true;
             } catch (Exception ignored) { return false; }
         }
@@ -254,8 +256,9 @@ public class SystemTtsProvider implements TtsProvider {
         }
         @Override public String capture(List<String> command) throws IOException {
             try {
+                List<String> safe = safeCommand(command, "TTS discovery executable");
                 ProcessExecutionSupport.Result result = ProcessExecutionSupport.run(
-                        command, null, java.time.Duration.ofSeconds(15), 256 * 1024);
+                        safe, null, java.time.Duration.ofSeconds(15), 256 * 1024);
                 if (result.exitCode() != 0) {
                     String diagnostic = result.stderrText().trim();
                     if (diagnostic.length() > 400) diagnostic = diagnostic.substring(0, 400);
@@ -271,20 +274,41 @@ public class SystemTtsProvider implements TtsProvider {
             }
         }
         @Override public Process start(List<String> command) throws IOException {
-            ProcessBuilder builder = new ProcessBuilder(command);
-            if (!command.isEmpty() && "powershell".equalsIgnoreCase(command.get(0))) {
-                for (String token : command) {
+            boolean powershell = !command.isEmpty() && isPowerShell(command.getFirst());
+            List<String> safeCommand = safeCommand(command, "TTS executable");
+            ProcessBuilder builder = new ProcessBuilder(safeCommand);
+            if (powershell) {
+                for (String token : safeCommand) {
                     if (token.startsWith("--mhl-voice=")) builder.environment().put("MHL_TTS_VOICE", token.substring("--mhl-voice=".length()));
                     if (token.startsWith("--mhl-rate=")) builder.environment().put("MHL_TTS_RATE", token.substring("--mhl-rate=".length()));
                 }
-                command = command.stream().filter(token -> !token.startsWith("--mhl-")).toList();
-                builder.command(command);
+                safeCommand = safeCommand.stream().filter(token -> !token.startsWith("--mhl-")).toList();
+                builder.command(safeCommand);
             }
             // Speech output is not consumed by MyHomeLib. Discard both streams so a verbose
             // native TTS backend cannot block while speak() waits for process completion.
             return builder.redirectOutput(ProcessBuilder.Redirect.DISCARD)
                     .redirectError(ProcessBuilder.Redirect.DISCARD)
                     .start();
+        }
+
+        private static List<String> safeCommand(List<String> command, String role) throws IOException {
+            if (command == null || command.isEmpty() || command.getFirst() == null || command.getFirst().isBlank()) {
+                throw new IOException(role + " is empty");
+            }
+            List<String> safe = new java.util.ArrayList<>(command);
+            safe.set(0, ExecutablePathSafety.resolve(safe.getFirst(), role).toString());
+            return List.copyOf(safe);
+        }
+
+        private static boolean isPowerShell(String command) {
+            if (command == null || command.isBlank()) return false;
+            try {
+                String name = java.nio.file.Path.of(command).getFileName().toString();
+                return "powershell".equalsIgnoreCase(name) || "powershell.exe".equalsIgnoreCase(name);
+            } catch (RuntimeException ignored) {
+                return false;
+            }
         }
     }
 }

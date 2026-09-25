@@ -6,6 +6,7 @@ import com.myhomelibcorp.application.metadata.MetadataQuery;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -27,36 +28,46 @@ public class MetadataReviewService {
     private final MetadataMergePreviewService previews;
     private final ExecutorPort executor;
     private final LibraryOperationCoordinator operations;
+    private final CollectionLifecyclePort collections;
 
     /** Compatibility constructor for focused tests without lifecycle wiring. */
     public MetadataReviewService(BookQueryRepository books, MetadataLookupService lookup,
                                  MetadataMergePreviewService previews, ExecutorPort executor) {
-        this(books, lookup, previews, executor, null);
+        this(books, lookup, previews, executor, null, null);
     }
 
     @Autowired
     public MetadataReviewService(BookQueryRepository books, MetadataLookupService lookup,
                                  MetadataMergePreviewService previews, ExecutorPort executor,
-                                 LibraryOperationCoordinator operations) {
+                                 LibraryOperationCoordinator operations,
+                                 CollectionLifecyclePort collections) {
         this.books = Objects.requireNonNull(books, "books");
         this.lookup = Objects.requireNonNull(lookup, "lookup");
         this.previews = Objects.requireNonNull(previews, "previews");
         this.executor = Objects.requireNonNull(executor, "executor");
         this.operations = operations;
+        this.collections = collections;
     }
 
     public CompletableFuture<MetadataReviewLookupResult> lookup(BookId bookId) {
-        return lookup(bookId, new AtomicBoolean(), lookup::search);
+        return lookup(bookId, null, new AtomicBoolean(), lookup::search);
     }
 
     public CompletableFuture<MetadataReviewLookupResult> lookup(
             BookId bookId, Duration timeout, AtomicBoolean cancelled) {
+        return lookup(bookId, null, timeout, cancelled);
+    }
+
+    /** Collection-stable lookup used by long-running batch orchestration. */
+    public CompletableFuture<MetadataReviewLookupResult> lookup(
+            BookId bookId, String expectedCollectionId, Duration timeout, AtomicBoolean cancelled) {
         Objects.requireNonNull(cancelled, "cancelled");
-        return lookup(bookId, cancelled, query -> lookup.search(query, timeout, cancelled));
+        return lookup(bookId, expectedCollectionId, cancelled,
+                query -> lookup.search(query, timeout, cancelled));
     }
 
     private CompletableFuture<MetadataReviewLookupResult> lookup(
-            BookId bookId, AtomicBoolean cancelled,
+            BookId bookId, String expectedCollectionId, AtomicBoolean cancelled,
             Function<MetadataQuery, CompletableFuture<MetadataLookupResult>> search) {
         Objects.requireNonNull(bookId, "bookId");
         final LibraryOperationCoordinator.Lease lifecycleLease;
@@ -72,6 +83,7 @@ public class MetadataReviewService {
             loaded = executor.submit(() -> {
                 try {
                     if (cancelled.get()) throw new CancellationException("Metadata lookup cancelled");
+                    requireExpectedCollection(expectedCollectionId);
                     return books.findById(bookId)
                             .orElseThrow(() -> new IllegalStateException("Book not found: " + bookId));
                 } catch (RuntimeException | Error failure) {
@@ -94,6 +106,19 @@ public class MetadataReviewService {
                         .thenApply(result -> new MetadataReviewLookupResult(
                                 result.candidates().stream().map(candidate -> previews.preview(book, candidate)).toList(),
                                 result.issues(), result.cancelled())));
+    }
+
+
+    private void requireExpectedCollection(String expectedCollectionId) {
+        if (expectedCollectionId == null || expectedCollectionId.isBlank()) return;
+        if (collections == null) {
+            throw new IllegalStateException("Collection lifecycle is unavailable for collection-scoped metadata lookup");
+        }
+        var active = collections.getCurrentCollection();
+        String activeId = active == null || active.getId() == null ? "" : active.getId().trim();
+        if (!expectedCollectionId.equals(activeId)) {
+            throw new IllegalStateException("Active collection changed before metadata lookup");
+        }
     }
 
     private static MetadataQuery queryFor(Book book) {

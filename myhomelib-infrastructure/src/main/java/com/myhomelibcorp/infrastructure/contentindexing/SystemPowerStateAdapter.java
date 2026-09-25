@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.contentindexing;
 
 import com.myhomelibcorp.application.port.out.contentindexing.PowerStatePort;
+import com.myhomelibcorp.shared.util.ExecutablePathSafety;
 import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.stereotype.Component;
@@ -87,8 +88,11 @@ public class SystemPowerStateAdapter implements PowerStatePort, DisposableBean {
     }
 
     private static boolean commandContains(String[] command, String token) throws Exception {
+        java.util.ArrayList<String> safeCommand = new java.util.ArrayList<>(java.util.List.of(command));
+        safeCommand.set(0, ExecutablePathSafety.resolve(
+                safeCommand.getFirst(), "Power-state probe executable").toString());
         ProcessExecutionSupport.Result result = ProcessExecutionSupport.run(
-                java.util.List.of(command), null, java.time.Duration.ofMillis(1500), 64 * 1024);
+                safeCommand, null, java.time.Duration.ofMillis(1500), 64 * 1024);
         if (result.exitCode() != 0) {
             throw new java.io.IOException("Power-state probe exited with code " + result.exitCode());
         }

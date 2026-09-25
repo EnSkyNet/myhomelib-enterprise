@@ -290,7 +290,9 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
 
     private static void deleteSqliteSidecars(Path database) throws IOException {
         if (database == null) return;
-        Files.deleteIfExists(Path.of(database.toString() + "-wal"));
-        Files.deleteIfExists(Path.of(database.toString() + "-shm"));
+        SafeFilePublication.deleteSafeRegularFileIfExists(
+                Path.of(database.toString() + "-wal"), "SQLite WAL sidecar cleanup");
+        SafeFilePublication.deleteSafeRegularFileIfExists(
+                Path.of(database.toString() + "-shm"), "SQLite SHM sidecar cleanup");
     }
 }

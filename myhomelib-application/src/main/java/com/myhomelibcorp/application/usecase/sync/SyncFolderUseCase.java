@@ -38,7 +38,7 @@ public class SyncFolderUseCase {
             SyncResult result = folderSyncPort.syncFolder(directory, options);
             lease.markCompleted("");
             return result;
-        } catch (RuntimeException failure) {
+        } catch (RuntimeException | Error failure) {
             lease.markFailed(failure);
             throw failure;
         } finally {
@@ -66,7 +66,7 @@ public class SyncFolderUseCase {
                         }
                         lease.close();
                     });
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | Error e) {
             lease.markFailed(e);
             lease.close();
             throw e;

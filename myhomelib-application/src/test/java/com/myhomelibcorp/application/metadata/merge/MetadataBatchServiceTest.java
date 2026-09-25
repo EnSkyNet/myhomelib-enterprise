@@ -48,7 +48,7 @@ class MetadataBatchServiceTest {
     void boundedBatchesReportOrderedProgressAndNeverAutoApply(int size) {
         List<BookId> ids = ids(size);
         var progress = new ArrayList<MetadataBatchService.Progress>();
-        when(review.lookup(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(empty()));
+        when(review.lookup(any(), eq("library"), any(), any())).thenReturn(CompletableFuture.completedFuture(empty()));
 
         var result = service.lookup("library", ids, new AtomicBoolean(), progress::add).join();
 
@@ -64,7 +64,7 @@ class MetadataBatchServiceTest {
     void outOfOrderCompletionNeverAdmitsMoreThanFourBooksAndKeepsInputOrder() {
         List<BookId> ids = ids(15);
         var pending = new LinkedHashMap<BookId, CompletableFuture<MetadataReviewLookupResult>>();
-        when(review.lookup(any(), any(), any())).thenAnswer(call -> {
+        when(review.lookup(any(), eq("library"), any(), any())).thenAnswer(call -> {
             assertThat(pending.values().stream().filter(future -> !future.isDone()).count())
                     .isLessThan(MetadataBatchService.CONCURRENCY);
             var future = new CompletableFuture<MetadataReviewLookupResult>();
@@ -73,7 +73,9 @@ class MetadataBatchServiceTest {
         });
         var result = service.lookup("library", ids, new AtomicBoolean(), null);
         assertThat(pending).hasSize(MetadataBatchService.CONCURRENCY);
-        assertThat(operations.isBusy()).isTrue();
+        // Provider I/O must not retain the collection QUERY barrier; only the queued
+        // catalogue snapshot read is collection-scoped.
+        assertThat(operations.isBusy()).isFalse();
         while (!result.isDone()) {
             var next = pending.values().stream().filter(future -> !future.isDone()).reduce((a, b) -> b).orElseThrow();
             next.complete(empty());
@@ -85,11 +87,11 @@ class MetadataBatchServiceTest {
     @Test
     void oneBookFailureAndOneProviderTimeoutDoNotDiscardOtherBooks() {
         List<BookId> ids = ids(3);
-        when(review.lookup(eq(ids.get(0)), any(), any())).thenReturn(CompletableFuture.failedFuture(new IllegalStateException("missing")));
-        when(review.lookup(eq(ids.get(1)), any(), any())).thenReturn(CompletableFuture.completedFuture(
+        when(review.lookup(eq(ids.get(0)), eq("library"), any(), any())).thenReturn(CompletableFuture.failedFuture(new IllegalStateException("missing")));
+        when(review.lookup(eq(ids.get(1)), eq("library"), any(), any())).thenReturn(CompletableFuture.completedFuture(
                 new MetadataReviewLookupResult(List.of(), List.of(new MetadataProviderIssue("p", "Provider",
                         MetadataProviderErrorKind.TIMEOUT, "timed out")), false)));
-        when(review.lookup(eq(ids.get(2)), any(), any())).thenReturn(CompletableFuture.completedFuture(empty()));
+        when(review.lookup(eq(ids.get(2)), eq("library"), any(), any())).thenReturn(CompletableFuture.completedFuture(empty()));
         var result = service.lookup("library", ids, new AtomicBoolean(), null).join();
         assertThat(result.items()).hasSize(3);
         assertThat(result.items().get(0).failed()).isTrue();
@@ -101,7 +103,7 @@ class MetadataBatchServiceTest {
     @Test
     void cancellationStopsAdmissionAndReleasesLeaseOnlyAfterWorkersFinish() {
         var pending = new ArrayList<CompletableFuture<MetadataReviewLookupResult>>();
-        when(review.lookup(any(), any(), any())).thenAnswer(call -> {
+        when(review.lookup(any(), eq("library"), any(), any())).thenAnswer(call -> {
             var future = new CompletableFuture<MetadataReviewLookupResult>();
             pending.add(future);
             return future;
@@ -110,7 +112,7 @@ class MetadataBatchServiceTest {
         var result = service.lookup("library", ids(20), cancelled, null);
         assertThat(result.cancel(true)).isTrue();
         assertThat(cancelled).isTrue();
-        assertThat(operations.isBusy()).isTrue();
+        assertThat(operations.isBusy()).isFalse();
         pending.forEach(future -> future.complete(empty()));
         assertThat(pending).hasSize(MetadataBatchService.CONCURRENCY);
         assertThat(operations.isBusy()).isFalse();

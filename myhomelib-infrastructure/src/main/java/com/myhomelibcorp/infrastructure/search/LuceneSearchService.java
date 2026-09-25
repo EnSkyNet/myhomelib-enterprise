@@ -265,7 +265,9 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
                     documentBuildNanos += System.nanoTime() - buildStarted;
 
                     long writeStarted = System.nanoTime();
-                    indexWriter.updateDocument(new Term("id", snapshot.getId().asString()), document);
+                    // The writer was deleteAll()'d at the start of this atomic rebuild and book IDs
+                    // are unique. addDocument avoids a redundant per-book delete-by-Term lookup.
+                    indexWriter.addDocument(document);
                     luceneWriteNanos += System.nanoTime() - writeStarted;
                     indexed++;
 

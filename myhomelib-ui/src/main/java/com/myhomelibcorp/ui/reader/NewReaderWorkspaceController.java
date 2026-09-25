@@ -1770,6 +1770,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 ? readerContainer.getScene().getWindow() : null;
         return new ReaderAnnotationCoordinator.Context(
                 owner,
+                requestToken.collectionId(),
                 bookId,
                 currentReaderArtifactId,
                 document,
@@ -1941,9 +1942,10 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             return;
         }
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
+        String collectionId = currentBookCollectionId;
         appState.getStatusBar().setStatusText(i18n.text("ui.reader.bookmarks.loading"));
         uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.READER_STATE,
-                () -> persistenceService.loadBookmarks(bookId))
+                () -> persistenceService.loadBookmarks(collectionId, bookId))
                 .thenAccept(bookmarks -> Platform.runLater(() -> {
                     if (!sameOpenBook(requestToken, bookId)) return;
                     showBookmarksDialog(bookmarks, requestToken, bookId);
@@ -1969,10 +1971,11 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
     private void loadTextBookmarks(String bookId, boolean selectBookmarksTab, boolean reportStatus) {
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
+        String collectionId = currentBookCollectionId;
         if (selectBookmarksTab) showReaderSidebar(bookmarkSidebarTab);
         if (reportStatus) appState.getStatusBar().setStatusText(i18n.text("ui.reader.bookmarks.loading"));
         uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.READER_STATE,
-                () -> persistenceService.loadBookmarks(bookId))
+                () -> persistenceService.loadBookmarks(collectionId, bookId))
                 .thenAccept(bookmarks -> Platform.runLater(() -> {
                     if (!sameOpenBook(requestToken, bookId)) return;
                     currentSidebarBookmarks = bookmarks == null ? List.of() : List.copyOf(bookmarks);
@@ -2022,7 +2025,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         try {
             deleteFuture = uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.READER_STATE, () -> {
                 persistenceService.deleteBookmark(collectionId, bookId, bookmark.getId());
-                return persistenceService.loadBookmarks(bookId);
+                return persistenceService.loadBookmarks(collectionId, bookId);
             });
         } catch (RuntimeException lifecycleBusy) {
             log.debug("Bookmark delete skipped because library lifecycle changed: {}", rootMessage(lifecycleBusy));

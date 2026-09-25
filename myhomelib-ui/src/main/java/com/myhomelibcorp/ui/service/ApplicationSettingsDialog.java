@@ -12,6 +12,7 @@ import com.myhomelibcorp.application.content.indexing.IndexingResourceProfile;
 import com.myhomelibcorp.application.util.CommandTemplate;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.shared.util.EncryptionUtil;
+import com.myhomelibcorp.shared.util.ExecutablePathSafety;
 import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 import com.myhomelibcorp.shared.format.SupportedFormat;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
@@ -195,6 +196,7 @@ public class ApplicationSettingsDialog {
         private final TextField fbcExecutable;
         private final TextField pandocExecutable;
         private final TextField libmobiExecutable;
+        private final TextField calibreExecutable;
         private final TextField epubcheckExecutable;
 
         ConverterSettingsEditor(Map<String, TextField> text) {
@@ -202,6 +204,7 @@ public class ApplicationSettingsDialog {
             this.fbcExecutable = field(text, "converter.toolchain.fbc.executable", "");
             this.pandocExecutable = field(text, "converter.toolchain.pandoc.executable", "");
             this.libmobiExecutable = field(text, "converter.toolchain.libmobi.executable", "");
+            this.calibreExecutable = field(text, "converter.calibre.executable", "");
             this.epubcheckExecutable = field(text, "converter.epubcheck.executable", "");
             mode.getItems().setAll(
                     option("AUTO", "ui.settings.converters.mode.auto"),
@@ -235,6 +238,8 @@ public class ApplicationSettingsDialog {
 
             Label intro = new Label(localizationService.text("ui.settings.converters.toolchain.info"));
             intro.setWrapText(true);
+            Label calibreInfo = new Label(localizationService.text("ui.settings.converters.calibre.info"));
+            calibreInfo.setWrapText(true);
             pane.getChildren().addAll(
                     intro,
                     row(localizationService.text("ui.settings.converters.mode"), mode),
@@ -242,6 +247,10 @@ public class ApplicationSettingsDialog {
                     row(localizationService.text("ui.settings.converters.fbc.executable"), executableField(fbcExecutable)),
                     row(localizationService.text("ui.settings.converters.pandoc.executable"), executableField(pandocExecutable)),
                     row(localizationService.text("ui.settings.converters.libmobi.executable"), executableField(libmobiExecutable)),
+                    row(localizationService.text("ui.settings.converters.calibre.executable"), executableField(calibreExecutable)),
+                    row(localizationService.text("ui.settings.converters.calibre.timeout"),
+                            field(text, "converter.calibre.timeoutSeconds", "300")),
+                    calibreInfo,
                     row(localizationService.text("ui.settings.converters.epubcheck.executable"), executableField(epubcheckExecutable)));
 
             Button refresh = new Button(localizationService.text("ui.settings.converters.check"));
@@ -256,12 +265,6 @@ public class ApplicationSettingsDialog {
                     row(localizationService.text("ui.settings.converters.acceptance.mode"), acceptanceMode),
                     new Separator());
 
-            Label calibreInfo = new Label(localizationService.text("ui.settings.converters.calibre.info"));
-            calibreInfo.setWrapText(true);
-            pane.getChildren().add(calibreInfo);
-            pane.getChildren().add(row(localizationService.text("ui.settings.converters.calibre.executable"), field(text, "converter.calibre.executable", "")));
-            pane.getChildren().add(row(localizationService.text("ui.settings.converters.calibre.timeout"),
-                    field(text, "converter.calibre.timeoutSeconds", "300")));
             pane.getChildren().add(new Separator());
             pane.getChildren().add(new Label(localizationService.text("ui.settings.converters.external_templates.help")));
             addConverterRow(pane, text, localizationService.text("ui.settings.converters.fb2_to_epub"), "converter.epub.command", "epub");
@@ -294,7 +297,8 @@ public class ApplicationSettingsDialog {
             trigger.setDisable(true);
             diagnosticsArea.setText(localizationService.text("ui.settings.converters.checking"));
             ConverterDiagnosticsRequest request = new ConverterDiagnosticsRequest(
-                    fbcExecutable.getText(), pandocExecutable.getText(), libmobiExecutable.getText());
+                    fbcExecutable.getText(), pandocExecutable.getText(), libmobiExecutable.getText(),
+                    calibreExecutable.getText());
             String epubcheck = epubcheckExecutable.getText();
             backgroundExecutor.submit(() -> withEpubCheck(converterDiagnostics.probe(request), epubCheckDiagnostics.probe(epubcheck)))
                     .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
@@ -367,6 +371,7 @@ public class ApplicationSettingsDialog {
                 case "fbc" -> "fb2cng (fbc)";
                 case "pandoc" -> "Pandoc";
                 case "libmobi" -> "libmobi (mobitool)";
+                case "calibre" -> "Calibre (ebook-convert)";
                 default -> id == null ? "" : id;
             };
         }
@@ -628,9 +633,12 @@ public class ApplicationSettingsDialog {
         int timeout = Math.max(1, Math.min(60, parseInt(settings.get("converter.testTimeoutSeconds", "10"), 10)));
         final int maxCaptureBytes = 64 * 1024;
         try {
+            var safeArgs = new java.util.ArrayList<>(args);
+            safeArgs.set(0, ExecutablePathSafety.resolve(
+                    safeArgs.getFirst(), "Converter test executable").toString());
             ProcessExecutionSupport.Result process = ProcessExecutionSupport.run(
-                    args, null, java.time.Duration.ofSeconds(timeout), maxCaptureBytes);
-            String details = UiText.text("ui.java.application_settings_dialog.b67ad236d6") + process.exitCode() + UiText.text("ui.java.application_settings_dialog.755cfb7f1e") + String.join(" | ", args)
+                    safeArgs, null, java.time.Duration.ofSeconds(timeout), maxCaptureBytes);
+            String details = UiText.text("ui.java.application_settings_dialog.b67ad236d6") + process.exitCode() + UiText.text("ui.java.application_settings_dialog.755cfb7f1e") + String.join(" | ", safeArgs)
                     + "\n\n" + commandOutput(process);
             return new CommandTestResult(process.exitCode() == 0 ? Alert.AlertType.INFORMATION : Alert.AlertType.ERROR,
                     details);

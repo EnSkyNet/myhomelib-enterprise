@@ -100,6 +100,9 @@ class LuceneResourceLifecycleTest {
         var active = LuceneCollectionIndexLifecycle.class.getDeclaredField("activeCollectionId");
         active.setAccessible(true);
         active.set(lifecycle, "collection");
+        var stateFile = LuceneCollectionIndexLifecycle.class.getDeclaredField("activeStateFile");
+        stateFile.setAccessible(true);
+        stateFile.set(lifecycle, temp.resolve("search.state"));
         doAnswer(call -> { assertThat(Thread.holdsLock(search)).isTrue(); return null; })
                 .when(search).setQueryAvailability(anyBoolean(), any());
         doAnswer(call -> { assertThat(Thread.holdsLock(search)).isTrue(); return null; }).when(search).commit();

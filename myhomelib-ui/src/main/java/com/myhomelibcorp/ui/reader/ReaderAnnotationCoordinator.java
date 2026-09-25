@@ -13,6 +13,7 @@ import com.myhomelibcorp.ui.annotation.AnnotationEditorDialog;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
@@ -46,12 +47,15 @@ public class ReaderAnnotationCoordinator {
     private final UiBackgroundExecutor uiBackgroundExecutor;
     private final DialogService dialogService;
     private final LocalizationService i18n;
+    private final ApplicationState applicationState;
 
     public void createHighlight(Context context, ReaderSelection selection) {
         if (!usable(context) || selection == null || selection.text() == null || selection.text().isBlank()) return;
         AnnotationAnchorData anchor = ReaderAnnotationPresenter.anchor(context.bookId(), context.artifactId(), selection);
-        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationService.createHighlight(
-                        anchor, AnnotationService.DEFAULT_COLOR, Set.of()))
+        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> {
+                    requireCurrentCollection(context);
+                    return annotationService.createHighlight(anchor, AnnotationService.DEFAULT_COLOR, Set.of());
+                })
                 .thenAccept(saved -> complete(context, true, "ui.reader.annotation.highlight_saved"))
                 .exceptionally(error -> fail(context, error));
     }
@@ -67,8 +71,10 @@ public class ReaderAnnotationCoordinator {
         }
 
         AnnotationAnchorData anchor = ReaderAnnotationPresenter.anchor(context.bookId(), context.artifactId(), selection);
-        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationService.createNote(
-                        anchor, edited.color(), edited.note(), edited.tags()))
+        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> {
+                    requireCurrentCollection(context);
+                    return annotationService.createNote(anchor, edited.color(), edited.note(), edited.tags());
+                })
                 .thenAccept(saved -> complete(context, true, "ui.reader.annotation.note_saved"))
                 .exceptionally(error -> fail(context, error));
     }
@@ -98,8 +104,10 @@ public class ReaderAnnotationCoordinator {
             return;
         }
 
-        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationService.update(
-                        annotation.id(), edited.note(), edited.color(), edited.tags()))
+        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> {
+                    requireCurrentCollection(context);
+                    return annotationService.update(annotation.id(), edited.note(), edited.color(), edited.tags());
+                })
                 .thenAccept(saved -> complete(context, false, "ui.reader.annotation.updated"))
                 .exceptionally(error -> fail(context, error));
     }
@@ -115,6 +123,7 @@ public class ReaderAnnotationCoordinator {
         }
 
         uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> {
+            requireCurrentCollection(context);
             annotationService.delete(annotation.id());
             return null;
         }).thenAccept(ignored -> complete(context, false, "ui.reader.annotation.deleted"))
@@ -167,7 +176,10 @@ public class ReaderAnnotationCoordinator {
     }
 
     private void persistAnchor(Context context, String annotationId, AnnotationAnchorData anchor) {
-        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationService.reanchor(annotationId, anchor))
+        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> {
+                    requireCurrentCollection(context);
+                    return annotationService.reanchor(annotationId, anchor);
+                })
                 .thenAccept(saved -> complete(context, false, "ui.reader.annotation.reanchored"))
                 .exceptionally(error -> fail(context, error));
     }
@@ -193,6 +205,16 @@ public class ReaderAnnotationCoordinator {
                 context.bookId(), context.artifactId(),
                 chapter == null ? null : chapter.id(), chapter == null ? null : chapter.title(), null,
                 start, end, Math.max(0.0, Math.min(1.0, start / (double) total)), quote, prefix, suffix);
+    }
+
+    private void requireCurrentCollection(Context context) {
+        String expectedCollectionId = context == null ? null : context.collectionId();
+        String activeCollectionId = applicationState.getCurrentLibraryCollectionId();
+        if (expectedCollectionId == null || expectedCollectionId.isBlank()
+                || !expectedCollectionId.equals(activeCollectionId)) {
+            throw new java.util.concurrent.CancellationException(
+                    "Reader annotation belongs to a collection that is no longer active");
+        }
     }
 
     private void complete(Context context, boolean clearSelection, String statusKey) {
@@ -261,6 +283,7 @@ public class ReaderAnnotationCoordinator {
 
     public record Context(
             Window owner,
+            String collectionId,
             String bookId,
             String artifactId,
             ReaderDocument document,

@@ -80,6 +80,38 @@ class ConverterToolLocatorTest {
     }
 
     @Test
+    void exposesKnownCompatibilityBundleLayouts() {
+        ConverterToolLocator locator = new ConverterToolLocator(emptySettings());
+        String executable = platformExecutable("pandoc");
+
+        assertThat(locator.bundledCandidates(tempDir.resolve("tools"), "pandoc", executable))
+                .contains(tempDir.resolve("tools/converters/pandoc-3.11").resolve(executable));
+
+        String fbc = platformExecutable("fbc");
+        assertThat(locator.bundledCandidates(tempDir.resolve("tools"), "fbc", fbc))
+                .contains(tempDir.resolve("tools/converters/fbc-windows-amd64").resolve(fbc));
+    }
+
+    @Test
+    void locatesBundledConverterInsideVersionedPandocDirectory() throws Exception {
+        String previous = System.getProperty("myhomelib.launchDir");
+        try {
+            System.setProperty("myhomelib.launchDir", tempDir.toString());
+            Path executable = tempDir.resolve("tools/converters/pandoc-3.11").resolve(platformExecutable("pandoc"));
+            Files.createDirectories(executable.getParent());
+            Files.writeString(executable, "tool");
+            executable.toFile().setExecutable(true);
+
+            ConverterToolLocator locator = new ConverterToolLocator(emptySettings());
+
+            assertThat(locator.locate("pandoc", "pandoc"))
+                    .contains(executable.toAbsolutePath().normalize());
+        } finally {
+            restore("myhomelib.launchDir", previous);
+        }
+    }
+
+    @Test
     void locatesBundledConverterInsideLinuxJpackageApplicationDirectory() throws Exception {
         String previous = System.getProperty("myhomelib.launchDir");
         try {

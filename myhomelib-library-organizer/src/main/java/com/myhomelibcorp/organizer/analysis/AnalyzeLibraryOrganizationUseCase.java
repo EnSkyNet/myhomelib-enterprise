@@ -176,13 +176,27 @@ public final class AnalyzeLibraryOrganizationUseCase {
     }
 
     private List<OrganizerAnalysisItem> analyzePath(Path file, OrganizerProfile profile, BooleanSupplier cancelled) throws Exception {
-        long size = Files.size(file);
+        // Detection, metadata extraction and fingerprinting intentionally use separate readers.
+        // Keep one pathname identity around the whole sequence so a replacement cannot make a
+        // single analysis item describe multiple physical versions of the source.
+        BasicFileAttributes sourceAttributes = safeRegularFileAttributes(file, "Organizer analysis source");
+        long size = sourceAttributes.size();
         DetectedBookFormat detected = detector.detect(file);
-        if (size <= 0) return List.of(failedItem(file, profile, detected, size, "EMPTY_FILE: файл порожній"));
-        if (size > MAX_ANALYZE_FILE_BYTES) return List.of(failedItem(file, profile, detected, size,
-                "FILE_TOO_LARGE: файл перевищує ліміт аналізу 4 GiB"));
-        if ("book_archive".equals(detected.format())) return analyzeBookArchive(file, profile, cancelled);
-        return List.of(analyzeMaterialized(file, "", file, detected, profile, List.of()));
+        requireSameSourceIdentity(file, sourceAttributes, "format detection");
+
+        List<OrganizerAnalysisItem> result;
+        if (size <= 0) {
+            result = List.of(failedItem(file, profile, detected, size, "EMPTY_FILE: файл порожній"));
+        } else if (size > MAX_ANALYZE_FILE_BYTES) {
+            result = List.of(failedItem(file, profile, detected, size,
+                    "FILE_TOO_LARGE: файл перевищує ліміт аналізу 4 GiB"));
+        } else if ("book_archive".equals(detected.format())) {
+            result = analyzeBookArchive(file, profile, cancelled);
+        } else {
+            result = List.of(analyzeMaterialized(file, "", file, detected, profile, List.of()));
+        }
+        requireSameSourceIdentity(file, sourceAttributes, "analysis");
+        return result;
     }
 
     /**
@@ -270,7 +284,7 @@ public final class AnalyzeLibraryOrganizationUseCase {
     private OrganizerAnalysisItem analyzeMaterialized(Path logicalSource, String sourceEntry, Path materialized,
                                                        DetectedBookFormat detected, OrganizerProfile profile,
                                                        List<String> extraWarnings) throws Exception {
-        long size = Files.size(materialized);
+        long size = safeRegularFileAttributes(materialized, "Organizer analysis materialized source").size();
         List<String> warnings = new ArrayList<>(extraWarnings == null ? List.of() : extraWarnings);
         if (!detected.known()) warnings.add("UNSUPPORTED_FORMAT: " + detected.reason());
         String mismatch = formatExtensionMismatch(detected);
@@ -280,8 +294,10 @@ public final class AnalyzeLibraryOrganizationUseCase {
         NormalizedBookIdentity identity = normalizer.normalize(raw, profile.normalizeMetadata());
         BookFingerprint fingerprint = fingerprints.fingerprint(materialized, detected);
         if (sourceEntry != null && !sourceEntry.isBlank()) {
+            long containerMtime = safeRegularFileAttributes(logicalSource, "Organizer archive source")
+                    .lastModifiedTime().toMillis();
             fingerprint = new BookFingerprint(fingerprint.fileSha256(), fingerprint.semanticSha256(), fingerprint.size(),
-                    Files.getLastModifiedTime(logicalSource).toMillis());
+                    containerMtime);
         }
         CanonicalFormatDecision formatDecision = formatPolicy.decide(detected, profile);
         String extension = formatDecision.targetFormat().isBlank() ? detected.extension() : formatDecision.targetFormat();
@@ -305,7 +321,7 @@ public final class AnalyzeLibraryOrganizationUseCase {
 
     private OrganizerAnalysisItem failedItem(Path file, OrganizerProfile profile, String reason) {
         long size = 0L;
-        try { size = Files.size(file); } catch (Exception ignored) { }
+        try { size = safeRegularFileAttributes(file, "Organizer failed-item source").size(); } catch (Exception ignored) { }
         return failedItem(file, profile, new DetectedBookFormat("unknown", "application/octet-stream",
                 DetectionConfidence.UNKNOWN, extension(file), false, reason), size, reason);
     }
@@ -482,6 +498,32 @@ public final class AnalyzeLibraryOrganizationUseCase {
                 }
             });
         } catch (Exception ignored) { }
+    }
+
+
+    private static void requireSameSourceIdentity(Path file, BasicFileAttributes expected, String stage) throws java.io.IOException {
+        BasicFileAttributes current = safeRegularFileAttributes(file, "Organizer analysis source after " + stage);
+        if (expected.size() != current.size()
+                || !expected.lastModifiedTime().equals(current.lastModifiedTime())
+                || !sameFileKey(expected.fileKey(), current.fileKey())) {
+            throw new java.io.IOException("Organizer analysis source changed during " + stage + ": " + file);
+        }
+    }
+
+    private static boolean sameFileKey(Object left, Object right) {
+        // Some file-system providers do not expose fileKey; size+mtime are the best identity
+        // available in that case. Providers that expose a key must keep it stable as well.
+        return left == null || right == null || Objects.equals(String.valueOf(left), String.valueOf(right));
+    }
+
+    private static BasicFileAttributes safeRegularFileAttributes(Path file, String role) throws java.io.IOException {
+        Path safe = OrganizerPathSafety.canonicalExistingFile(file, role);
+        BasicFileAttributes attributes = Files.readAttributes(
+                safe, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attributes.isRegularFile() || attributes.isOther() || Files.isSymbolicLink(safe)) {
+            throw new java.io.IOException(role + " is not a safe regular file: " + safe);
+        }
+        return attributes;
     }
 
     private static void checkCancelled(BooleanSupplier cancelled) {

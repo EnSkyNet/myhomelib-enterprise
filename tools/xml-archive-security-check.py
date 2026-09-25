@@ -21,10 +21,10 @@ for token in ['XMLInputFactory.SUPPORT_DTD', 'XMLInputFactory.IS_SUPPORTING_EXTE
         errors.append(f'SecureXmlInputFactory missing fail-closed contract: {token}')
 
 required_archive = {
-    'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importer/zip/ZipImporter.java': ['ArchiveSafetyLimits', 'ZipCharsetSupport'],
-    'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/cover/ZipArchiveReader.java': ['ArchiveSafetyLimits', 'ZipCharsetSupport'],
-    'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxReader.java': ['ArchiveSafetyLimits', 'ZipCharsetSupport', 'LimitedInputStream'],
-    'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importer/epub/EpubImporter.java': ['ArchiveSafetyLimits', 'LimitedInputStream'],
+    'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importer/zip/ZipImporter.java': ['ArchiveSafetyLimits', 'SafeZipSupport'],
+    'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/cover/ZipArchiveReader.java': ['ArchiveSafetyLimits', 'SafeZipArchive', 'SafeFilePublication'],
+    'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxReader.java': ['ArchiveSafetyLimits', 'SafeZipArchive', 'LimitedInputStream'],
+    'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importer/epub/EpubImporter.java': ['ArchiveSafetyLimits', 'SafeZipArchive', 'LimitedInputStream'],
     'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/format/epub/EpubParser.java': ['ArchiveSafetyLimits'],
 }
 for rel,tokens in required_archive.items():
@@ -33,6 +33,11 @@ for rel,tokens in required_archive.items():
     for token in tokens:
         if token not in text:
             errors.append(f'{rel} missing archive safety primitive {token}')
+
+for p in java:
+    text=p.read_text(encoding='utf-8')
+    if 'ZipCharsetSupport' in text:
+        errors.append(f'{p.relative_to(ROOT)} uses legacy path-based ZipCharsetSupport in production')
 
 inpx=(ROOT/'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxReader.java').read_text(encoding='utf-8')
 for bad in [r'Path\.of\s*\(\s*[^)]*getName\s*\(', r'catch\s*\(\s*Exception[^)]*\)[^{]*\{[^}]*using default INPX structure']:
@@ -45,4 +50,4 @@ if errors:
 print('XML / ARCHIVE SECURITY CHECK: PASS')
 print(' - StAX creation is centralized and fail-closed')
 print(' - DTD/external entities remain disabled')
-print(' - ZIP/EPUB/INPX paths retain shared safety limits and charset handling')
+print(' - ZIP/EPUB/INPX paths retain shared safety limits and no-follow archive handling')

@@ -44,6 +44,22 @@ class SqliteCatalogSourceStateAdapterTest {
     }
 
     @Test
+    void preflightPlaceholderRemainsTheFirstRealSyncBaseline() {
+        String sourceKey = "remote-collection:c1";
+        String realFingerprint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+        stateAdapter.recordChecked(sourceKey, "https://example.test/full.inpx", "INPX", "2026-09-24");
+        var session = trackingAdapter.beginSync(sourceKey, "https://example.test/full.inpx", realFingerprint);
+
+        assertThat(session.initialBaseline()).isTrue();
+        assertThat(session.sourceChanged()).isTrue();
+        assertThat(session.sourceRevision()).isEqualTo(1L);
+        assertThat(stateAdapter.matchesAppliedFingerprint(sourceKey, realFingerprint)).isTrue();
+        assertThat(stateAdapter.matchesAppliedFingerprint(
+                sourceKey, com.myhomelibcorp.application.catalog.CatalogSourceIdentity.UNAPPLIED_FINGERPRINT)).isFalse();
+    }
+
+    @Test
     void appliedFingerprintIsIndependentFromLastDownloadedSha() {
         String sourceKey = "remote-collection:c1";
         String applied = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

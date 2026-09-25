@@ -19,18 +19,20 @@ public class ConverterDiagnostics implements ConverterDiagnosticsPort {
     @Override
     public List<ConverterToolStatus> snapshot() {
         Instant checkedAt = Instant.now();
-        return List.of(entry(tools.fbc(), checkedAt), entry(tools.pandoc(), checkedAt), entry(tools.libmobi(), checkedAt));
+        return List.of(entry(tools.fbc(), checkedAt), entry(tools.pandoc(), checkedAt), entry(tools.libmobi(), checkedAt),
+                entry(tools.calibre(), checkedAt));
     }
 
     @Override public List<ConverterToolStatus> refresh() { tools.refresh(); return snapshot(); }
 
     @Override
     public List<ConverterToolStatus> probe(ConverterDiagnosticsRequest request) {
-        ConverterDiagnosticsRequest effective = request == null ? new ConverterDiagnosticsRequest("", "", "") : request;
+        ConverterDiagnosticsRequest effective = request == null ? new ConverterDiagnosticsRequest("", "", "", "") : request;
         Instant checkedAt = Instant.now();
         return List.of(entry(tools.probeFbc(effective.fbcExecutable()), checkedAt),
                 entry(tools.probePandoc(effective.pandocExecutable()), checkedAt),
-                entry(tools.probeLibmobi(effective.libmobiExecutable()), checkedAt));
+                entry(tools.probeLibmobi(effective.libmobiExecutable()), checkedAt),
+                entry(tools.probeCalibre(effective.calibreExecutable()), checkedAt));
     }
 
     private ConverterToolStatus entry(ToolInstallation tool, Instant checkedAt) {

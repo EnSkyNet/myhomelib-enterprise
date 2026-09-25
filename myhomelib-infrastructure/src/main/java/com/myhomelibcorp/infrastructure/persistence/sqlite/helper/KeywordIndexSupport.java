@@ -84,6 +84,15 @@ public final class KeywordIndexSupport {
      * expected to participate in the caller's current transaction where one exists.
      */
     public static void replaceForBooks(JdbcTemplate jdbc, Map<String, String> keywordsByBookId) {
+        writeForBooks(jdbc, keywordsByBookId, true);
+    }
+
+    /** Inserts keyword links for books proven to be new in an empty catalog baseline. */
+    public static void insertForBooksFresh(JdbcTemplate jdbc, Map<String, String> keywordsByBookId) {
+        writeForBooks(jdbc, keywordsByBookId, false);
+    }
+
+    private static void writeForBooks(JdbcTemplate jdbc, Map<String, String> keywordsByBookId, boolean replaceExistingLinks) {
         if (jdbc == null || keywordsByBookId == null || keywordsByBookId.isEmpty()) return;
 
         List<String> bookIds = keywordsByBookId.keySet().stream()
@@ -91,7 +100,7 @@ public final class KeywordIndexSupport {
                 .toList();
         if (bookIds.isEmpty()) return;
 
-        deleteLinks(jdbc, bookIds);
+        if (replaceExistingLinks) deleteLinks(jdbc, bookIds);
 
         LinkedHashMap<String, String> keywordLabels = new LinkedHashMap<>();
         List<Object[]> links = new ArrayList<>();

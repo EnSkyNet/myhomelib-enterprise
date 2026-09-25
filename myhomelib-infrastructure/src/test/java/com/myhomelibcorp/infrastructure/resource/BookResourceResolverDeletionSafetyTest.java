@@ -85,7 +85,8 @@ class BookResourceResolverDeletionSafetyTest {
         Path escaped = link.resolve("secret.fb2");
         assertThatThrownBy(() -> resolver.stagePhysicalFileForDeletion(escaped, root, "collection-test", IDS))
                 .isInstanceOf(SecurityException.class)
-                .hasMessageContaining("outside the managed root");
+                .hasMessageContaining("safe regular file")
+                .hasRootCauseMessage("Book resource staged deletion contains a symbolic link: " + link);
         assertThat(outsideBook).exists();
     }
 

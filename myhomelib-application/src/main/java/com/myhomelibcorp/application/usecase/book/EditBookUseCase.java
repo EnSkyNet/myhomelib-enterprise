@@ -3,6 +3,7 @@ package com.myhomelibcorp.application.usecase.book;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.service.CommittedCatalogMutationService;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
@@ -25,28 +26,50 @@ public class EditBookUseCase {
     private final BookQueryRepository books;
     private final CommittedCatalogMutationService committedMutations;
     private final LibraryOperationCoordinator operationCoordinator;
+    private final CollectionLifecyclePort collectionLifecycle;
 
     /** Compatibility constructor for focused tests without the application lifecycle coordinator. */
     public EditBookUseCase(BookQueryRepository books, CommittedCatalogMutationService committedMutations) {
-        this(books, committedMutations, null);
+        this(books, committedMutations, null, null);
+    }
+
+    /** Compatibility constructor for focused tests that only exercise the lifecycle coordinator. */
+    public EditBookUseCase(BookQueryRepository books,
+                           CommittedCatalogMutationService committedMutations,
+                           LibraryOperationCoordinator operationCoordinator) {
+        this(books, committedMutations, operationCoordinator, null);
     }
 
     @Autowired
     public EditBookUseCase(BookQueryRepository books,
                            CommittedCatalogMutationService committedMutations,
-                           LibraryOperationCoordinator operationCoordinator) {
+                           LibraryOperationCoordinator operationCoordinator,
+                           CollectionLifecyclePort collectionLifecycle) {
         this.books = books;
         this.committedMutations = committedMutations;
         this.operationCoordinator = operationCoordinator;
+        this.collectionLifecycle = collectionLifecycle;
     }
 
     public Book execute(Request request) {
+        return execute(request, null);
+    }
+
+    /**
+     * Applies an edit only when the collection captured by the initiating UI flow is still active
+     * after the EDIT lifecycle barrier has been acquired.
+     */
+    public Book execute(Request request, String expectedCollectionId) {
         if (request == null || request.bookId() == null) {
             throw new IllegalArgumentException("Book id is required");
         }
-        if (operationCoordinator == null) return executeUnderLease(request);
+        if (operationCoordinator == null) {
+            assertExpectedCollection(expectedCollectionId);
+            return executeUnderLease(request);
+        }
         var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EDIT);
         try {
+            assertExpectedCollection(expectedCollectionId);
             Book result = executeUnderLease(request);
             lease.markCompleted("");
             return result;
@@ -55,6 +78,18 @@ public class EditBookUseCase {
             throw failure;
         } finally {
             lease.close();
+        }
+    }
+
+    private void assertExpectedCollection(String expectedCollectionId) {
+        if (expectedCollectionId == null || expectedCollectionId.isBlank()) return;
+        if (collectionLifecycle == null) {
+            throw new IllegalStateException("Collection lifecycle is unavailable for collection-scoped edit");
+        }
+        var active = collectionLifecycle.getCurrentCollection();
+        String activeId = active == null ? null : active.getId();
+        if (!expectedCollectionId.equals(activeId)) {
+            throw new IllegalStateException("Active collection changed before book edit");
         }
     }
 

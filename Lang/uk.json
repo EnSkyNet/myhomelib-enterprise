@@ -2958,7 +2958,7 @@
     "ui.search.title": "🔎 Пошук у бібліотеці",
     "ui.settings.command_test.sample_author": "Тестовий автор",
     "ui.settings.converters.calibre.executable": "Calibre ebook-convert",
-    "ui.settings.converters.calibre.info": "Рекомендований рушій: Calibre ebook-convert. Якщо шлях порожній, MyHomeLib шукає його у PATH і стандартній папці Calibre. Зовнішні шаблони нижче лишаються резервним/спеціальним варіантом.",
+    "ui.settings.converters.calibre.info": "Calibre тепер перевіряється разом з іншими конвертерами. Порожній шлях означає автоматичний пошук у portable tools, PATH і стандартній папці Calibre; тому Calibre може залишатися доступним навіть після очищення поля. Щоб повністю виключити Calibre з автоматичного вибору, оберіть режим «MyHomeLib Toolchain».",
     "ui.settings.converters.calibre.timeout": "Ліміт часу Calibre, с",
     "ui.settings.converters.external.timeout": "Ліміт часу, секунд",
     "ui.settings.converters.external_templates.help": "Шаблони зовнішніх команд: %SRC% — джерело, %DST% — результат, %TITLE%, %BOOKID%.",
@@ -3594,7 +3594,14 @@
     "ui.conversion.provider.external": "Зовнішня команда",
     "ui.conversion.provider.native": "MyHomeLib (вбудований)",
     "ui.conversion.provider.plugin": "Плагін",
-    "ui.conversion.provider.unknown": "Конвертер"
+    "ui.conversion.provider.unknown": "Конвертер",
+    "ui.conversion.error.source_read": "Не вдалося прочитати файл-джерело книги.",
+    "ui.conversion.error.provider": "Конвертер %s не зміг створити %s.",
+    "ui.conversion.error.output_validation": "Конвертер %s створив некоректний або недоступний файл %s.",
+    "ui.conversion.error.publication": "%s створено у робочому сховищі, але не вдалося безпечно зберегти результат у вибрану папку.",
+    "ui.conversion.error.catalog_registration": "%s було створено, але не вдалося завершити реєстрацію нового артефакту книги.",
+    "ui.conversion.provider.single": "Рушій: %s",
+    "ui.conversion.provider.priority": "Основний рушій: %s; резервні: %s"
   },
   "genres": {
     "sf_history": "Альтернативна історія",

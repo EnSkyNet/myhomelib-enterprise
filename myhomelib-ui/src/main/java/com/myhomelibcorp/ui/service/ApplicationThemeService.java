@@ -190,6 +190,9 @@ public class ApplicationThemeService {
                     -fx-text-base-color: %s;
                     -fx-accent: %s;
                     -fx-focus-color: %s;
+                    -fx-selection-bar: %s;
+                    -fx-selection-bar-non-focused: %s;
+                    -fx-selection-bar-text: %s;
                     -fx-font-size: %.1fpx;
                 }
                 """,
@@ -198,7 +201,7 @@ public class ApplicationThemeService {
                 success(config), warning(config), danger(config), onAccent(config), warningBg(config), warningText(config),
                 codeBackground(config), codeText(config),
                 config.panel(), config.background(), config.panel(), config.text(), config.text(), config.accent(), config.accent(),
-                config.fontSize());
+                config.accent(), config.accent(), onAccent(config), config.fontSize());
         try (var out = SafeFilePublication.openFreshOutputStream(file, "Generated theme stylesheet")) {
             out.write(css.getBytes(StandardCharsets.UTF_8));
         }

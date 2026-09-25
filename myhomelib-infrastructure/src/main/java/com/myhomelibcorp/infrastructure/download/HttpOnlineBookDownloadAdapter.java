@@ -114,9 +114,11 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         if (!forceRefresh && Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             Path safeCachedTarget = SafeFilePublication.requireSafeRegularFile(
                     target, "Online book cached target");
-            if (Files.size(safeCachedTarget) > 0) {
-                String resolvedArchiveEntry = payloadValidator.validate(
-                        safeCachedTarget, safeCachedTarget, book, archived);
+            SafeFilePublication.FileSnapshot cachedSnapshot = SafeFilePublication.snapshot(
+                    safeCachedTarget, "Online book cached target");
+            if (cachedSnapshot.size() > 0) {
+                String resolvedArchiveEntry = payloadValidator.validateOwned(
+                        safeCachedTarget, safeCachedTarget, book, archived, cachedSnapshot.sha256());
                 return buildResult(book, root, relative, safeCachedTarget, archived, resolvedArchiveEntry);
             }
         }
@@ -126,7 +128,10 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         CompletableFuture<Path> existingFuture = inFlightTargets.putIfAbsent(target, ownerFuture);
         if (existingFuture != null) {
             Path ready = awaitSharedDownload(existingFuture, cancel);
-            String resolvedArchiveEntry = payloadValidator.validate(ready, ready, book, archived);
+            SafeFilePublication.FileSnapshot readySnapshot = SafeFilePublication.snapshot(
+                    ready, "Shared online-book download result");
+            String resolvedArchiveEntry = payloadValidator.validateOwned(
+                    ready, ready, book, archived, readySnapshot.sha256());
             progressSink.accept(1.0);
             return buildResult(book, root, relative, ready, archived, resolvedArchiveEntry);
         }
@@ -160,9 +165,13 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
 
             ownerFuture.complete(target);
             return buildResult(book, root, relative, target, archived, resolvedArchiveEntry);
-        } catch (Exception e) {
-            ownerFuture.completeExceptionally(e);
-            throw e;
+        } catch (Throwable failure) {
+            // Every waiter shares ownerFuture. Complete it even for unchecked JVM/runtime failures;
+            // otherwise a request already waiting on this owner can poll forever after the owner exits.
+            ownerFuture.completeExceptionally(failure);
+            if (failure instanceof Exception exception) throw exception;
+            if (failure instanceof Error error) throw error;
+            throw new IOException("Невідома помилка спільного завантаження", failure);
         } finally {
             inFlightTargets.remove(target, ownerFuture);
         }
@@ -335,7 +344,8 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                 checkCancelled(cancel);
                 String resolvedArchiveEntry;
                 try {
-                    resolvedArchiveEntry = payloadValidator.validate(part, target, book, archived);
+                    resolvedArchiveEntry = payloadValidator.validateOwned(
+                            part, target, book, archived, partSnapshot.sha256());
                     SafeFilePublication.requireOwnedPath(part, partSnapshot.sha256(), "Validated online-book partial");
                     log.info("PAYLOAD VALIDATED: bookId={}, bytes={}, archived={}, resolvedArchiveEntry={}",
                             book.getId(), partSnapshot.size(), archived, resolvedArchiveEntry);
@@ -349,7 +359,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
 
                 try {
                     SafeFilePublication.publishReplacingIfUnchanged(
-                            part, target, expectedTargetHash, "Online book download");
+                            part, target, expectedTargetHash, partSnapshot.sha256(), "Online book download");
                     partSnapshot = OwnedDownloadFile.Snapshot.absent();
                 } catch (IOException publicationFailure) {
                     throw new NonRetryableHttpException("Файл призначення змінився під час завантаження: "
@@ -426,7 +436,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         // ConnectionScriptExecutor validates the final response (CHECK or mandatory implicit check).
         // Commit exactly those validated bytes; do not rescan the same archive after the atomic move.
         SafeFilePublication.publishReplacingIfUnchanged(
-                result.payload(), target, expectedTargetHash, "ConnectionScript download");
+                result.payload(), target, expectedTargetHash, result.validatedSha256(), "ConnectionScript download");
         progress.accept(1.0);
         log.info("STORAGE COMMIT: target={}, replace=atomic-with-safe-fallback, mode=CONNECTION_SCRIPT", target);
         log.info("SCRIPT DOWNLOAD COMPLETE: file={}, size={}", target, Files.size(target));

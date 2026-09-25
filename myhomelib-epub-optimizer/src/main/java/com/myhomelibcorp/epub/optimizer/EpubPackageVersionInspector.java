@@ -50,6 +50,12 @@ public final class EpubPackageVersionInspector {
         throw new IllegalArgumentException("EPUB package document is empty");
     }
 
+    public boolean isEpub3(String version) {
+        if (version == null) return false;
+        String normalized = version.strip();
+        return normalized.equals("3") || normalized.startsWith("3.");
+    }
+
     public boolean isEpub34(String version) {
         if (version == null) return false;
         String normalized = version.strip();

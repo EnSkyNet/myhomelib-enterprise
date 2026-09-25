@@ -97,7 +97,8 @@ public class SqliteCatalogSourceStateAdapter implements CatalogSourceStatePort {
                     source_id, source_key, source_location, source_revision, source_fingerprint,
                     first_seen_at, last_synced_at
                 ) VALUES (?, ?, ?, 1, ?, ?, ?)
-                """, CatalogSourceIdentity.stableId(key), key, safe(sourceLocation), "sync-state:unapplied", now(), now());
+                """, CatalogSourceIdentity.stableId(key), key, safe(sourceLocation),
+                CatalogSourceIdentity.UNAPPLIED_FINGERPRINT, now(), now());
     }
 
     private static String nullable(String value) { return value == null || value.isBlank() ? null : value.trim(); }

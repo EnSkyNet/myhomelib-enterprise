@@ -409,7 +409,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 String etag = response.headers().firstValue("ETag").orElse("");
                 String lastModified = response.headers().firstValue("Last-Modified").orElse("");
                 SafeFilePublication.publishReplacingIfUnchanged(
-                        part, out, expectedOutHash, "Catalog download");
+                        part, out, expectedOutHash, partSnapshot.sha256(), "Catalog download");
                 partSnapshot = OwnedDownloadFile.Snapshot.absent();
                 removeOwnedCatalogMeta(partMeta, resume, "Catalog resume metadata cleanup");
                 resume = null;
