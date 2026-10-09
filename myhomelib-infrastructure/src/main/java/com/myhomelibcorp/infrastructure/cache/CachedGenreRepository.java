@@ -29,26 +29,18 @@ public class CachedGenreRepository implements GenreRepository {
 
     @Override
     public Optional<Genre> findById(GenreId id) {
-        Optional<Genre> cached = genreCache.get(id);
-        if (cached.isPresent()) {
-            return cached;
-        }
-        Optional<Genre> genre = delegate.findById(id);
-        genre.ifPresent(g -> genreCache.put(id, g));
-        return genre;
+        return CacheAsideRepositorySupport.findById(id, genreCache, delegate::findById);
     }
 
     @Override
     public Genre save(Genre genre) {
-        Genre saved = delegate.save(genre);
-        genreCache.put(saved.getId(), saved);
-        return saved;
+        return CacheAsideRepositorySupport.saveRequired(
+                genre, genreCache, delegate::save, Genre::getId);
     }
 
     @Override
     public void deleteById(GenreId id) {
-        delegate.deleteById(id);
-        genreCache.evict(id);
+        CacheAsideRepositorySupport.deleteById(id, genreCache, delegate::deleteById);
     }
 
     @Override

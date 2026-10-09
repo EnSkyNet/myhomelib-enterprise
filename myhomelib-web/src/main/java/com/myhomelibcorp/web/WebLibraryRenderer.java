@@ -14,9 +14,13 @@ import java.util.Objects;
 public final class WebLibraryRenderer {
     private static final DateTimeFormatter SHELF_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
     private final WebTextCatalog text;
+    private final WebPwaAssets pwa;
 
     public WebLibraryRenderer() { this(new WebTextCatalog()); }
-    public WebLibraryRenderer(WebTextCatalog text) { this.text = Objects.requireNonNull(text, "text"); }
+    public WebLibraryRenderer(WebTextCatalog text) {
+        this.text = Objects.requireNonNull(text, "text");
+        this.pwa = new WebPwaAssets(text);
+    }
 
     public String continueReading(List<ContinueReadingItemDto> items) { return continueReading(WebTextCatalog.DEFAULT_LANGUAGE, items); }
 
@@ -77,6 +81,7 @@ public final class WebLibraryRenderer {
             .append(meta(book)).append("<div class=annotation>").append(h(book.annotation())).append("</div>")
             .append("<div class=actions><a class=button href=\"/web/download/").append(id).append("\">").append(h(t(lang, "web.download"))).append("</a>")
             .append("<a class=button-secondary href=\"/web/read/").append(id).append("\">").append(h(t(lang, "web.read"))).append("</a></div>")
+            .append(offlineActions(lang, book.id()))
             .append("</article></main>");
         return document(lang, nonBlank(book.title(), t(lang, "web.opds.untitled")), b.toString());
     }
@@ -87,6 +92,18 @@ public final class WebLibraryRenderer {
         String lang = text.languageTag(language);
         return document(lang, t(lang, "web.not_found.title"), nav(lang) + "<main><h1>" + h(t(lang, "web.book.not_found"))
                 + "</h1><p><a href=\"/web/\">" + h(t(lang, "web.catalog.to")) + "</a></p></main>");
+    }
+
+    private String offlineActions(String language, String bookId) {
+        String id = a(bookId);
+        return "<div class='pwa-offline-actions'><button type='button' data-pwa-save-book='" + id
+                + "' data-working='" + a(t(language, "web.offline.saving")) + "' data-done='" + a(t(language, "web.offline.saved"))
+                + "' data-failed='" + a(t(language, "web.offline.failed")) + "'>" + h(t(language, "web.offline.save")) + "</button>"
+                + "<button type='button' data-pwa-remove-book='" + id + "' data-done='" + a(t(language, "web.offline.removed"))
+                + "' data-failed='" + a(t(language, "web.offline.failed")) + "'>" + h(t(language, "web.offline.remove")) + "</button>"
+                + "<button type='button' data-pwa-clear-books data-done='" + a(t(language, "web.offline.cleared"))
+                + "' data-failed='" + a(t(language, "web.offline.failed")) + "'>" + h(t(language, "web.offline.clear")) + "</button>"
+                + "<span class='pwa-status' role='status' aria-live='polite'></span></div>";
     }
 
     private String nav(String language) {
@@ -122,7 +139,7 @@ public final class WebLibraryRenderer {
     }
 
     private String document(String language, String title, String body) {
-        return "<!doctype html><html lang=\"" + a(text.languageTag(language)) + "\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>" + h(title) + " — MyHomeLib</title><style>"
+        return "<!doctype html><html lang=\"" + a(text.languageTag(language)) + "\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" + pwa.headTags() + "<title>" + h(title) + " — MyHomeLib</title><style>"
             + "*{box-sizing:border-box}body{margin:0;font:16px system-ui,sans-serif;background:#f7f7f8;color:#171717}header{background:#111827;color:white}nav,main{max-width:1100px;margin:auto;padding:1rem}header nav{display:flex;gap:1rem;align-items:center;flex-wrap:wrap}header a{color:white}.brand{font-weight:800;margin-right:auto}a{color:#1d4ed8}.hero{display:flex;gap:1rem;justify-content:space-between;align-items:end;flex-wrap:wrap}.search{display:flex;gap:.5rem;flex:1;max-width:560px}.search input{flex:1;min-width:0;padding:.7rem}.search button,.button,.button-secondary{padding:.65rem .9rem;border-radius:.45rem;border:0}.search button,.button{background:#1d4ed8;color:white;text-decoration:none}.button-secondary{border:1px solid #9ca3af;text-decoration:none}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem}.card,.detail{background:white;border:1px solid #e5e7eb;border-radius:.7rem;padding:1rem}.card h2{font-size:1.05rem;margin:.2rem 0}.author{font-weight:600}.meta,.muted{color:#6b7280}.annotation{white-space:pre-wrap;line-height:1.55}.actions,.pager{display:flex;gap:.75rem;margin-top:1rem;flex-wrap:wrap}.pager{justify-content:space-between}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}@media(max-width:600px){main,nav{padding:.75rem}.search{width:100%}.grid{grid-template-columns:1fr}}</style></head><body>" + body + "</body></html>";
     }
 

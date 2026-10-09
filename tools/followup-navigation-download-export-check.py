@@ -50,9 +50,10 @@ require('ui.java.book_download_progress_dialog.4258f771b1' in progress
         and 'ui.java.book_download_progress_dialog.491361bc90' in progress
         and 'ui.java.book_download_progress_dialog.6126a2c620' in progress,
         "download progress window does not expose localized connection/download/save states")
-require("if (result.downloaded() > 0) eventPublisher.publishEvent(new NavigationRefreshEvent())" in coord,
-        "batch download does not publish one post-batch navigation refresh")
-require("download(book, false, showErrors, showErrors)" in coord, "batch path may still publish per-book navigation refresh")
+require("if (result.downloaded() > 0 && isCurrentCollection(expectedCollectionId))" in coord
+        and "eventPublisher.publishEvent(new NavigationRefreshEvent())" in coord,
+        "batch download does not publish one collection-stable post-batch navigation refresh")
+require("download(book, false, showErrors, showErrors, expectedCollectionId)" in coord, "batch path may still publish per-book navigation refresh")
 
 # Automatic startup catalog update.
 require("autoUpdateOnStartup" in update and 'online.autoUpdateOnStartup' in update,
@@ -100,7 +101,7 @@ require("startExportWorker(request)" in export_on,
         "export does not continue after successful auto-download")
 require(export_on.find("prepareForExport") < export_on.find("startExportWorker(request)"),
         "physical export can start before preflight/auto-download completes")
-require("if (preflight.missing().isEmpty())" in coord and "downloadBatch(preflight.missing(), owner)" in coord,
+require("if (preflight.missing().isEmpty())" in coord and "downloadBatch(preflight.missing(), owner, expectedCollectionId)" in coord,
         "export preflight still opens download UI for already-local books")
 
 print("FOLLOWUP NAV/DOWNLOAD/EXPORT CHECK: PASS")

@@ -7,6 +7,7 @@ if ([string]::IsNullOrWhiteSpace($Version)) { throw "Cannot determine applicatio
 & .\tools\invoke-maven.ps1 clean verify -Pproduction
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $env:MHL_SKIP_BUILD = "1"
+$env:MHL_REQUIRE_LIBMOBI = "1"
 & .\package-portable.ps1 -Version $Version
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & .\smoke-desktop.ps1

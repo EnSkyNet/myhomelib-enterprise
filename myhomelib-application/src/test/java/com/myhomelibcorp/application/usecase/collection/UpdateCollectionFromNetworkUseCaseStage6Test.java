@@ -15,6 +15,7 @@ import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.repository.StatisticsRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
+import com.myhomelibcorp.application.service.DeferredImportIndexMaintenanceService;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import org.junit.jupiter.api.Test;
@@ -26,6 +27,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
@@ -292,6 +294,46 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
         assertThat(result.status()).isEqualTo(ImportStatus.SUCCESS);
         verify(f.state).recordApplied("remote-collection:c-progress-callback", "20260904");
         verify(f.backup, never()).restoreDatabaseSnapshot(any(), any());
+    }
+
+    @Test
+    void largeIncompleteUpdateReturnsBeforeDeferredSqliteAndLuceneMaintenance(@TempDir Path tempDir) throws Exception {
+        Fixture f = new Fixture();
+        DeferredImportIndexMaintenanceService deferred = mock(DeferredImportIndexMaintenanceService.class);
+        CompletableFuture<Void> maintenance = new CompletableFuture<>();
+        Collection collection = collection("c-large-background-index", tempDir);
+        Path downloaded = tempDir.resolve("full.inpx");
+        Files.write(downloaded, new byte[]{1});
+
+        when(f.lifecycle.getCurrentCollection()).thenReturn(collection);
+        when(f.state.get("remote-collection:c-large-background-index"))
+                .thenReturn(CatalogSourceState.empty("remote-collection:c-large-background-index"));
+        when(f.downloader.downloadUpdates(eq(collection), anyString(), anyString(), any(AtomicBoolean.class),
+                any(DoubleConsumer.class), any(Consumer.class)))
+                .thenReturn(RemoteCatalogUpdatePlan.of(
+                        List.of(RemoteCatalogPackage.of(downloaded, "https://example.test/full.zip", "20260926", true)),
+                        "20260926"));
+        when(f.importer.execute(any())).thenReturn(new ImportResult(707_154, 0, 0, 0, 1,
+                ImportStatus.SUCCESS,
+                new ImportChangeSet(Set.of(), Set.of(), Set.of(), false, 571_947, 0, 135_207),
+                List.of()));
+        when(deferred.scheduleAfterCurrentOperation("c-large-background-index")).thenReturn(maintenance);
+
+        UpdateCollectionFromNetworkUseCase useCase = new UpdateCollectionFromNetworkUseCase(
+                f.downloader, f.importer, f.lifecycle, f.state, f.search, f.books, f.statistics, f.backup,
+                50_000, new com.myhomelibcorp.application.operation.LibraryOperationCoordinator(), null, deferred);
+
+        ImportResult result = useCase.execute(collection, "https://example.test/catalog.inpx", null, null);
+
+        assertThat(result.status()).isEqualTo(ImportStatus.SUCCESS);
+        assertThat(result.imported()).isEqualTo(707_154);
+        verify(f.lifecycle).markSearchIndexDirty();
+        verify(deferred).scheduleAfterCurrentOperation("c-large-background-index");
+        verify(f.lifecycle, never()).rebuildSearchIndexAfterCurrentOperation();
+        verifyNoInteractions(f.search);
+
+        maintenance.complete(null);
+        verify(f.lifecycle).rebuildSearchIndexAfterCurrentOperation();
     }
 
     @Test

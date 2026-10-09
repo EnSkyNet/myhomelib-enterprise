@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import javax.xml.stream.XMLInputFactory;
 import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -21,7 +22,8 @@ import java.util.Locale;
 @Slf4j
 public class Fb2Parser {
 
-    private final XMLInputFactory xmlFactory = SecureXmlInputFactory.create(false, false);
+    private static final int MAX_METADATA_TEXT_CHARS = 4_096;
+    private static final int MAX_ANNOTATION_CHARS = 256 * 1024;
 
 
     /**
@@ -68,14 +70,18 @@ public class Fb2Parser {
         int sequenceNumber = 0;
         String language = "und";
 
-        XMLStreamReader reader = xmlFactory.createXMLStreamReader(inputStream);
+        XMLStreamReader reader = SecureXmlInputFactory.create(false, false).createXMLStreamReader(inputStream);
 
         boolean inTitleInfo = false;
         boolean inAnnotation = false;
         boolean inAuthor = false;
         String firstName = "", middleName = "", lastName = "";
 
+        try {
         while (reader.hasNext()) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new XMLStreamException("FB2 metadata parsing interrupted");
+            }
             int event = reader.next();
 
             if (event == XMLStreamConstants.START_ELEMENT) {
@@ -90,14 +96,14 @@ public class Fb2Parser {
                         inAuthor = true;
                         firstName = middleName = lastName = "";
                     } else if ("book-title".equalsIgnoreCase(localName)) {
-                        String text = reader.getElementText().trim();
+                        String text = readBoundedText(reader, MAX_METADATA_TEXT_CHARS).trim();
                         if (!text.isEmpty()) {
                             title = text;
                         }
                     } else if ("genre".equalsIgnoreCase(localName)) {
-                        String code = reader.getElementText().trim();
+                        String code = readBoundedText(reader, MAX_METADATA_TEXT_CHARS).trim();
                         if (!code.isEmpty()) {
-                            genres.add(new Genre(code, code));
+                            if (genres.size() < 512) genres.add(new Genre(code, code));
                         }
                     } else if ("annotation".equalsIgnoreCase(localName)) {
                         inAnnotation = true;
@@ -113,17 +119,17 @@ public class Fb2Parser {
                             } catch (NumberFormatException ignored) {}
                         }
                     } else if ("lang".equalsIgnoreCase(localName)) {
-                        String lang = reader.getElementText().trim().toLowerCase(Locale.ROOT);
-                        if (lang.matches("[a-z]{2}(-[A-Z]{2})?")) {
+                        String lang = readBoundedText(reader, MAX_METADATA_TEXT_CHARS).trim().toLowerCase(Locale.ROOT);
+                        if (lang.matches("[a-z]{2}(-[a-z]{2})?")) {
                             language = lang;
                         }
                     } else if (inAuthor) {
                         if ("first-name".equalsIgnoreCase(localName)) {
-                            firstName = reader.getElementText().trim();
+                            firstName = readBoundedText(reader, MAX_METADATA_TEXT_CHARS).trim();
                         } else if ("middle-name".equalsIgnoreCase(localName)) {
-                            middleName = reader.getElementText().trim();
+                            middleName = readBoundedText(reader, MAX_METADATA_TEXT_CHARS).trim();
                         } else if ("last-name".equalsIgnoreCase(localName)) {
-                            lastName = reader.getElementText().trim();
+                            lastName = readBoundedText(reader, MAX_METADATA_TEXT_CHARS).trim();
                         }
                     }
                 }
@@ -131,9 +137,12 @@ public class Fb2Parser {
 
             if (event == XMLStreamConstants.CHARACTERS) {
                 if (inAnnotation) {
-                    String text = reader.getText();
-                    if (text != null && !text.isBlank()) {
-                        annotation.append(text);
+                    // StAX chunks can be arbitrarily long in malformed files.
+                    // Read directly from its character buffer without allocating the full text.
+                    int remaining = MAX_ANNOTATION_CHARS - annotation.length();
+                    if (remaining > 0) {
+                        int length = Math.min(remaining, reader.getTextLength());
+                        annotation.append(reader.getTextCharacters(), reader.getTextStart(), length);
                     }
                 }
             }
@@ -144,7 +153,9 @@ public class Fb2Parser {
                 if (inTitleInfo) {
                     if ("author".equalsIgnoreCase(localName) && inAuthor) {
                         if (!lastName.isEmpty() || !firstName.isEmpty() || !middleName.isEmpty()) {
-                            authors.addAll(LocalAuthorNameParser.fromStructured(firstName, middleName, lastName));
+                            if (authors.size() < 512) {
+                                authors.addAll(LocalAuthorNameParser.fromStructured(firstName, middleName, lastName));
+                            }
                         }
                         inAuthor = false;
                     } else if ("annotation".equalsIgnoreCase(localName)) {
@@ -157,7 +168,9 @@ public class Fb2Parser {
             }
         }
 
-        reader.close();
+        } finally {
+            reader.close();
+        }
 
         return new ParseResult(
                 title,
@@ -169,4 +182,29 @@ public class Fb2Parser {
                 language
         );
     }
+
+    /**
+     * Consumes a metadata text element without ever building an unbounded String.
+     * Excess characters are discarded while the XML cursor advances to its end tag.
+     */
+    private static String readBoundedText(XMLStreamReader reader, int maximum) throws XMLStreamException {
+        StringBuilder text = new StringBuilder(Math.min(maximum, 256));
+        while (reader.hasNext()) {
+            int event = reader.next();
+            if (event == XMLStreamConstants.END_ELEMENT) return text.toString();
+            if (event == XMLStreamConstants.START_ELEMENT) {
+                throw new XMLStreamException("Nested element in simple FB2 metadata text");
+            }
+            if (event == XMLStreamConstants.CHARACTERS || event == XMLStreamConstants.CDATA
+                    || event == XMLStreamConstants.SPACE || event == XMLStreamConstants.ENTITY_REFERENCE) {
+                int available = maximum - text.length();
+                if (available > 0 && reader.hasText()) {
+                    int length = Math.min(available, reader.getTextLength());
+                    text.append(reader.getTextCharacters(), reader.getTextStart(), length);
+                }
+            }
+        }
+        throw new XMLStreamException("Unterminated FB2 metadata element");
+    }
+
 }

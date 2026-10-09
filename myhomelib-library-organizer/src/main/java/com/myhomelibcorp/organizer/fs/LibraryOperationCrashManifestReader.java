@@ -1,7 +1,7 @@
 package com.myhomelibcorp.organizer.fs;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.organizer.journal.OrganizationItemState;
 import com.myhomelibcorp.organizer.journal.OrganizationOperationState;
@@ -70,7 +70,7 @@ public final class LibraryOperationCrashManifestReader {
 
     private String optionalText(JsonNode node, String field) {
         JsonNode value = node.get(field);
-        return value == null || value.isNull() ? "" : value.asText("").trim();
+        return value == null || value.isNull() ? "" : value.asString("").trim();
     }
 
     private Path requiredPath(JsonNode node, String field) {

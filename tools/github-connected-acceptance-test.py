@@ -65,11 +65,21 @@ def artifact_zip(candidate_sha: str = "a" * 40) -> bytes:
     return out.getvalue()
 
 
-def windows_artifact_zip(version: str = "7.1.0", candidate_sha: str = "a" * 40) -> tuple[bytes, str, str, str]:
+def windows_artifact_zip(
+    version: str = "7.1.0",
+    candidate_sha: str = "a" * 40,
+    *,
+    canonical_r18: bool = False,
+) -> tuple[bytes, str, str, str]:
+    portable_name = (
+        f"MyHomeLib-R18-{version}-portable-windows-x64.zip"
+        if canonical_r18
+        else f"myhomelib-{version}-windows-amd64.zip"
+    )
     files = {
         f"MyHomeLib-{version}.msi": b"synthetic-msi-candidate",
         f"MyHomeLib-{version}.exe": b"synthetic-exe-candidate",
-        f"myhomelib-{version}-windows-amd64.zip": b"synthetic-portable-candidate",
+        portable_name: b"synthetic-portable-candidate",
     }
     lines = []
     dist_rows = []
@@ -110,7 +120,7 @@ def windows_artifact_zip(version: str = "7.1.0", candidate_sha: str = "a" * 40) 
         out.getvalue(),
         hashlib.sha256(files[f"MyHomeLib-{version}.msi"]).hexdigest(),
         hashlib.sha256(files[f"MyHomeLib-{version}.exe"]).hexdigest(),
-        hashlib.sha256(files[f"myhomelib-{version}-windows-amd64.zip"]).hexdigest(),
+        hashlib.sha256(files[portable_name]).hexdigest(),
     )
 
 
@@ -171,6 +181,18 @@ def main() -> int:
     assert win_info["windowsPortableSha256"] == expected_portable
     assert win_info["windowsIntegrityCandidateSha"] == "a" * 40
     assert win_info["windowsIntegrityProjectVersion"] == "7.1.0"
+    canonical_blob, _, _, canonical_portable_sha = windows_artifact_zip(
+        version="8.0.0", canonical_r18=True
+    )
+    with tempfile.TemporaryDirectory() as canonical_td:
+        canonical_dir = Path(canonical_td)
+        canonical_info = mod.validate_windows_release_artifact(
+            canonical_blob, "8.0.0", canonical_dir, "a" * 40
+        )
+        canonical_name = "MyHomeLib-R18-8.0.0-portable-windows-x64.zip"
+        assert (canonical_dir / canonical_name).is_file()
+        assert canonical_info["windowsPortableSha256"] == canonical_portable_sha
+        assert canonical_name in (canonical_dir / "candidate-windows.sha256").read_text()
     assert len(win_info["windowsIntegritySha256"]) == 64
     assert len(win_info["windowsChecksumsSha256"]) == 64
     assert len(win_info["windowsIntegritySourceTreeSha256"]) == 64
@@ -239,11 +261,14 @@ def main() -> int:
     blocked = mod.blocking_code_scanning_alerts(alerts)
     assert len(blocked) == 1 and blocked[0]["number"] == 2
 
+    recent_created = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    recent_analyses = [dict(analyses[0], created_at=recent_created)]
+
     class FakeCodeqlClient:
         repo = "owner/repo"
         def __init__(self, alert_values=None, analysis_values=None):
             self.alert_values = alert_values or []
-            self.analysis_values = analysis_values or analyses
+            self.analysis_values = recent_analyses if analysis_values is None else analysis_values
         def paged(self, path, max_pages=10):
             if "/code-scanning/analyses" in path:
                 return self.analysis_values

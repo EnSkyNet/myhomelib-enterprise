@@ -17,11 +17,14 @@ presets=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/Reader
 prefs=text('myhomelib-domain/src/main/java/com/myhomelibcorp/domain/model/reader/ReaderPreferences.java')
 state=text('myhomelib-application/src/main/java/com/myhomelibcorp/application/reader/ReaderSettingsStateService.java')
 override=text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/reader/ReaderBookPreferencesService.java')
-atomic=text('myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/AtomicFileSupport.java')
+safe_publication=text('myhomelib-application/src/main/java/com/myhomelibcorp/application/util/SafeFilePublication.java')
 dialog=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderSettingsDialog.java')
 dialog=runpy.run_path(str(ROOT/'tools/localization-contract-support.py'))['localized_source'](dialog)
 workspace=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java')
 autosave=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderPositionAutosaver.java')
+autosave_coordinator=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/PositionAutosaveCoordinator.java')
+autosave_test=text('myhomelib-ui/src/test/java/com/myhomelibcorp/ui/reader/PositionAutosaveCoordinatorTest.java')
+autosave_concurrency=text('myhomelib-ui/src/test/java/com/myhomelibcorp/ui/reader/AutosaverConcurrencyTest.java')
 view=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderView.java')
 status=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderStatusBar.java')
 canvas=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderCanvas.java')
@@ -46,8 +49,11 @@ if ('reader_book_preferences' not in override
         or 'ON CONFLICT(book_id) DO UPDATE' not in override
         or 'CREATE TABLE IF NOT EXISTS reader_book_preferences' not in v42):
     fail('per-book settings are not collection-scoped SQLite with bounded legacy migration')
-if 'AtomicFileSupport.moveReplacing' not in legacy or 'StandardCopyOption.ATOMIC_MOVE' not in atomic:
-    fail('global Reader settings persistence is not atomic')
+if ('SafeFilePublication.snapshotExistingTarget' not in legacy
+        or 'SafeFilePublication.createPrivateWorkspace' not in legacy
+        or 'SafeFilePublication.publishReplacingIfUnchanged' not in legacy
+        or 'publishReplacingIfUnchanged' not in safe_publication):
+    fail('global Reader settings persistence does not use guarded staged publication')
 if ('ReaderPreferences.builder().build()' not in codec or 'valueToTree' not in codec or 'merged.set' not in codec): fail('legacy Reader preferences are not merged over current defaults')
 
 for marker in ('Типографіка','Стилі елементів','Кольори','Макет','Навігація','Статус','ui.reader.settings.preset.apply','ui.reader.settings.per_book','livePreview','Скинути типографіку','Скинути навігацію','Скинути статус'):
@@ -58,9 +64,20 @@ for marker in ('showStatusProgress','showStatusChapter','showStatusPage'):
 for action in ('previous-page','next-page','previous-chapter','next-chapter','toggle-toolbar','search'):
     if action not in canvas: fail(f'tap-zone action missing: {action}')
 
-if 'scheduleWithFixedDelay(this::flushIfDirty, 3, 3, TimeUnit.SECONDS)' not in autosave: fail('position autosave is not periodic at 3 seconds')
+if ('FLUSH_INTERVAL_SECONDS = 3L' not in autosave_coordinator
+        or 'scheduleWithFixedDelay(this::flush' not in autosave_coordinator
+        or 'FLUSH_INTERVAL_SECONDS, FLUSH_INTERVAL_SECONDS, TimeUnit.SECONDS' not in autosave_coordinator
+        or 'dirtyPositionIsFlushedByThreeSecondSchedulerWithoutManualFlush' not in autosave_test):
+    fail('position autosave is not behaviorally guarded as periodic at 3 seconds')
 if 'AnimationTimer' in workspace: fail('workspace still relies on JavaFX AnimationTimer for persistence')
-if 'positionAutosaver.mark(pos)' not in workspace or 'positionAutosaver.flush()' not in workspace: fail('workspace autosave wiring missing')
+for regression in ('failedFlushFromPreviousBookCannotRedirtyAlreadySavedCurrentBook',
+                   'failedReaderPositionIsRetriedAfterBookSwitchInsteadOfBeingLost',
+                   'closeAndFlush'):
+    if regression not in autosave_concurrency: fail(f'position autosave lifecycle regression missing: {regression}')
+if ('positionAutosaver.mark(pos)' not in workspace
+        or 'positionAutosaver.flush()' not in workspace
+        or 'positionAutosaver.closeAndFlush()' not in workspace):
+    fail('workspace autosave wiring/final failure signalling missing')
 
 for lang in ('uk','en','bg','ru'):
     if not (ROOT/f'myhomelib-reader/src/main/resources/hyphenation/{lang}.dic').is_file(): fail(f'hyphenation dictionary missing: {lang}')

@@ -111,6 +111,36 @@ class ConnectionScriptExecutorTest {
     }
 
     @Test
+    void defaultPolicyRetriesTransient502AndThenSucceeds() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/transient", exchange -> {
+            int current = requests.incrementAndGet();
+            if (current < 3) {
+                exchange.sendResponseHeaders(502, -1);
+            } else {
+                byte[] body = "book".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            }
+            exchange.close();
+        });
+        server.start();
+
+        MemorySettings cfg = settings();
+        cfg.put("online.retryBaseDelayMs", "100");
+        cfg.put("online.retryJitterPercent", "0");
+        BookDto book = BookDto.builder().id("1").fileName("book.txt").build();
+
+        var result = executor(cfg).execute(
+                "GET " + baseUrl() + "transient\nCHECK", book, collection(null, null), temp, "book.txt",
+                temp.resolve("book.txt"), false, null, ignored -> { });
+
+        assertThat(Files.readString(result.payload())).isEqualTo("book");
+        assertThat(requests.get()).isEqualTo(3);
+    }
+
+    @Test
     void permanent404IsNotRetried() throws Exception {
         AtomicInteger requests = new AtomicInteger();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

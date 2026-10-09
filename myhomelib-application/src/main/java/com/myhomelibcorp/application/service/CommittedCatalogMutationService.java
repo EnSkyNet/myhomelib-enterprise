@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.service;
 
+import com.myhomelibcorp.application.util.BookIdListSupport;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.content.indexing.ContentIndexAutoSchedulingService;
 import com.myhomelibcorp.application.imports.statistics.ImportChangeSet;
@@ -99,7 +100,7 @@ public class CommittedCatalogMutationService {
                                  BooleanSupplier cancelled) {
         Objects.requireNonNull(update, "update");
         Objects.requireNonNull(cancelled, "cancelled");
-        List<BookId> ids = normalize(affectedIds);
+        List<BookId> ids = BookIdListSupport.stableDistinctIgnoringNulls(affectedIds);
         if (cancelled.getAsBoolean()) throw new CancellationException("Metadata update cancelled");
         if (ids.isEmpty()) return List.of();
         return transactionTemplate.execute(status -> {
@@ -120,7 +121,7 @@ public class CommittedCatalogMutationService {
     /** Schedules exact content re-indexing for already committed storage/content changes. */
     public void synchronizeContentAfterCommit(List<BookId> affectedIds) {
         if (contentIndexScheduling == null) return;
-        List<BookId> ids = normalize(affectedIds);
+        List<BookId> ids = BookIdListSupport.stableDistinctIgnoringNulls(affectedIds);
         if (ids.isEmpty()) return;
         java.util.LinkedHashSet<String> changed = new java.util.LinkedHashSet<>();
         for (BookId id : ids) changed.add(id.asString());
@@ -138,7 +139,7 @@ public class CommittedCatalogMutationService {
 
     public void executeSynchronized(List<BookId> affectedIds, Runnable databaseMutation) {
         if (databaseMutation == null) throw new IllegalArgumentException("Database mutation is required");
-        List<BookId> ids = normalize(affectedIds);
+        List<BookId> ids = BookIdListSupport.stableDistinctIgnoringNulls(affectedIds);
         transactionTemplate.execute(status -> {
             databaseMutation.run();
             searchIndexSynchronizer.synchronizeAfterCommit(ids);
@@ -146,10 +147,4 @@ public class CommittedCatalogMutationService {
         });
     }
 
-    private static List<BookId> normalize(List<BookId> source) {
-        if (source == null || source.isEmpty()) return List.of();
-        LinkedHashSet<BookId> unique = new LinkedHashSet<>();
-        for (BookId id : source) if (id != null) unique.add(id);
-        return List.copyOf(unique);
-    }
 }

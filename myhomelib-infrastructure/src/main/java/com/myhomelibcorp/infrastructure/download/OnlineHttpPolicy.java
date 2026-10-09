@@ -129,7 +129,7 @@ public final class OnlineHttpPolicy {
     }
 
     public Duration requestTimeout() {
-        return Duration.ofSeconds(clamp(settings.getInt("online.readTimeoutSeconds", 120), 5, 7200));
+        return Duration.ofSeconds(clamp(settings.getInt("online.readTimeoutSeconds", 30), 5, 7200));
     }
 
     public String userAgent() {

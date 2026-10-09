@@ -148,10 +148,18 @@ if (-not $ChecklistOnly -and (Test-Path $Launcher -PathType Leaf)) {
     else { $auto.Outcome = "FAIL"; $auto.Note = "post-install exit=$($process.ExitCode)" }
 }
 
+$launcherSha256 = ""
+if (Test-Path $Launcher -PathType Leaf) {
+    $launcherSha256 = (Get-FileHash -LiteralPath $Launcher -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
 $failed = @($results | Where-Object { $_.Outcome -eq "FAIL" }).Count
 $blocked = @($results | Where-Object { $_.Outcome -eq "BLOCKED" }).Count
 $pending = @($results | Where-Object { $_.Outcome -eq "PENDING" }).Count
 $overall = if ($failed -eq 0 -and $blocked -eq 0 -and $pending -eq 0) { "PASS" } elseif ($ChecklistOnly) { "PENDING" } else { "FAIL" }
+if (-not $ChecklistOnly -and $overall -eq "PASS" -and $launcherSha256 -notmatch '^[0-9a-f]{64}$') {
+    throw "Desktop acceptance cannot PASS without a SHA-256-bound installed launcher: $Launcher"
+}
 $osCaption = try { (Get-CimInstance Win32_OperatingSystem).Caption } catch { [Environment]::OSVersion.VersionString }
 $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss K")
 
@@ -163,6 +171,7 @@ $lines.Add("- Host: $env:COMPUTERNAME")
 $lines.Add("- User: $env:USERNAME")
 $lines.Add("- Candidate SHA: ``$($github.candidateSha)``")
 $lines.Add("- Candidate EXE SHA-256: ``$exeSha``")
+$lines.Add("- Installed launcher SHA-256: ``$launcherSha256``")
 $lines.Add("- Previous real version: ``$PreviousVersion``")
 $lines.Add("")
 $lines.Add("| ID | Result | Check | Evidence | Note |")
@@ -199,6 +208,7 @@ $jsonPath = [IO.Path]::ChangeExtension($ReportPath, ".json")
     exeInstaller = $ExeInstaller
     exeSha256 = $exeSha
     launcher = $Launcher
+    launcherSha256 = $launcherSha256
     previousVersion = $PreviousVersion
     projectVersion = $ProjectVersion
     overall = $overall

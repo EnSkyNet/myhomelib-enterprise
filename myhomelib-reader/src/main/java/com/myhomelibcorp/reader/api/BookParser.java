@@ -7,11 +7,29 @@ public interface BookParser {
 
     default BookDocumentMetadata readMetadata(BookSource source) throws IOException {
         ReaderDocument document = parse(source, ParseOptions.minimal());
-        return new BookDocumentMetadataSnapshot(
-                document.metadata(),
-                document.totalTextLength(),
-                document.resources() != null && document.resources().count() > 0,
-                document.chapters().size());
+        if (document == null) {
+            throw new IOException("Parser returned no document metadata");
+        }
+        try {
+            int chapterCount = document.chapters() == null ? 0 : document.chapters().size();
+            return new BookDocumentMetadataSnapshot(
+                    document.metadata(),
+                    document.totalTextLength(),
+                    document.resources() != null && document.resources().count() > 0,
+                    chapterCount);
+        } finally {
+            closeDocumentResources(document);
+        }
+    }
+
+    private static void closeDocumentResources(ReaderDocument document) {
+        if (document != null && document.resources() instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception ignored) {
+                // Metadata extraction no longer needs document resources. Cleanup is best-effort.
+            }
+        }
     }
 
     ReaderDocument parse(BookSource source, ParseOptions options) throws IOException;

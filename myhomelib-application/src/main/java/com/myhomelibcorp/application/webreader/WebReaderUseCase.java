@@ -7,4 +7,10 @@ import java.util.Optional;
 public interface WebReaderUseCase {
     Optional<WebReaderDocument> open(String bookId, int requestedChapter) throws IOException;
     ReadingProgressDto saveProgress(String bookId, int chapterIndex, long absoluteOffset) throws IOException;
+
+    /** Offline-replay-aware progress update. Legacy implementations stay source-compatible. */
+    default WebProgressSaveResult saveProgress(String bookId, WebProgressUpdate update) throws IOException {
+        ReadingProgressDto saved = saveProgress(bookId, update.chapterIndex(), update.absoluteOffset());
+        return new WebProgressSaveResult(true, saved);
+    }
 }

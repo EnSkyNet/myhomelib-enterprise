@@ -38,16 +38,17 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.Locale;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -139,7 +140,10 @@ public final class LuceneContentIndexService implements ContentIndexPort {
                 commit(writer);
             }
             swapDirectories(active, rebuild, backup);
-            markFresh(id);
+            // Freshness is an application-level queue/orchestration decision. A committed download
+            // may arrive while this rebuild is publishing. Clearing STALE here would create a
+            // false-fresh window before the queued incremental repair is visible. The maintenance
+            // service acknowledges the rebuild and releases its own stale hold after publication.
         } catch (IOException e) {
             throw new IllegalStateException("Cannot rebuild content index for " + id, e);
         } finally {
@@ -315,21 +319,27 @@ public final class LuceneContentIndexService implements ContentIndexPort {
     }
 
     private static MatchPreview preview(String text, String queryText, long chapterStart) {
-        String source = text == null ? "" : text.replaceAll("\\s+", " ").trim();
+        String source = text == null ? "" : text;
         if (source.isEmpty()) return new MatchPreview(chapterStart, "");
-        String lower = source.toLowerCase(Locale.ROOT);
         int match = -1;
         if (queryText != null) {
-            for (String token : queryText.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
+            for (String token : queryText.split("[^\\p{L}\\p{N}]+")) {
                 if (token.length() < 2) continue;
-                int candidate = lower.indexOf(token);
-                if (candidate >= 0 && (match < 0 || candidate < match)) match = candidate;
+                var pattern = java.util.regex.Pattern.compile(
+                        java.util.regex.Pattern.quote(token),
+                        java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.UNICODE_CASE);
+                var matcher = pattern.matcher(source);
+                if (matcher.find()) {
+                    int candidate = matcher.start();
+                    if (match < 0 || candidate < match) match = candidate;
+                }
             }
         }
         if (match < 0) match = 0;
         int start = Math.max(0, match - 70);
         int end = Math.min(source.length(), Math.max(match + 150, start + 180));
-        String snippet = (start > 0 ? "…" : "") + source.substring(start, end).trim() + (end < source.length() ? "…" : "");
+        String body = source.substring(start, end).replaceAll("\\s+", " ").trim();
+        String snippet = (start > 0 ? "…" : "") + body + (end < source.length() ? "…" : "");
         return new MatchPreview(chapterStart + match, snippet);
     }
 
@@ -430,7 +440,11 @@ public final class LuceneContentIndexService implements ContentIndexPort {
         if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             throw new java.nio.file.FileAlreadyExistsException(target.toString());
         }
-        Files.move(safeSource, target);
+        try {
+            Files.move(safeSource, target, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException unsupported) {
+            Files.move(safeSource, target);
+        }
         SafeFilePublication.requireSafeDirectoryPath(target, role + " target");
     }
 

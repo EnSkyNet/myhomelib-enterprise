@@ -47,6 +47,23 @@ class ZipArchiveReaderTransparencyTest {
     }
 
     @Test
+    void interruptedEnumerationStopsImmediatelyInsteadOfHoldingInteractiveWorker(@TempDir Path dir) throws Exception {
+        Path archive = dir.resolve("cancel-list.zip");
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(archive))) {
+            putZip(out, "book.fb2", "payload".getBytes(StandardCharsets.UTF_8));
+        }
+
+        Thread.currentThread().interrupt();
+        try {
+            assertThatThrownBy(() -> reader.listEntries(archive))
+                    .isInstanceOf(UncheckedIOException.class)
+                    .hasCauseInstanceOf(InterruptedIOException.class);
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
     void cbzUsesZipContainerSemanticsForLazyComicPageAccess(@TempDir Path dir) throws Exception {
         Path comic = dir.resolve("issue.cbz");
         byte[] first = "page-one".getBytes(StandardCharsets.UTF_8);

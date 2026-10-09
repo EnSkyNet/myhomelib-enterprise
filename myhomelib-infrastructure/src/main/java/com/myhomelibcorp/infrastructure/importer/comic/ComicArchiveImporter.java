@@ -10,6 +10,7 @@ import com.myhomelibcorp.shared.comic.ComicPageNameSupport;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.annotation.Order;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -21,6 +22,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /** Imports CBZ/CBR as one comic document; contained images are pages, not separate books. */
+@Lazy
 @Component
 @Order(100)
 @RequiredArgsConstructor

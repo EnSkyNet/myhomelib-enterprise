@@ -6,6 +6,7 @@ import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.folderwatch.IncomingFolderWatchState;
 import com.myhomelibcorp.application.usecase.collection.IncomingFolderWatchUseCase;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.scene.Node;
@@ -13,7 +14,6 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
-import javafx.stage.DirectoryChooser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicLong;
 final class IncomingFolderPanelCoordinator {
     private final IncomingFolderWatchUseCase useCase;
     private final DialogService dialogs;
+    private final FileChooserService fileChooserService;
 
     private TextField folderField;
     private CheckBox enabled;
@@ -62,11 +63,9 @@ final class IncomingFolderPanelCoordinator {
             dialogs.showWarning(UiText.text("ui.java.incoming_folder_panel_coordinator.888ac617da"), UiText.text("ui.java.incoming_folder_panel_coordinator.6686ed3c16"));
             return;
         }
-        DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle(UiText.text("ui.java.incoming_folder_panel_coordinator.d29516146a"));
-        configureInitialDirectory(chooser);
         var window = owner == null || owner.getScene() == null ? null : owner.getScene().getWindow();
-        java.io.File selected = chooser.showDialog(window);
+        java.io.File selected = fileChooserService.chooseDirectory(window,
+                UiText.text("ui.java.incoming_folder_panel_coordinator.d29516146a"), initialDirectory());
         if (selected != null) folderField.setText(selected.toPath().toAbsolutePath().normalize().toString());
     }
 
@@ -124,12 +123,13 @@ final class IncomingFolderPanelCoordinator {
         if (status != null) status.setText(UiText.text("ui.fxml.collection_workspace.incoming_folder_is_not_configured"));
     }
 
-    private void configureInitialDirectory(DirectoryChooser chooser) {
-        if (folderField == null || folderField.getText().isBlank()) return;
+    private java.io.File initialDirectory() {
+        if (folderField == null || folderField.getText().isBlank()) return null;
         try {
             Path current = Paths.get(folderField.getText()).toAbsolutePath().normalize();
-            if (Files.isDirectory(current)) chooser.setInitialDirectory(current.toFile());
+            if (Files.isDirectory(current)) return current.toFile();
         } catch (RuntimeException ignored) { }
+        return null;
     }
 
     private void setBusy(boolean busy, String text) {

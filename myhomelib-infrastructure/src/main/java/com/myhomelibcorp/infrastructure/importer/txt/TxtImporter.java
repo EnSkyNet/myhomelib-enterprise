@@ -6,6 +6,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import com.myhomelibcorp.infrastructure.importer.AbstractBookImporter;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -21,6 +22,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 
+@Lazy
 @Component
 public class TxtImporter extends AbstractBookImporter {
     @Override

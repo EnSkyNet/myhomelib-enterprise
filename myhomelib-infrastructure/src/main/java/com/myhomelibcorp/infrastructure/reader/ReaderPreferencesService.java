@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.reader;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.reader.ReaderPreferencesPort;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.reader.ReaderPreferences;
@@ -56,6 +56,7 @@ public class ReaderPreferencesService implements ReaderPreferencesPort {
             log.debug("Saved reader preferences to {}", file);
         } catch (Exception e) {
             log.error("Не вдалося зберегти налаштування Reader", e);
+            throw new IllegalStateException("Не вдалося зберегти налаштування Reader", e);
         } finally {
             if (workspace != null) {
                 try { SafeFilePublication.cleanupPrivateWorkspace(workspace); }
@@ -82,6 +83,7 @@ public class ReaderPreferencesService implements ReaderPreferencesPort {
             log.info("Reader preferences reset");
         } catch (Exception e) {
             log.error("Не вдалося скинути налаштування Reader", e);
+            throw new IllegalStateException("Не вдалося скинути налаштування Reader", e);
         }
     }
 }

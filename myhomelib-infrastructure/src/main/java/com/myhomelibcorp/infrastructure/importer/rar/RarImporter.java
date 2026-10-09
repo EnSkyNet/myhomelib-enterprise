@@ -6,6 +6,7 @@ import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.infrastructure.importer.archive.ArchiveEntryImportSupport;
 import com.myhomelibcorp.infrastructure.importer.archive.ArchiveImportSupport;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
@@ -29,6 +30,7 @@ import java.util.Spliterators;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
+@Lazy
 @Component
 @Slf4j
 public class RarImporter implements BookImporterPort {
@@ -125,32 +127,16 @@ public class RarImporter implements BookImporterPort {
                     try { importer = importerRegistry.findImporter(ArchiveImportSupport.importerProbePath(name)); }
                     catch (Exception unsupported) { continue; }
 
-                    Path temp = Files.createTempFile("mhl-rar-entry-", ArchiveImportSupport.suffixFor(name));
                     try (InputStream in = archive.getInputStream(header)) {
-                        try (var out = Files.newOutputStream(temp)) {
-                            byte[] buffer = new byte[64 * 1024];
-                            long total = 0;
-                            int n;
-                            while ((n = in.read(buffer)) != -1) {
-                                total += n;
-                                if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES) throw new java.io.IOException("RAR entry перевищив ліміт");
-                                out.write(buffer, 0, n);
-                            }
-                        }
-                        long size = Files.size(temp);
-                        totalDecompressedBytes += size;
-                        if (totalDecompressedBytes > ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES) {
-                            throw new FatalArchiveLimitException("RAR exceeds cumulative decompression safety limit");
-                        }
-                        try (Stream<Book> books = importer.importBooks(temp)) {
-                            books.filter(java.util.Objects::nonNull)
-                                    .map(b -> ArchiveImportSupport.enrich(b, archivePath, name, size))
-                                    .forEach(queue::add);
-                        }
-                    } finally {
-                        Files.deleteIfExists(temp);
+                        totalDecompressedBytes = ArchiveEntryImportSupport.materializeAndImport(
+                                archivePath,
+                                name,
+                                importer,
+                                in::read,
+                                totalDecompressedBytes,
+                                queue);
                     }
-                } catch (FatalArchiveLimitException fatal) {
+                } catch (ArchiveEntryImportSupport.CumulativeArchiveLimitException fatal) {
                     log.warn("RAR safety limit reached for {}: {}", archivePath, fatal.getMessage());
                     close();
                     return;
@@ -164,12 +150,6 @@ public class RarImporter implements BookImporterPort {
             if (finished) return;
             finished = true;
             try { archive.close(); } catch (Exception ignored) { }
-        }
-    }
-
-    private static final class FatalArchiveLimitException extends java.io.IOException {
-        private FatalArchiveLimitException(String message) {
-            super(message);
         }
     }
 }

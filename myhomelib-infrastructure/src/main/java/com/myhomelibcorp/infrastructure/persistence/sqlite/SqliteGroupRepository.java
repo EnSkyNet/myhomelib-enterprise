@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.port.out.repository.GroupRepository;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.infrastructure.persistence.CollectionTransactionExecutor;
 import com.myhomelibcorp.infrastructure.persistence.mapper.GroupRowMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -59,10 +60,12 @@ public class SqliteGroupRepository implements GroupRepository {
     @Override
     public Group save(Group group) {
         if (group.getId() == null || group.getId().asLong() == null) {
-            // Нова група – вставляємо без ID
-            String sql = "INSERT INTO groups (name, allow_delete) VALUES (?, ?)";
-            getJdbcTemplate().update(sql, group.getName(), group.isAllowDelete() ? 1 : 0);
-            Long id = getJdbcTemplate().queryForObject("SELECT last_insert_rowid()", Long.class);
+            // SQLite last_insert_rowid() is connection-scoped. Keep insert + generated ID
+            // retrieval in one statement so pooled connections cannot return another writer's ID.
+            Long id = getJdbcTemplate().queryForObject(
+                    "INSERT INTO groups (name, allow_delete) VALUES (?, ?) RETURNING id",
+                    Long.class, group.getName(), group.isAllowDelete() ? 1 : 0);
+            if (id == null) throw new IllegalStateException("SQLite did not return generated group ID");
             return new Group(GroupId.fromLong(id), group.getName(), group.isAllowDelete());
         } else {
             // Оновлення існуючої групи
@@ -74,8 +77,10 @@ public class SqliteGroupRepository implements GroupRepository {
 
     @Override
     public void deleteById(Long id) {
-        getJdbcTemplate().update("DELETE FROM book_groups WHERE group_id = ?", id);
-        getJdbcTemplate().update("DELETE FROM groups WHERE id = ?", id);
+        CollectionTransactionExecutor.run(collectionManager, () -> {
+            getJdbcTemplate().update("DELETE FROM book_groups WHERE group_id = ?", id);
+            getJdbcTemplate().update("DELETE FROM groups WHERE id = ?", id);
+        });
         log.info("Групу з ID {} видалено", id);
     }
 

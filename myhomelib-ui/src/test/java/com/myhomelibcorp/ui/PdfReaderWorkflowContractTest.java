@@ -19,9 +19,11 @@ class PdfReaderWorkflowContractTest {
     @Test
     void pdfTocSearchAndBookmarksStayBehindReaderAndApplicationBoundaries() throws Exception {
         String controller = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java"));
+        String bookmarks = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/reader/ReaderBookmarkCoordinator.java"));
         assertThat(controller).contains("pdfReaderView.setOnAddBookmark", "pdfReaderView.setOnBookmarks",
                 "pdfReaderView.setOnToc", "pdfReaderView.setOnSearch", "pdfReaderView.searchTextAsync",
-                "pdfReaderView.outlineEntries()", "persistenceService.saveBookmark", "pdfReaderView.goToPosition");
+                "pdfReaderView.outlineEntries()", "bookmarkCoordinator.saveText", "pdfReaderView.goToPosition");
+        assertThat(bookmarks).contains("persistenceService.saveBookmark");
         assertThat(controller).doesNotContain("org.apache.pdfbox", "PDDocument", "PDFTextStripper");
     }
 

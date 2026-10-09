@@ -27,7 +27,7 @@ public class CaffeineCoverCache implements CoverCache {
                 // Covers vary by orders of magnitude in size. Bound the cache by
                 // retained bytes instead of entry count so large covers cannot
                 // consume hundreds of MiB on million-book catalog browsing.
-                .maximumWeight(64 * 1024 * 1024)
+                .maximumWeight(24 * 1024 * 1024)
                 .weigher((String key, byte[] data) -> Math.max(1, data.length))
                 .expireAfterWrite(30, TimeUnit.MINUTES)
                 .recordStats()

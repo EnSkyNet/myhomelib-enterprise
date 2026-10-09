@@ -27,9 +27,12 @@ class WebLibraryRendererTest {
         assertThat(count(html, "class=card")).isEqualTo(50);
     }
 
-    @Test void detailsContainDownloadAndOpenLinks() {
+    @Test void detailsContainDownloadOpenPwaMetadataAndExplicitOfflineActions() {
         String html=renderer.book(book("42","Title"));
-        assertThat(html).contains("/web/download/42", "/web/read/42", "Завантажити", "Читати");
+        assertThat(html).contains("/web/download/42", "/web/read/42", "Завантажити", "Читати",
+                "rel=\"manifest\" href=\"/web/app.webmanifest\"", WebPwaAssets.CLIENT_JS_PATH, WebPwaAssets.CSS_PATH,
+                "data-pwa-save-book='42'", "data-pwa-remove-book='42'", "data-pwa-clear-books",
+                "Зберегти для читання офлайн", "Видалити офлайн-копію", "Очистити всі офлайн-копії");
     }
 
     @Test void continueReadingShelfShowsProgressDeviceTimeAndEscapesMetadata() {

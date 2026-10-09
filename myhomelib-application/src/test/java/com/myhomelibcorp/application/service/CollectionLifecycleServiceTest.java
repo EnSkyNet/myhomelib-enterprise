@@ -9,12 +9,15 @@ import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecycle
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.application.port.out.search.SearchIndexLifecycle;
+import com.myhomelibcorp.application.search.SearchIndexUnavailableException;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.shared.event.DomainEventPublisher;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -53,6 +56,25 @@ class CollectionLifecycleServiceTest {
 
         org.junit.jupiter.api.Assertions.assertTrue(reusable);
         verify(f.index, never()).rebuildIndex();
+    }
+
+    @Test
+    void lockedDerivedSearchIndexDoesNotPreventCatalogueStartup() {
+        Fixture f = new Fixture();
+        Collection next = collection("locked", "Locked");
+        when(f.lifecycle.getCurrentCollection()).thenReturn(null);
+        when(f.migrations.migrateCurrentCollection()).thenReturn(0);
+        when(f.searchLifecycle.activateCollectionIndex(next)).thenThrow(
+                new SearchIndexUnavailableException("index locked"));
+
+        boolean reusable = f.service.initializeCollection(next, true);
+
+        org.junit.jupiter.api.Assertions.assertFalse(reusable);
+        verify(f.lifecycle).switchToCollection(next);
+        verify(f.index, never()).rebuildIndex();
+        verify(f.executor, never()).execute(any(Runnable.class));
+        verify(f.events).publish(any(com.myhomelibcorp.domain.event.collection.CollectionOpenedEvent.class));
+        verify(f.lifecycle, never()).closeCurrentCollection();
     }
 
     @Test
@@ -134,6 +156,23 @@ class CollectionLifecycleServiceTest {
     }
 
     @Test
+    void manualAsyncRebuildCanReopenIndexAfterStartupLockWasReleased() {
+        Fixture f = new Fixture();
+        Collection current = collection("a", "A");
+        when(f.lifecycle.getCurrentCollection()).thenReturn(current);
+        doThrow(new SearchIndexUnavailableException("index locked"))
+                .doNothing()
+                .when(f.index).rebuildIndex(any(java.util.concurrent.atomic.AtomicBoolean.class));
+        doAnswer(invocation -> { invocation.<Runnable>getArgument(0).run(); return null; })
+                .when(f.executor).execute(any(Runnable.class));
+
+        f.service.rebuildSearchIndexAsync().join();
+
+        verify(f.searchLifecycle).activateCollectionIndex(current);
+        verify(f.index, times(2)).rebuildIndex(any(java.util.concurrent.atomic.AtomicBoolean.class));
+    }
+
+    @Test
     void failedAsyncRebuildReleasesDetachedLease() {
         Fixture f = new Fixture();
         Collection current = collection("a", "A");
@@ -170,6 +209,48 @@ class CollectionLifecycleServiceTest {
         scheduled.get().run();
         first.join();
         org.junit.jupiter.api.Assertions.assertFalse(f.coordinator.isBusy());
+    }
+
+
+    @Test
+    void cancellationWaitIsBoundedWhenIndexWorkerIgnoresCooperativeFlag() throws Exception {
+        Fixture f = new Fixture();
+        Collection current = collection("a", "A");
+        when(f.lifecycle.getCurrentCollection()).thenReturn(current);
+        AtomicReference<Runnable> scheduled = new AtomicReference<>();
+        doAnswer(invocation -> { scheduled.set(invocation.getArgument(0)); return null; })
+                .when(f.executor).execute(any(Runnable.class));
+
+        CountDownLatch workerStarted = new CountDownLatch(1);
+        CountDownLatch releaseWorker = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            workerStarted.countDown();
+            releaseWorker.await(5, TimeUnit.SECONDS);
+            return null;
+        }).when(f.index).rebuildIndex(any(java.util.concurrent.atomic.AtomicBoolean.class));
+
+        String previous = System.getProperty("myhomelib.index.cancelWaitMs");
+        System.setProperty("myhomelib.index.cancelWaitMs", "100");
+        try {
+            f.service.rebuildSearchIndexAsync();
+            Thread worker = new Thread(scheduled.get(), "stuck-index-test");
+            worker.start();
+            org.junit.jupiter.api.Assertions.assertTrue(workerStarted.await(2, TimeUnit.SECONDS));
+
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                    f.service::cancelBackgroundRebuildAndAwait);
+
+            org.junit.jupiter.api.Assertions.assertTrue(failure.getMessage().contains("не завершилася"));
+            org.junit.jupiter.api.Assertions.assertEquals(LibraryOperationType.INDEX, f.coordinator.activeOperation());
+            releaseWorker.countDown();
+            worker.join(2_000);
+            org.junit.jupiter.api.Assertions.assertFalse(worker.isAlive());
+            org.junit.jupiter.api.Assertions.assertFalse(f.coordinator.isBusy());
+        } finally {
+            releaseWorker.countDown();
+            if (previous == null) System.clearProperty("myhomelib.index.cancelWaitMs");
+            else System.setProperty("myhomelib.index.cancelWaitMs", previous);
+        }
     }
 
     private static Collection collection(String id, String name) {

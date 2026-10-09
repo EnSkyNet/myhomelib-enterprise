@@ -14,7 +14,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -58,7 +57,8 @@ public class SqliteAnnotationExportQueryAdapter implements AnnotationExportQuery
                     """, this::mapRow, pageParams.toArray());
             boolean hasNext = rows.size() > safeLimit;
             if (hasNext) rows = new ArrayList<>(rows.subList(0, safeLimit));
-            Map<String, List<String>> tags = tagsFor(rows.stream().map(Row::id).toList());
+            Map<String, List<String>> tags = SqliteAnnotationTagQuerySupport.load(
+                    queryExecutor, rows.stream().map(Row::id).toList());
             List<AnnotationExportRow> items = rows.stream()
                     .map(row -> row.toExportRow(tags.getOrDefault(row.id(), List.of())))
                     .toList();
@@ -73,19 +73,6 @@ public class SqliteAnnotationExportQueryAdapter implements AnnotationExportQuery
         return new SqlSelection(" WHERE a.book_id IN (" + placeholders + ")", new ArrayList<>(ids));
     }
 
-    private Map<String, List<String>> tagsFor(List<String> ids) {
-        if (ids == null || ids.isEmpty()) return Map.of();
-        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
-        List<TagRow> rows = queryExecutor.query(
-                "SELECT annotation_id,tag FROM annotation_tags WHERE annotation_id IN (" + placeholders + ") " +
-                        "ORDER BY annotation_id,tag COLLATE NOCASE",
-                (rs, rowNum) -> new TagRow(rs.getString(1), rs.getString(2)), ids.toArray());
-        Map<String, List<String>> result = new LinkedHashMap<>();
-        for (TagRow row : rows) result.computeIfAbsent(row.annotationId(), ignored -> new ArrayList<>()).add(row.tag());
-        result.replaceAll((id, values) -> List.copyOf(values));
-        return Map.copyOf(result);
-    }
-
     private Row mapRow(ResultSet rs, int rowNum) throws SQLException {
         return new Row(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5),
                 rs.getString(6), rs.getString(7), rs.getString(8), rs.getString(9), rs.getString(10),
@@ -94,7 +81,6 @@ public class SqliteAnnotationExportQueryAdapter implements AnnotationExportQuery
     }
 
     private record SqlSelection(String where, List<Object> params) { }
-    private record TagRow(String annotationId, String tag) { }
     private record Row(String id, String bookId, String bookTitle, String authors, String series, String language,
                        String fileName, String isbn, String type, String color, String chapterId, String chapterTitle,
                        String quote, String note, double position, Instant createdAt, Instant updatedAt) {

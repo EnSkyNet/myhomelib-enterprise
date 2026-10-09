@@ -142,13 +142,18 @@ public abstract class ExternalCommandBookConverter implements BookConverter {
             if (process.exitCode() != 0) {
                 throw new IllegalStateException("Конвертер завершився з кодом " + process.exitCode());
             }
-            SafeFilePublication.requireSafeRegularFile(processOutput, "External converter output");
-            long outputBytes = Files.size(processOutput);
+            SafeFilePublication.FileSnapshot outputSnapshot =
+                    SafeFilePublication.snapshot(processOutput, "External converter output");
+            long outputBytes = outputSnapshot.size();
+            if (outputBytes <= 0) {
+                throw new IllegalStateException("Зовнішній конвертер створив порожній файл результату");
+            }
             if (outputBytes > maxOutputBytes) {
                 throw new IllegalStateException("Результат зовнішнього конвертера перевищив ліміт "
                         + maxOutputBytes + " байт");
             }
-            SafeFilePublication.moveNoReplace(processOutput, targetFile, "External converter publication");
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    processOutput, targetFile, null, outputSnapshot.sha256(), "External converter publication");
         } finally {
             try {
                 SafeFilePublication.cleanupPrivateWorkspace(workspace);

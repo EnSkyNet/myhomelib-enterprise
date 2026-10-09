@@ -2,6 +2,13 @@
 logging:
   level:
     com.myhomelibcorp: WARN
+    com.myhomelibcorp.ui.service.BookDownloadCoordinator: INFO
+    com.myhomelibcorp.ui.details.BookDetailsAnalysisService: INFO
+    com.myhomelibcorp.application.usecase.conversion.ConvertBookUseCase: INFO
+    com.myhomelibcorp.converter.toolchain.ToolchainBookConverter: INFO
+    com.myhomelibcorp.converter.toolchain.engine.fbc.FbcEngine: INFO
+    com.myhomelibcorp.application.content.maintenance.ContentIndexMaintenanceService: INFO
+    javafx.css: ERROR
     org.springframework: ERROR
     org.flywaydb: WARN
     org.sqlite: WARN
@@ -17,26 +24,3 @@ app:
     batch-size: 1000
   search:
     index-path: ${user.home}/.myhomelibcorp/search-index
-
-spring:
-  cache:
-    type: caffeine
-    caffeine:
-      spec: maximumSize=10000,expireAfterWrite=60m
-  datasource:
-    hikari:
-      maximum-pool-size: 10
-      minimum-idle: 2
-      connection-timeout: 30000
-      idle-timeout: 600000
-      max-lifetime: 1800000
-      leak-detection-threshold: 120000
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info
-  endpoint:
-    health:
-      show-details: when-authorized

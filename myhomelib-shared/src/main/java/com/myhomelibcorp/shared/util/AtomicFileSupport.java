@@ -1,7 +1,6 @@
 package com.myhomelibcorp.shared.util;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -9,9 +8,6 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.UUID;
 
 /**
@@ -189,13 +185,8 @@ public final class AtomicFileSupport {
     }
 
     private static Path moveNoReplace(Path source, Path target, String role) throws IOException {
-        Path safeSource = requireSafeRegularFile(source, role + " source");
-        Path safeTarget = prepareTarget(target, role + " target");
-        if (Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
-            throw new FileAlreadyExistsException(safeTarget.toString());
-        }
-        Files.move(safeSource, safeTarget);
-        return requireSafeRegularFile(safeTarget, role + " target");
+        return SafeFilePrimitives.moveNoReplace(
+                source, target, role, AtomicFileSupport::requireSafeRegularFile, AtomicFileSupport::prepareTarget);
     }
 
     private static Path detachIfOwned(Path target, String expectedHash, String role) throws IOException {
@@ -230,20 +221,7 @@ public final class AtomicFileSupport {
     }
 
     private static String sha256(Path file, String role) throws IOException {
-        Path safe = requireSafeRegularFile(file, role);
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException("SHA-256 is unavailable", impossible);
-        }
-        try (InputStream in = Files.newInputStream(safe, LinkOption.NOFOLLOW_LINKS)) {
-            byte[] buffer = new byte[64 * 1024];
-            for (int read; (read = in.read(buffer)) >= 0; ) {
-                if (read > 0) digest.update(buffer, 0, read);
-            }
-        }
-        return HexFormat.of().formatHex(digest.digest());
+        return SafeFilePrimitives.sha256(file, role, AtomicFileSupport::requireSafeRegularFile);
     }
 
     private static void cleanupOwnedStaging(Path staging, String expectedHash) {

@@ -20,6 +20,7 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
         <mhl.test.jvmArgs></mhl.test.jvmArgs>
+        <mhl.mockito.agentArg>-javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</mhl.mockito.agentArg>
 
         <spring-boot.version>4.1.1</spring-boot.version>
         <javafx.version>21.0.12</javafx.version>
@@ -43,6 +44,8 @@
         <testcontainers.version>2.0.5</testcontainers.version>
 
         <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
+        <maven-resources-plugin.version>3.3.1</maven-resources-plugin.version>
+        <maven-jar-plugin.version>3.3.0</maven-jar-plugin.version>
         <cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
         <dependency-check-maven.version>12.2.2</dependency-check-maven.version>
         <jna.version>5.13.0</jna.version>
@@ -61,6 +64,7 @@
         <module>myhomelib-converter-calibre-plugin</module>
         <module>myhomelib-infrastructure</module>
         <module>myhomelib-ui</module>
+        <module>myhomelib-updater</module>
         <module>myhomelib-bootstrap</module>
         <module>myhomelib-architecture-tests</module>
         <module>myhomelib-e2e-tests</module>
@@ -252,6 +256,18 @@
             <plugins>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-resources-plugin</artifactId>
+                    <version>${maven-resources-plugin.version}</version>
+                </plugin>
+
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>${maven-jar-plugin.version}</version>
+                </plugin>
+
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
                     <version>${maven-compiler-plugin.version}</version>
                     <configuration>
@@ -318,6 +334,13 @@
                         <systemPropertyVariables>
                             <myhomelib.encryption.key>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</myhomelib.encryption.key>
                         </systemPropertyVariables>
+                        <!-- A JVM started under a POSIX/C locale keeps an ASCII native path encoding
+                             even when file.encoding is UTF-8. Force a UTF-8 locale for forked tests so
+                             Unicode path regressions exercise the same filesystem contract on clean CI. -->
+                        <environmentVariables>
+                            <LANG>C.UTF-8</LANG>
+                            <LC_ALL>C.UTF-8</LC_ALL>
+                        </environmentVariables>
                     </configuration>
                 </plugin>
             </plugins>

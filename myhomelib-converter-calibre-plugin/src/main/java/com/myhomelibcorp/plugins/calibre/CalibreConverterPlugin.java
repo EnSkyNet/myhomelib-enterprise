@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.conversion.BookConversionContext;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.shared.util.ExecutablePathSafety;
+import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 import com.myhomelibcorp.plugin.api.BookConverter;
 import com.myhomelibcorp.plugin.api.PluginApiRange;
 import com.myhomelibcorp.plugin.api.PluginApiVersion;
@@ -62,7 +63,8 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
                 new Target("zip", ".zip"));
         private static final String EXECUTABLE_PROPERTY = "myhomelib.calibre.executable";
         private static final String TIMEOUT_PROPERTY = "myhomelib.calibre.timeoutSeconds";
-        private static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(5);
+        private static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(30);
+        private static final long LEGACY_DEFAULT_TIMEOUT_SECONDS = Duration.ofMinutes(5).toSeconds();
         private static final int MAX_CAPTURE_BYTES = 64 * 1024;
         private static final int MAX_FAILURE_TEXT = 2_000;
 
@@ -159,13 +161,15 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
                         throw new IllegalStateException("calibre завершився з кодом " + process.exitValue()
                                 + (text.isBlank() ? "" : ": " + text.strip()));
                     }
-                    SafeFilePublication.requireSafeRegularFile(processOutput, "Calibre plugin output");
-                    long outputBytes = Files.size(processOutput);
+                    SafeFilePublication.FileSnapshot outputSnapshot =
+                            SafeFilePublication.snapshot(processOutput, "Calibre plugin output");
+                    long outputBytes = outputSnapshot.size();
                     if (outputBytes <= 0) throw new IllegalStateException("calibre не створив коректний файл результату");
                     if (outputBytes > maxOutputBytes) {
                         throw new IllegalStateException("calibre output exceeded limit " + maxOutputBytes + " bytes");
                     }
-                    SafeFilePublication.moveNoReplace(processOutput, targetFile, "Calibre plugin publication");
+                    SafeFilePublication.publishReplacingIfUnchanged(
+                            processOutput, targetFile, null, outputSnapshot.sha256(), "Calibre plugin publication");
                 } catch (InterruptedException interrupted) {
                     terminateProcessTree(process);
                     Thread.currentThread().interrupt();
@@ -179,27 +183,7 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
         }
 
         private static void terminateProcessTree(Process process) {
-            if (process == null) return;
-            java.util.List<ProcessHandle> descendants;
-            try { descendants = process.toHandle().descendants().toList(); }
-            catch (RuntimeException ignored) { descendants = java.util.List.of(); }
-            descendants.forEach(child -> {
-                try { child.destroy(); } catch (RuntimeException ignored) { }
-            });
-            try { process.destroy(); } catch (RuntimeException ignored) { }
-            boolean interrupted = false;
-            try { process.waitFor(300, TimeUnit.MILLISECONDS); }
-            catch (InterruptedException ignored) { interrupted = true; }
-            descendants.forEach(child -> {
-                if (child.isAlive()) try { child.destroyForcibly(); } catch (RuntimeException ignored) { }
-            });
-            if (process.isAlive()) try { process.destroyForcibly(); } catch (RuntimeException ignored) { }
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-            while (process.isAlive() && System.nanoTime() < deadline) {
-                try { process.waitFor(50, TimeUnit.MILLISECONDS); }
-                catch (InterruptedException e) { interrupted = true; }
-            }
-            if (interrupted) Thread.currentThread().interrupt();
+            ProcessExecutionSupport.terminate(process);
         }
 
         private static Optional<Path> executable() {
@@ -257,6 +241,7 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
         private static Duration configuredTimeout() {
             try {
                 long seconds = Long.parseLong(System.getProperty(TIMEOUT_PROPERTY, Long.toString(DEFAULT_TIMEOUT.toSeconds())).trim());
+                if (seconds == LEGACY_DEFAULT_TIMEOUT_SECONDS) seconds = DEFAULT_TIMEOUT.toSeconds();
                 return Duration.ofSeconds(Math.max(10L, Math.min(3600L, seconds)));
             } catch (RuntimeException invalid) {
                 return DEFAULT_TIMEOUT;

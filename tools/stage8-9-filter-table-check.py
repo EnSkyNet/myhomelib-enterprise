@@ -21,6 +21,7 @@ profiles = text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/table/TableProf
 profile_state = text('myhomelib-application/src/main/java/com/myhomelibcorp/application/table/TableProfileStateService.java')
 workspace = text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/navigation/WorkspaceManager.java')
 fast_writer = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/JdbcBatchWriter.java')
+book_upsert = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/BookUpsertSql.java')
 fast_pipeline = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxImportPipeline.java')
 normalizer = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxBookNormalizer.java')
 denormalized = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/BookDenormalizedValues.java')
@@ -41,7 +42,7 @@ require('TableProfileStateService' in profiles and 'stateService.load' in profil
 require('table.profile.' in profile_state and 'column.' in profile_state and 'sort.column' in profile_state, 'table profiles not persisted')
 for profile in ['series','genre','year','language','archive','keyword','reviews','all-books','already-read','history']:
     require(f'loadBookTableWorkspace("{profile}")' in workspace, f'missing table profile {profile}')
-require('format, author_sort' in fast_writer and 'BookDenormalizedValues.format' in fast_writer, 'fast INPX does not maintain denormalized format')
+require('format, author_sort' in book_upsert and 'BookDenormalizedValues.format' in fast_writer, 'fast INPX does not maintain denormalized format')
 require('BookDenormalizedValues.authorSort(parsedAuthors.keys())' in normalizer and 'Collection<AuthorNameKey>' in denormalized, 'fast INPX does not derive author_sort from structured author identities')
 require('authorSortFromKeys' not in fast_writer + fast_pipeline + normalizer, 'delimiter-serialized author identity helper was reintroduced')
 require('refreshDenormalizedBookFields' in legacy, 'legacy HLC2 import does not maintain denormalized fields')

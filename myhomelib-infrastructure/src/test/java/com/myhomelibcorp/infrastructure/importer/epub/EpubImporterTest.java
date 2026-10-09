@@ -1,17 +1,25 @@
 package com.myhomelibcorp.infrastructure.importer.epub;
 
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
+import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
 
 class EpubImporterTest {
 
@@ -85,6 +93,66 @@ class EpubImporterTest {
 
         assertThat(book.getTitle()).isEqualTo("Правильна назва");
         assertThat(book.getLanguage().value()).isEqualTo("und");
+    }
+
+
+    @Test
+    void nonFiniteSeriesIndexFallsBackToZeroInsteadOfOverflowing() throws Exception {
+        Path epub = tempDir.resolve("non-finite-series.epub");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(epub), StandardCharsets.UTF_8)) {
+            put(zip, "META-INF/container.xml", """
+                    <container><rootfiles><rootfile full-path="OPS/content.opf"/></rootfiles></container>
+                    """);
+            put(zip, "OPS/content.opf", """
+                    <package><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                      <dc:title>Series</dc:title>
+                      <meta name="calibre:series" content="Saga"/>
+                      <meta name="calibre:series_index" content="Infinity"/>
+                    </metadata></package>
+                    """);
+        }
+
+        Book book;
+        try (var books = new EpubImporter().importBooks(epub)) {
+            book = books.findFirst().orElseThrow();
+        }
+
+        assertThat(book.getSeries()).isEqualTo("Saga");
+        assertThat(book.getSequenceNumber()).isZero();
+    }
+
+    @Test
+    void rejectsArchiveWhoseDeclaredEntriesExceedCumulativeSafetyLimit() throws Exception {
+        Path epub = tempDir.resolve("cumulative-bomb.epub");
+        Files.write(epub, new byte[]{0});
+        Path safePath = epub.toAbsolutePath().normalize();
+        SafeZipArchive opened = mock(SafeZipArchive.class);
+        ZipFile zip = mock(ZipFile.class);
+        long entryBytes = 400L * 1024L * 1024L;
+        long compressedBytes = 5L * 1024L * 1024L;
+        List<ZipArchiveEntry> entries = java.util.stream.IntStream.range(0, 3)
+                .mapToObj(i -> {
+                    ZipArchiveEntry entry = new ZipArchiveEntry("OPS/chapter-" + i + ".xhtml");
+                    entry.setSize(entryBytes);
+                    entry.setCompressedSize(compressedBytes);
+                    return entry;
+                })
+                .toList();
+        when(opened.zip()).thenReturn(zip);
+        when(zip.getEntries()).thenAnswer(call -> Collections.enumeration(entries));
+
+        try (var support = mockStatic(SafeZipArchive.class)) {
+            support.when(() -> SafeZipArchive.open(safePath, StandardCharsets.UTF_8, "EPUB source"))
+                    .thenReturn(opened);
+
+            assertThatThrownBy(() -> new EpubImporter().importBooks(epub))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasRootCauseInstanceOf(IOException.class)
+                    .rootCause()
+                    .hasMessageContaining("cumulative")
+                    .hasMessageContaining("safety limit");
+            verify(opened).close();
+        }
     }
 
     @Test

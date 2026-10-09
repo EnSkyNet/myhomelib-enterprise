@@ -28,8 +28,8 @@ public class CaffeineSearchCache implements SearchCache {
         this.cache = Caffeine.newBuilder()
                 // Bound by cached result cardinality, not query count: otherwise
                 // 1000 queries x 1000 BookIds can retain ~1M IDs in heap.
-                .maximumWeight(50_000)
-                .weigher((String key, List<BookId> ids) -> Math.max(1, Math.min(10_000, ids.size())))
+                .maximumWeight(20_000)
+                .weigher((String key, List<BookId> ids) -> Math.max(1, ids.size()))
                 .expireAfterWrite(10, TimeUnit.MINUTES)
                 .recordStats()
                 .build();
@@ -44,9 +44,19 @@ public class CaffeineSearchCache implements SearchCache {
 
     @Override
     public void put(String query, List<BookId> ids) {
-        if (query != null && ids != null && !ids.isEmpty()) {
-            cache.put(key(query), ids);
+        // Large result sets are already retained by the caller; caching them a second
+        // time gives little benefit and can retain millions of UUID objects.
+        if (query == null) return;
+        String scopedKey = key(query);
+        if (ids == null || ids.isEmpty() || ids.size() > 5_000) {
+            // A new empty/oversized result must invalidate a previously cached result:
+            // silently ignoring it would keep returning a stale search result.
+            cache.invalidate(scopedKey);
+            return;
         }
+        // The caller may reuse and mutate its result buffer after publication.
+        // Keep an immutable snapshot so subsequent searches cannot observe that mutation.
+        cache.put(scopedKey, List.copyOf(ids));
     }
 
     @Override

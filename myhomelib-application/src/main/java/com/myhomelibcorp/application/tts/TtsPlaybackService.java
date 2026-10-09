@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.tts;
 
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.text.BreakIterator;
@@ -12,6 +13,7 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Service
+@Slf4j
 public class TtsPlaybackService {
     private final List<TtsProvider> providers;
     private final ExecutorPort executor;
@@ -24,18 +26,17 @@ public class TtsPlaybackService {
     }
 
     public List<TtsVoice> availableVoices() {
-        TtsProvider provider = selectProvider();
-        if (provider == null) return List.of();
-        try { return provider.availableVoices().stream().sorted(Comparator.comparing(TtsVoice::displayName)).toList(); }
-        catch (RuntimeException failure) { return List.of(); }
+        ProviderSelection selection = selectProvider();
+        return selection == null ? List.of() : selection.voices();
     }
 
-    public boolean isAvailable() { return selectProvider() != null && !availableVoices().isEmpty(); }
+    public boolean isAvailable() { return !availableVoices().isEmpty(); }
 
     public TtsPlayback start(TtsPlaybackRequest request, TtsPlaybackListener listener) {
         Objects.requireNonNull(request, "request");
-        TtsProvider provider = selectProvider();
-        if (provider == null) throw new IllegalStateException("System TTS is unavailable");
+        ProviderSelection selection = selectProvider();
+        if (selection == null) throw new IllegalStateException("System TTS is unavailable");
+        TtsProvider provider = selection.provider();
         List<TtsSentence> sentences = split(request);
         if (sentences.isEmpty()) throw new IllegalArgumentException("No readable text");
 
@@ -58,9 +59,37 @@ public class TtsPlaybackService {
         }
     }
 
-    private TtsProvider selectProvider() {
-        return providers.stream().filter(TtsProvider::isAvailable).findFirst().orElse(null);
+    private ProviderSelection selectProvider() {
+        for (TtsProvider provider : providers) {
+            if (!providerAvailable(provider)) continue;
+            try {
+                List<TtsVoice> voices = provider.availableVoices().stream()
+                        .filter(Objects::nonNull)
+                        .sorted(Comparator.comparing(TtsVoice::displayName))
+                        .toList();
+                if (!voices.isEmpty()) return new ProviderSelection(provider, voices);
+                log.warn("TTS provider {} reported availability but exposed no voices; trying the next provider",
+                        provider.id());
+            } catch (RuntimeException failure) {
+                log.warn("TTS provider {} failed while listing voices; trying the next provider: {}",
+                        provider.id(), failure.toString());
+            }
+        }
+        return null;
     }
+
+    private boolean providerAvailable(TtsProvider provider) {
+        try {
+            return provider.isAvailable();
+        } catch (RuntimeException failure) {
+            log.warn("TTS provider {} availability probe failed; trying the next provider: {}",
+                    provider.id(), failure.toString());
+            return false;
+        }
+    }
+
+
+    private record ProviderSelection(TtsProvider provider, List<TtsVoice> voices) { }
 
     static List<TtsSentence> split(TtsPlaybackRequest request) {
         Locale locale = request.languageTag().isBlank() ? Locale.getDefault() : Locale.forLanguageTag(request.languageTag());
@@ -112,7 +141,8 @@ public class TtsPlaybackService {
                 if (state != TtsPlaybackState.PLAYING) return;
                 state = TtsPlaybackState.PAUSED;
                 repeatCurrentAfterPause = true;
-                try { provider.cancelCurrent(); } catch (RuntimeException ignored) { }
+                try { provider.cancelCurrent(); }
+                catch (RuntimeException failure) { log.warn("TTS provider {} failed to cancel paused utterance: {}", provider.id(), failure.toString()); }
                 notifyState(TtsPlaybackState.PAUSED);
                 lock.notifyAll();
             }
@@ -134,7 +164,8 @@ public class TtsPlaybackService {
                 if (!changed) return;
                 state = TtsPlaybackState.STOPPED;
                 repeatCurrentAfterPause = false;
-                try { provider.cancelCurrent(); } catch (RuntimeException ignored) { }
+                try { provider.cancelCurrent(); }
+                catch (RuntimeException failure) { log.warn("TTS provider {} failed to cancel stopped utterance: {}", provider.id(), failure.toString()); }
                 lock.notifyAll();
             }
             notifyState(TtsPlaybackState.STOPPED);
@@ -204,19 +235,23 @@ public class TtsPlaybackService {
         }
 
         private void notifyState(TtsPlaybackState value) {
-            try { listener.onStateChanged(value); } catch (RuntimeException ignored) { }
+            try { listener.onStateChanged(value); }
+            catch (RuntimeException failure) { log.debug("TTS state listener failed", failure); }
         }
 
         private void notifySentence(TtsSentence sentence) {
-            try { listener.onSentenceStarted(sentence); } catch (RuntimeException ignored) { }
+            try { listener.onSentenceStarted(sentence); }
+            catch (RuntimeException failure) { log.debug("TTS sentence listener failed", failure); }
         }
 
         private void notifyFailure(Throwable failure) {
-            try { listener.onFailed(failure); } catch (RuntimeException ignored) { }
+            try { listener.onFailed(failure); }
+            catch (RuntimeException listenerFailure) { log.debug("TTS failure listener failed", listenerFailure); }
         }
 
         private void notifyTerminal() {
-            try { terminalCallback.run(); } catch (RuntimeException ignored) { }
+            try { terminalCallback.run(); }
+            catch (RuntimeException failure) { log.debug("TTS terminal callback failed", failure); }
         }
 
         private static boolean terminal(TtsPlaybackState state) {

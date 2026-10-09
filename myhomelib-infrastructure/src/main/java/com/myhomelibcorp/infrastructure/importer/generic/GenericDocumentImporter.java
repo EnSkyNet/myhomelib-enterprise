@@ -8,6 +8,7 @@ import com.myhomelibcorp.infrastructure.importer.AbstractBookImporter;
 import com.myhomelibcorp.shared.format.SupportedFormat;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import org.springframework.core.annotation.Order;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -18,6 +19,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 
 /** Catalogues non-FB2 formats exactly like classic MyHomeLib; they are opened by an external reader. */
+@Lazy
 @Component
 @Order(10_000)
 public class GenericDocumentImporter extends AbstractBookImporter {

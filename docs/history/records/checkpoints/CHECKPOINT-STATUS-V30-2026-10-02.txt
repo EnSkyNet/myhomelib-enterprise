@@ -1,0 +1,27 @@
+MyHomeLib V30 development checkpoint — 2026-10-02
+
+Scope: Kobo native sync only (V31 not included in this snapshot).
+
+Implemented:
+- Application Kobo sync contracts/service, stable book + artifact/content revision identity.
+- Pure bidirectional reading-progress translator with stale-version rejection.
+- V66 Kobo device/cursor/projection/progress-version persistence.
+- Credentials through SecretStore only; no secret in SQLite/plain JSON; revoke/rotation supported.
+- Kobo protocol routes in existing OPDS sidecar: initialization, incremental sync, metadata, content, reading state.
+- Lazy EPUB/KEPUB conversion through existing ConvertBookUseCase; no second converter stack.
+- Integration Center Kobo tab + UK/EN/BG localization/help.
+- UI action inventory/behavior registry updated to 474/474.
+
+Local evidence:
+- V30 targeted Application/Infrastructure/UI/OPDS tests: green.
+- Architecture check: PASS.
+- Static release check: PASS (66 immutable migrations).
+- Supply-chain policy: PASS.
+- Language/UI/help/Web localization gates: PASS.
+- Full reactor clean verify was started under Linux/Xvfb. Modules 1-7 completed green; resumed modules 8-10 completed before the tool execution limit while infrastructure tests were still green in-progress. No test failure was observed, but this execution-limit-interrupted run is NOT recorded as a completed full clean verify.
+
+External/live gates still open:
+- Real Kobo: first sync, library appearance, open/read, progress both directions, cover/metadata, reconnect, revoke.
+- Existing Windows/live/connected acceptance inherited from V29.
+
+Policy: local fake/protocol tests are not live Kobo acceptance.

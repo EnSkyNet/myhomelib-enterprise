@@ -15,7 +15,6 @@ import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.scene.control.*;
 import javafx.scene.layout.VBox;
-import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -59,9 +58,7 @@ public class ImportController {
     public void handleSyncFolder(Runnable onComplete) {
         if (!operationAvailabilityGuard.ensureAvailable(UiText.text("ui.java.import_controller.0297a4c09d"))) return;
         Stage stage = new Stage();
-        DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle(UiText.text("ui.java.import_controller.644f7cf8ab"));
-        File dir = chooser.showDialog(stage);
+        File dir = fileChooserService.chooseDirectory(stage, UiText.text("ui.java.import_controller.644f7cf8ab"));
 
         if (dir == null) {
             return;

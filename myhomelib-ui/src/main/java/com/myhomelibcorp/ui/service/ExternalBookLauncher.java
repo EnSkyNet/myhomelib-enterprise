@@ -70,7 +70,7 @@ public class ExternalBookLauncher {
             if (expectedCollectionId != null && !expectedCollectionId.isBlank()) {
                 var active = collectionLifecycle.getCurrentCollection();
                 if (active == null || active.getId() == null || !expectedCollectionId.equals(active.getId())) {
-                    throw new IllegalStateException("Активна колекція змінилася до відкриття книги");
+                    throw new IllegalStateException(UiText.text("ui.error.collection_changed.book_open"));
                 }
             }
             openLocked(dto);
@@ -104,7 +104,7 @@ public class ExternalBookLauncher {
                     "%TITLE%", safe(dto.getTitle()),
                     "%AUTHOR%", safe(dto.getAuthorsText()))));
             if (args.isEmpty() || args.getFirst().isBlank()) {
-                throw new IllegalArgumentException("Executable зовнішнього Reader не задано");
+                throw new IllegalArgumentException(UiText.text("ui.error.external_reader.executable_missing"));
             }
             Path safeExecutable = ExecutablePathSafety.resolve(args.getFirst(), "External reader executable");
             args.set(0, safeExecutable.toString());

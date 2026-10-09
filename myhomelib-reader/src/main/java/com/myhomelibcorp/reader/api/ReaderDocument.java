@@ -17,23 +17,34 @@ public interface ReaderDocument {
     long totalTextLength();
 
     default boolean isEmpty() {
-        return metadata() == null || metadata().title() == null || metadata().title().isBlank();
+        BookMetadata metadata = metadata();
+        TextStorage text = text();
+        return metadata == null
+                || metadata.title() == null
+                || metadata.title().isBlank()
+                || text == null
+                || text.length() <= 0;
     }
 
     default int chapterIndexAt(long textOffset) {
         List<ChapterIndex> chapters = chapters();
+        if (chapters == null || chapters.isEmpty()) {
+            return 0;
+        }
+        int best = 0;
         for (int i = 0; i < chapters.size(); i++) {
             ChapterIndex ch = chapters.get(i);
-            if (textOffset >= ch.startOffset() && textOffset < ch.endOffset()) {
-                return i;
-            }
+            if (ch == null) continue;
+            if (textOffset < ch.startOffset()) break;
+            best = i;
+            if (textOffset < ch.endOffset()) return i;
         }
-        return chapters.size() - 1;
+        return best;
     }
 
     default ChapterIndex chapter(int index) {
         List<ChapterIndex> chapters = chapters();
-        if (index < 0 || index >= chapters.size()) {
+        if (chapters == null || index < 0 || index >= chapters.size()) {
             return null;
         }
         return chapters.get(index);

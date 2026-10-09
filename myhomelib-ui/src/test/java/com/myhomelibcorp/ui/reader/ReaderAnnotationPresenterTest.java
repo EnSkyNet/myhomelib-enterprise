@@ -78,6 +78,8 @@ class ReaderAnnotationPresenterTest {
         assertThat(overlay.endOffset()).isEqualTo(start + 6);
     }
 
+
+
     private static CompactReaderDocument document(String value) {
         TextStorageImpl text = new TextStorageImpl();
         text.appendParagraph(value, TextStyle.NORMAL);

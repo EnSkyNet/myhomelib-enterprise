@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.adapter;
 
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
+import com.myhomelibcorp.application.port.out.infrastructure.ImportIndexMaintenancePort;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteAuthorRepository;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.KeywordIndexBackfillService;
@@ -21,6 +22,7 @@ public class DatabaseMigrationAdapter implements DatabaseMigrationPort {
     private final SqliteAuthorRepository authorRepository;
     private final KeywordIndexBackfillService keywordIndexBackfillService;
     private final LegacyMigrationDataGuard legacyMigrationDataGuard;
+    private final ImportIndexMaintenancePort importIndexMaintenance;
 
     @Override
     public int migrateCurrentCollection() {
@@ -51,6 +53,13 @@ public class DatabaseMigrationAdapter implements DatabaseMigrationPort {
             // This also resumes an interrupted prior run: guard tables are durable and are only
             // removed after the final schema has been verified to contain all protected data.
             legacyMigrationDataGuard.restoreAfterMigrate(dataSource);
+            // A previous process may have committed a large baseline while secondary index
+            // recreation was intentionally deferred. Restore that durable queue before startup
+            // exposes the collection, so an interrupted background maintenance task is harmless.
+            if (importIndexMaintenance.hasPendingIndexes()) {
+                log.info("Відновлення відкладених SQLite індексів після попереднього імпорту...");
+                importIndexMaintenance.restorePendingIndexes();
+            }
             authorRepository.normalizeSearchNamesIfNeeded();
             keywordIndexBackfillService.backfillIfNeeded();
 

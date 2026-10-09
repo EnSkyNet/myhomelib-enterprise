@@ -24,9 +24,12 @@ need('<artifactId>archunit-junit5</artifactId>' not in pom, 'JUnit 5 ArchUnit in
 need('<artifactId>archunit</artifactId>' in pom, 'ArchUnit core must be managed explicitly')
 need('<artifactId>maven-surefire-plugin</artifactId>' in pom and '<version>3.5.6</version>' in pom,
      'Surefire 3.5.6 alignment missing')
-health=text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/monitoring/LibraryHealthIndicator.java')
-need('org.springframework.boot.health.contributor.Health' in health, 'Boot 4 Health import missing')
-need('org.springframework.boot.actuate.health' not in health, 'Boot 3 actuator health import remains')
+java_sources = '\n'.join(
+    path.read_text(encoding='utf-8', errors='replace')
+    for path in ROOT.rglob('*.java')
+    if 'target' not in path.parts and '.mvn' not in path.parts
+)
+need('org.springframework.boot.actuate.health' not in java_sources, 'Boot 3 actuator health import remains')
 infra_pom=text('myhomelib-infrastructure/pom.xml')
 need('<artifactId>spring-boot-starter-jdbc-test</artifactId>' in infra_pom, 'Boot 4 JDBC test starter missing')
 need('<artifactId>flyway-core</artifactId>' in infra_pom, 'Explicit Flyway core dependency missing')

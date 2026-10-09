@@ -15,7 +15,7 @@ stats_handler = read('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/event/Impo
 
 assert 'value * 1000' not in ui, 'synthetic import progress scale returned'
 assert 'java.nio.file.Files.walk(dir)' not in ui, 'directory pre-scan blocks UI before import'
-assert '.operationProgressListener(this::updateOperationProgress)' in ui, 'structured import progress is not wired'
+assert ('.operationProgressListener(this::updateOperationProgress)' in ui or '.operationProgressListener(progress -> updateOperationProgress(expectedCollectionId, progress))' in ui), 'structured import progress is not wired'
 assert 'REFRESHING_STATISTICS' in stages, 'statistics stage missing'
 assert 'statisticsRepository.invalidate();' in update_uc and 'statisticsRepository.refreshStatistics();' in update_uc
 assert update_uc.index('statisticsRepository.refreshStatistics();') < update_uc.index('sourceState.recordApplied(sourceKey, applied);'), 'appliedVersion advances before statistics refresh'

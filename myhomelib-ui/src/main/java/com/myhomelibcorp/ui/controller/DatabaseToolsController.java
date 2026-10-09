@@ -140,7 +140,7 @@ public class DatabaseToolsController {
                             count = databaseToolsService.getIndexedDocumentCount(expectedCollectionId);
                         } catch (RuntimeException staleResult) {
                             log.info("Index rebuild completed, but its count is no longer displayable for collection {}: {}",
-                                    expectedCollectionId, staleResult.getMessage());
+                                    expectedCollectionId, UiExceptionSupport.technicalMessage(staleResult));
                         }
                     }
                     if (cause != null) {

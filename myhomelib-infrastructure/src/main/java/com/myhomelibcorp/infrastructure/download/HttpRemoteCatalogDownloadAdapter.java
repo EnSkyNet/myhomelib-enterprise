@@ -60,7 +60,9 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
 
     private final ApplicationSettingsPort settings;
     private final OnlineHttpPolicy httpPolicy;
-    private final HttpClient client;
+    private final OnlineHttpClientProvider httpClients;
+    private final CookieManager cookies;
+    private volatile HttpClient client;
     private final OnlineRequestLimiter requestLimiter;
 
     /** Compatibility constructor for focused tests that do not need persisted settings. */
@@ -74,15 +76,34 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
     }
 
     public HttpRemoteCatalogDownloadAdapter(ApplicationSettingsPort settings) {
-        this(settings, new OnlineRequestLimiter(settings));
+        this(settings, new OnlineRequestLimiter(settings), new OnlineHttpClientProvider(settings));
+    }
+
+    public HttpRemoteCatalogDownloadAdapter(ApplicationSettingsPort settings, OnlineRequestLimiter requestLimiter) {
+        this(settings, requestLimiter, new OnlineHttpClientProvider(settings));
     }
 
     @Autowired
-    public HttpRemoteCatalogDownloadAdapter(ApplicationSettingsPort settings, OnlineRequestLimiter requestLimiter) {
-        this.settings = settings;
-        this.requestLimiter = requestLimiter;
+    public HttpRemoteCatalogDownloadAdapter(ApplicationSettingsPort settings, OnlineRequestLimiter requestLimiter,
+                                            OnlineHttpClientProvider httpClients) {
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
+        this.requestLimiter = java.util.Objects.requireNonNull(requestLimiter, "requestLimiter");
+        this.httpClients = java.util.Objects.requireNonNull(httpClients, "httpClients");
         this.httpPolicy = new OnlineHttpPolicy(settings);
-        this.client = httpPolicy.create(new CookieManager(null, CookiePolicy.ACCEPT_ALL));
+        this.cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
+    }
+
+    private HttpClient client() {
+        HttpClient current = client;
+        if (current != null) return current;
+        synchronized (this) {
+            current = client;
+            if (current == null) {
+                current = httpClients.isolated(cookies);
+                client = current;
+            }
+            return current;
+        }
     }
 
     public Path download(Collection collection, String url, AtomicBoolean cancel, DoubleConsumer progress) throws Exception {
@@ -244,30 +265,37 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
             if (cancel.get() || Thread.currentThread().isInterrupted()) throw new IOException("Оновлення скасовано");
             long offset = partSnapshot.size();
             try (OnlineRequestLimiter.Permit ignored = requestLimiter.acquire(uri, cancel)) {
+                if (offset > 0 && (resume == null || resume.validator().isBlank())) {
+                    removeOwnedCatalogPartial(part, partSnapshot, "Unvalidated retry catalog partial cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "Unvalidated retry catalog metadata cleanup");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                    resume = null;
+                    offset = 0L;
+                }
                 HttpRequest.Builder builder = request(collection, uri);
                 if (offset > 0) {
                     builder.header("Range", "bytes=" + offset + "-");
                     builder.header("If-Range", resume.validator());
                 }
-                HttpResponse<InputStream> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
+                HttpResponse<InputStream> response = client().send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
                 int status = response.statusCode();
 
                 boolean resumed = offset > 0 && status == 206;
                 if (resumed) {
                     try {
-                        HttpResumeSupport.validateContentRange(response, offset, uri);
+                        HttpResumeSupport.validateResumeResponse(response, offset, resume.validator(), uri);
                     } catch (IOException invalidRange) {
                         closeQuietly(response.body());
                         removeOwnedCatalogPartial(part, partSnapshot, "Invalid Content-Range partial cleanup");
-                        removeOwnedCatalogMeta(partMeta, resume, "Invalid Content-Range metadata cleanup");
+                        ResumeMetadataFiles.removeOwned(partMeta, resume, "Invalid Content-Range metadata cleanup");
                         partSnapshot = OwnedDownloadFile.Snapshot.absent();
                         resume = null;
-                        throw invalidRange;
+                        throw new RetryableDownloadException(invalidRange.getMessage(), null, invalidRange);
                     }
                 } else if (status == 200) {
                     if (offset > 0) {
                         removeOwnedCatalogPartial(part, partSnapshot, "Restarted catalog partial cleanup");
-                        removeOwnedCatalogMeta(partMeta, resume, "Restarted catalog metadata cleanup");
+                        ResumeMetadataFiles.removeOwned(partMeta, resume, "Restarted catalog metadata cleanup");
                         partSnapshot = OwnedDownloadFile.Snapshot.absent();
                         resume = null;
                         offset = 0L;
@@ -275,7 +303,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 } else if (status == 416 && offset > 0) {
                     closeQuietly(response.body());
                     removeOwnedCatalogPartial(part, partSnapshot, "HTTP 416 catalog partial cleanup");
-                    removeOwnedCatalogMeta(partMeta, resume, "HTTP 416 catalog metadata cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "HTTP 416 catalog metadata cleanup");
                     partSnapshot = OwnedDownloadFile.Snapshot.absent();
                     resume = null;
                     throw new RetryableDownloadException("HTTP 416 для resume " + SensitiveDataSanitizer.sanitizeUri(uri));
@@ -293,7 +321,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 if (contentType.contains("text/html")) {
                     closeQuietly(response.body());
                     removeOwnedCatalogPartial(part, partSnapshot, "HTML catalog partial cleanup");
-                    removeOwnedCatalogMeta(partMeta, resume, "HTML catalog metadata cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "HTML catalog metadata cleanup");
                     partSnapshot = OwnedDownloadFile.Snapshot.absent();
                     resume = null;
                     throw new IOException("Сервер повернув HTML замість INPX/ZIP: " + SensitiveDataSanitizer.sanitizeUri(uri));
@@ -306,7 +334,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                         || (responseLength >= 0 && responseLength > maxDownloadBytes - offset)) {
                     closeQuietly(response.body());
                     removeOwnedCatalogPartial(part, partSnapshot, "Oversized catalog partial cleanup");
-                    removeOwnedCatalogMeta(partMeta, resume, "Oversized catalog metadata cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "Oversized catalog metadata cleanup");
                     partSnapshot = OwnedDownloadFile.Snapshot.absent();
                     resume = null;
                     throw new NonRetryableCatalogDownloadException(downloadLimitMessage(maxDownloadBytes));
@@ -316,17 +344,20 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 if (expectedTotal > maxDownloadBytes) {
                     closeQuietly(response.body());
                     removeOwnedCatalogPartial(part, partSnapshot, "Oversized catalog partial cleanup");
-                    removeOwnedCatalogMeta(partMeta, resume, "Oversized catalog metadata cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "Oversized catalog metadata cleanup");
                     partSnapshot = OwnedDownloadFile.Snapshot.absent();
                     resume = null;
                     throw new NonRetryableCatalogDownloadException(downloadLimitMessage(maxDownloadBytes));
                 }
                 try {
-                    ensureDownloadSpace(dir, minFreeSpaceBytes, responseLength > 0 ? responseLength : 0L);
+                    DownloadSpaceSupport.requireAvailable(dir, minFreeSpaceBytes, responseLength > 0 ? responseLength : 0L,
+                            (usable, required) -> new NonRetryableCatalogDownloadException(
+                                    "Недостатньо вільного місця для завантаження каталогу: доступно "
+                                            + usable + " байт, потрібно щонайменше " + required + " байт"));
                 } catch (NonRetryableCatalogDownloadException noSpace) {
                     closeQuietly(response.body());
                     removeOwnedCatalogPartial(part, partSnapshot, "No-space catalog partial cleanup");
-                    removeOwnedCatalogMeta(partMeta, resume, "No-space catalog metadata cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "No-space catalog metadata cleanup");
                     partSnapshot = OwnedDownloadFile.Snapshot.absent();
                     resume = null;
                     throw noSpace;
@@ -356,7 +387,10 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                         os.write(buffer, 0, n);
                         done += n;
                         if (done >= nextSpaceCheck) {
-                            ensureDownloadSpace(dir, minFreeSpaceBytes, 0L);
+                            DownloadSpaceSupport.requireAvailable(dir, minFreeSpaceBytes, 0L,
+                                    (usable, required) -> new NonRetryableCatalogDownloadException(
+                                            "Недостатньо вільного місця для завантаження каталогу: доступно "
+                                                    + usable + " байт, потрібно щонайменше " + required + " байт"));
                             nextSpaceCheck = safeSpaceRecheckThreshold(done);
                         }
                         if (progressThrottle.shouldEmit(done, expectedTotal)) {
@@ -385,7 +419,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 if (expectedTotal > 0 && actual != expectedTotal) {
                     if (actual > expectedTotal) {
                         removeOwnedCatalogPartial(part, partSnapshot, "Oversized catalog partial cleanup");
-                        removeOwnedCatalogMeta(partMeta, resume, "Oversized catalog metadata cleanup");
+                        ResumeMetadataFiles.removeOwned(partMeta, resume, "Oversized catalog metadata cleanup");
                         partSnapshot = OwnedDownloadFile.Snapshot.absent();
                         resume = null;
                     }
@@ -399,7 +433,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                     SafeFilePublication.requireOwnedPath(part, partSnapshot.sha256(), "Validated catalog partial");
                 } catch (IOException invalid) {
                     removeOwnedCatalogPartial(part, partSnapshot, "Invalid catalog partial cleanup");
-                    removeOwnedCatalogMeta(partMeta, resume, "Invalid catalog metadata cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "Invalid catalog metadata cleanup");
                     partSnapshot = OwnedDownloadFile.Snapshot.absent();
                     resume = null;
                     throw invalid;
@@ -411,7 +445,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 SafeFilePublication.publishReplacingIfUnchanged(
                         part, out, expectedOutHash, partSnapshot.sha256(), "Catalog download");
                 partSnapshot = OwnedDownloadFile.Snapshot.absent();
-                removeOwnedCatalogMeta(partMeta, resume, "Catalog resume metadata cleanup");
+                ResumeMetadataFiles.removeOwned(partMeta, resume, "Catalog resume metadata cleanup");
                 resume = null;
                 progress.accept(Math.min(1.0, progressStart + progressSpan));
                 emitDownloadProgress(detailedProgress, actual, expectedTotal > 0 ? expectedTotal : actual,
@@ -421,7 +455,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
             } catch (NonRetryableCatalogDownloadException e) {
                 try { removeOwnedCatalogPartial(part, partSnapshot, "Non-retryable catalog partial cleanup"); }
                 catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
-                try { removeOwnedCatalogMeta(partMeta, resume, "Non-retryable catalog metadata cleanup"); }
+                try { ResumeMetadataFiles.removeOwned(partMeta, resume, "Non-retryable catalog metadata cleanup"); }
                 catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
                 throw e;
             } catch (RetryableDownloadException e) {
@@ -434,7 +468,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 if (isSemanticFailure(e)) {
                     try { removeOwnedCatalogPartial(part, partSnapshot, "Semantic-failure catalog partial cleanup"); }
                     catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
-                    try { removeOwnedCatalogMeta(partMeta, resume, "Semantic-failure catalog metadata cleanup"); }
+                    try { ResumeMetadataFiles.removeOwned(partMeta, resume, "Semantic-failure catalog metadata cleanup"); }
                     catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
                     throw e;
                 }
@@ -453,13 +487,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
         }
     }
 
-    private static void removeOwnedCatalogMeta(
-            Path partMeta, HttpResumeSupport.ResumeMetadata resume, String role) throws IOException {
-        if (resume != null && resume.ownershipHash() != null && !resume.ownershipHash().isBlank()
-                && Files.exists(partMeta, LinkOption.NOFOLLOW_LINKS)) {
-            SafeFilePublication.removeIfOwned(partMeta, resume.ownershipHash(), role);
-        }
-    }
+
 
     private static void emitDownloadProgress(
             Consumer<RemoteDownloadProgress> listener, long processed, long total, URI uri,
@@ -552,7 +580,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
 
             HttpResponse<String> response;
             try (OnlineRequestLimiter.Permit ignored = requestLimiter.acquire(uri, cancel)) {
-                response = client.send(request(collection, uri).build(),
+                response = client().send(request(collection, uri).build(),
                         BoundedHttpBodyHandlers.ofString(MAX_VERSION_RESPONSE_BYTES, StandardCharsets.UTF_8));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -719,23 +747,6 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
         }
     }
 
-    private static void ensureDownloadSpace(Path directory, long minimumFreeBytes, long expectedAdditionalBytes)
-            throws IOException {
-        if (directory == null || minimumFreeBytes <= 0 && expectedAdditionalBytes <= 0) return;
-        long usable = Files.getFileStore(directory).getUsableSpace();
-        long required;
-        try {
-            required = Math.addExact(minimumFreeBytes, Math.max(0L, expectedAdditionalBytes));
-        } catch (ArithmeticException overflow) {
-            required = Long.MAX_VALUE;
-        }
-        if (usable < required) {
-            throw new NonRetryableCatalogDownloadException(
-                    "Недостатньо вільного місця для завантаження каталогу: доступно "
-                            + usable + " байт, потрібно щонайменше " + required + " байт");
-        }
-    }
-
     private static long safeSpaceRecheckThreshold(long done) {
         try {
             return Math.addExact(done, SPACE_RECHECK_BYTES);
@@ -769,8 +780,20 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
 
     private static final class RetryableDownloadException extends IOException {
         private final String retryAfter;
-        RetryableDownloadException(String message) { this(message, null); }
-        RetryableDownloadException(String message, String retryAfter) { super(message); this.retryAfter = retryAfter; }
+
+        RetryableDownloadException(String message) {
+            this(message, null, null);
+        }
+
+        RetryableDownloadException(String message, String retryAfter) {
+            this(message, retryAfter, null);
+        }
+
+        RetryableDownloadException(String message, String retryAfter, Throwable cause) {
+            super(message, cause);
+            this.retryAfter = retryAfter;
+        }
+
         String retryAfter() { return retryAfter; }
     }
 }

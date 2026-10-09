@@ -33,22 +33,13 @@ public class CachedAuthorRepository implements AuthorRepository {
             return Optional.empty();
         }
 
-        Optional<Author> cached = authorCache.get(id);
-        if (cached.isPresent()) {
-            return cached;
-        }
-        Optional<Author> author = delegate.findById(id);
-        author.ifPresent(a -> authorCache.put(id, a));
-        return author;
+        return CacheAsideRepositorySupport.findById(id, authorCache, delegate::findById);
     }
 
     @Override
     public Author save(Author author) {
-        Author saved = delegate.save(author);
-        if (saved != null && saved.getId() != null) {
-            authorCache.put(saved.getId(), saved);
-        }
-        return saved;
+        return CacheAsideRepositorySupport.saveIfIdentified(
+                author, authorCache, delegate::save, Author::getId);
     }
 
     @Override
@@ -57,8 +48,7 @@ public class CachedAuthorRepository implements AuthorRepository {
             log.debug("Спроба видалення автора з null ID");
             return;
         }
-        delegate.deleteById(id);
-        authorCache.evict(id);
+        CacheAsideRepositorySupport.deleteById(id, authorCache, delegate::deleteById);
     }
 
     @Override

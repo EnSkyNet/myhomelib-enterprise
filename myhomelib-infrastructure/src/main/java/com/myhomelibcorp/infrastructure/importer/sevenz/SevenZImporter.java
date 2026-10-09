@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.infrastructure.importer.archive.ArchiveEntryImportSupport;
 import com.myhomelibcorp.infrastructure.importer.archive.ArchiveImportSupport;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
@@ -16,7 +17,6 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
-import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -29,6 +29,7 @@ import java.util.Spliterators;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
+@Lazy
 @Component
 @Slf4j
 public class SevenZImporter implements BookImporterPort {
@@ -112,30 +113,13 @@ public class SevenZImporter implements BookImporterPort {
                     try { importer = importerRegistry.findImporter(ArchiveImportSupport.importerProbePath(name)); }
                     catch (Exception unsupported) { continue; }
 
-                    Path temp = Files.createTempFile("mhl-7z-entry-", ArchiveImportSupport.suffixFor(name));
-                    try {
-                        try (var out = Files.newOutputStream(temp)) {
-                            byte[] buffer = new byte[64 * 1024];
-                            long total = 0;
-                            int n;
-                            while ((n = archive.read(buffer, 0, buffer.length)) > 0) {
-                                total += n;
-                                if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES) throw new IOException("7z entry перевищив ліміт");
-                                out.write(buffer, 0, n);
-                            }
-                        }
-                        totalDecompressedBytes += Files.size(temp);
-                        if (totalDecompressedBytes > ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES) {
-                            throw new IOException("7z exceeds cumulative decompression safety limit");
-                        }
-                        try (Stream<Book> books = importer.importBooks(temp)) {
-                            books.filter(java.util.Objects::nonNull)
-                                    .map(b -> ArchiveImportSupport.enrich(b, archivePath, name, entry.getSize()))
-                                    .forEach(queue::add);
-                        }
-                    } finally {
-                        Files.deleteIfExists(temp);
-                    }
+                    totalDecompressedBytes = ArchiveEntryImportSupport.materializeAndImport(
+                            archivePath,
+                            name,
+                            importer,
+                            buffer -> archive.read(buffer, 0, buffer.length),
+                            totalDecompressedBytes,
+                            queue);
                 } catch (Exception e) {
                     log.warn("Помилка запису 7z у {}: {}", archivePath, e.getMessage());
                     close();

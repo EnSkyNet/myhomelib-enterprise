@@ -5,13 +5,14 @@ import com.myhomelibcorp.application.opds.OpdsServerSettings;
 import com.myhomelibcorp.application.opds.OpdsServerStatus;
 import com.myhomelibcorp.application.opds.OpdsSettingsService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
 public class OPDSStartupTask implements StartupTask {
     private final OpdsSettingsService settingsService;
-    private final OpdsServerControl serverControl;
+    private final ObjectProvider<OpdsServerControl> serverControlProvider;
 
     @Override public String id() { return "OPDSStartupTask"; }
     @Override public StartupFailurePolicy failurePolicy() { return StartupFailurePolicy.BEST_EFFORT; }
@@ -23,7 +24,7 @@ public class OPDSStartupTask implements StartupTask {
             return StartupTaskResult.skipped("OPDS autostart is disabled");
         }
 
-        OpdsServerStatus status = serverControl.start(settings);
+        OpdsServerStatus status = serverControlProvider.getObject().start(settings);
         if (!status.running()) {
             String detail = status.technicalDetail();
             throw new IllegalStateException(detail == null || detail.isBlank()

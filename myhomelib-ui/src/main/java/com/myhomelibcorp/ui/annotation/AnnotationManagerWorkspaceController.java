@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.annotation;
 
+import com.myhomelibcorp.ui.util.Utf16BoundarySupport;
+
 import com.myhomelibcorp.ui.service.DialogLocalization;
 import com.myhomelibcorp.application.annotation.AnnotationBatchUndoToken;
 import com.myhomelibcorp.application.annotation.AnnotationManagerFacets;
@@ -13,6 +15,7 @@ import com.myhomelibcorp.application.annotation.export.AnnotationExportRequest;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportSelection;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportService;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportTemplates;
+import com.myhomelibcorp.application.annotation.remote.ExportAnnotationsToReadwiseUseCase;
 import com.myhomelibcorp.application.annotation.knowledge.AnnotationDigestLabels;
 import com.myhomelibcorp.application.annotation.knowledge.AnnotationDigestService;
 import com.myhomelibcorp.application.annotation.knowledge.KnowledgeMarkdownExportRequest;
@@ -74,6 +77,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     private final AnnotationManagerService annotationManagerService;
     private final AnnotationEditorDialog annotationEditorDialog;
     private final AnnotationExportService annotationExportService;
+    private final ExportAnnotationsToReadwiseUseCase exportAnnotationsToReadwiseUseCase;
     private final KnowledgeMarkdownExportService knowledgeMarkdownExportService;
     private final AnnotationDigestService annotationDigestService;
     private final WorkspaceManager workspaceManager;
@@ -505,6 +509,33 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
             }
             setBusy(false, i18n.format("ui.annotations.exported", result.annotationCount(), result.destination()));
         }));
+    }
+
+    @FXML
+    public void exportReadwise() {
+        Set<String> selectedBookIds = table.getSelectionModel().getSelectedItems().stream()
+                .map(AnnotationManagerItem::bookId).filter(java.util.Objects::nonNull)
+                .filter(id -> !id.isBlank())
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        BookChoice filteredBook = bookFilter.getValue();
+        if (selectedBookIds.isEmpty() && filteredBook != null && filteredBook.id() != null && !filteredBook.id().isBlank()) {
+            selectedBookIds.add(filteredBook.id());
+        }
+        AnnotationExportSelection selection = selectedBookIds.isEmpty()
+                ? AnnotationExportSelection.all() : AnnotationExportSelection.books(selectedBookIds);
+        String expectedCollectionId = currentCollectionId();
+        setBusy(true, i18n.text("ui.annotations.readwise_exporting"));
+        executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> exportAnnotationsToReadwiseUseCase.export(selection))
+                .whenComplete((result, error) -> Platform.runLater(() -> {
+                    if (disposed || !isCurrentCollection(expectedCollectionId)) return;
+                    if (error != null) {
+                        setBusy(false, i18n.text("ui.annotations.readwise_failed") + ": " + UiExceptionSupport.message(error));
+                        dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.readwise_failed"), UiExceptionSupport.message(error));
+                        return;
+                    }
+                    setBusy(false, i18n.format("ui.annotations.readwise_exported",
+                            result.exported(), result.unchanged(), result.scanned()));
+                }));
     }
 
     @FXML
@@ -1007,7 +1038,9 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     private static String summaryText(AnnotationManagerItem item) {
         String text = item.note().isBlank() ? item.quote() : item.note();
         text = text == null ? "" : text.replaceAll("\\s+", " ").trim();
-        return text.length() <= 180 ? text : text.substring(0, 177) + "…";
+        if (text.length() <= 180) return text;
+        int end = Utf16BoundarySupport.safeCut(text, 177);
+        return text.substring(0, end) + "…";
     }
 
     static String csv(String value) {

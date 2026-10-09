@@ -1,10 +1,15 @@
 package com.myhomelibcorp.opds;
 
+import com.myhomelibcorp.shared.text.JsonStrings;
 import com.myhomelibcorp.application.opds.*;
+import com.myhomelibcorp.application.kobo.*;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.webreader.WebReaderUseCase;
+import com.myhomelibcorp.application.webreader.WebProgressUpdate;
 import com.myhomelibcorp.application.usecase.reading.ContinueReadingService;
 import com.myhomelibcorp.web.WebLibraryRenderer;
+import com.myhomelibcorp.web.WebPwaAssets;
+import com.myhomelibcorp.web.OfflineBookPackageRenderer;
 import com.myhomelibcorp.web.WebReaderRenderer;
 import com.myhomelibcorp.web.WebTextCatalog;
 import com.sun.net.httpserver.Headers;
@@ -14,6 +19,7 @@ import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsParameters;
 import com.sun.net.httpserver.HttpsServer;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -46,7 +52,7 @@ import javax.net.ssl.SSLParameters;
  */
 @Component
 @Slf4j
-public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsServerControl {
+public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsServerControl, DisposableBean {
     private static final String ATOM = "application/atom+xml;profile=opds-catalog;charset=utf-8";
     private static final int DEFAULT_LIMIT = 50;
     private static final int MAX_TLS_KEYSTORE_BYTES = 32 * 1024 * 1024;
@@ -58,32 +64,49 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
     private final Opds2JsonRenderer opds2 = new Opds2JsonRenderer(webText);
     private final WebLibraryRenderer web = new WebLibraryRenderer(webText);
     private final WebReaderRenderer webReaderRenderer = new WebReaderRenderer(webText);
+    private final WebPwaAssets pwaAssets = new WebPwaAssets(webText);
+    private final OfflineBookPackageRenderer offlineBookPackages = new OfflineBookPackageRenderer();
     private final WebReaderUseCase webReader;
     private final ContinueReadingService continueReading;
+    private final KoboSyncService koboSync;
+    private KoboContentService koboDownloads;
+    private final KoboProtocolRenderer koboProtocol = new KoboProtocolRenderer();
 
     public JdkOpdsServer(OpdsCatalogService catalog, OpdsDownloadService downloads) {
-        this(catalog, downloads, null, null, null);
+        this(catalog, downloads, null, null, null, null);
     }
 
     public JdkOpdsServer(OpdsCatalogService catalog, OpdsDownloadService downloads, OpdsAccessTokenService accessTokens) {
-        this(catalog, downloads, accessTokens, null, null);
+        this(catalog, downloads, accessTokens, null, null, null);
     }
 
     public JdkOpdsServer(OpdsCatalogService catalog, OpdsDownloadService downloads,
                          OpdsAccessTokenService accessTokens, WebReaderUseCase webReader) {
-        this(catalog, downloads, accessTokens, webReader, null);
+        this(catalog, downloads, accessTokens, webReader, null, null);
+    }
+
+    public JdkOpdsServer(OpdsCatalogService catalog, OpdsDownloadService downloads,
+                         OpdsAccessTokenService accessTokens, WebReaderUseCase webReader,
+                         ContinueReadingService continueReading) {
+        this(catalog, downloads, accessTokens, webReader, continueReading, null);
     }
 
     @Autowired
     public JdkOpdsServer(OpdsCatalogService catalog, OpdsDownloadService downloads,
                          OpdsAccessTokenService accessTokens, WebReaderUseCase webReader,
-                         ContinueReadingService continueReading) {
+                         ContinueReadingService continueReading, KoboSyncService koboSync) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.downloads = downloads;
         this.accessTokens = accessTokens;
         this.webReader = webReader;
         this.continueReading = continueReading;
+        this.koboSync = koboSync;
     }
+    @Autowired
+    void setKoboDownloadService(KoboContentService service) {
+        this.koboDownloads = service;
+    }
+
     private final AtomicReference<HttpServer> server = new AtomicReference<>();
     private final AtomicReference<ExecutorService> executor = new AtomicReference<>();
     private final AtomicReference<OpdsServerStatus> status = new AtomicReference<>(OpdsServerStatus.stopped());
@@ -159,6 +182,11 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
     @Override
     public OpdsServerStatus status() { return status.get(); }
 
+    @Override
+    public void destroy() {
+        stop();
+    }
+
     private void handle(HttpExchange exchange) throws IOException {
         String language = requestLanguage(exchange);
         exchange.getResponseHeaders().set("Content-Language", language);
@@ -177,6 +205,10 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             try {
                 String path = normalizePath(exchange.getRequestURI().getPath());
                 String method = exchange.getRequestMethod() == null ? "" : exchange.getRequestMethod().toUpperCase(Locale.ROOT);
+                if (path.startsWith("/kobo/")) {
+                    handleKobo(exchange, path, method);
+                    return;
+                }
                 boolean webProgressPost = "POST".equals(method) && path.startsWith("/web/read/") && path.endsWith("/progress");
                 if (!"GET".equals(method) && !webProgressPost) {
                     exchange.getResponseHeaders().set("Allow", "GET");
@@ -188,6 +220,10 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
                 if ("/health".equals(path)) {
                     if (!healthAuthorized(exchange)) return;
                     sendJson(exchange, 200, "{\"status\":\"UP\",\"opds\":\"running\"}");
+                    return;
+                }
+                if ("GET".equals(method) && isPublicPwaAsset(path)) {
+                    sendPublicPwaAsset(exchange, path, language);
                     return;
                 }
                 if (path.startsWith("/web")) {
@@ -283,10 +319,223 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             } catch (IllegalStateException e) {
                 sendTextSafe(exchange, 503, t(language, "web.error.no_active_collection"));
             } catch (Exception e) {
-                log.warn("OPDS request failed: {}", exchange.getRequestURI(), e);
+                log.warn("OPDS request failed: {}", safeRequestPath(exchange.getRequestURI()), e);
                 sendTextSafe(exchange, 500, t(language, "web.error.internal"));
             }
         }
+    }
+
+    private void handleKobo(HttpExchange exchange, String path, String method) throws IOException {
+        if (koboSync == null) {
+            exchange.getRequestBody().close();
+            sendJson(exchange, 503, "{\"error\":\"kobo_sync_unavailable\"}");
+            return;
+        }
+        String tail = path.substring("/kobo/".length());
+        int slash = tail.indexOf('/');
+        String rawToken = decode(slash < 0 ? tail : tail.substring(0, slash));
+        String endpoint = slash < 0 ? "" : tail.substring(slash);
+        if (!koboAuthorized(exchange, rawToken)) return;
+
+        String base = koboBaseUrl(exchange, rawToken);
+        if ((endpoint.isEmpty() || "/".equals(endpoint) || "/v1/initialization".equals(endpoint)) && "GET".equals(method)) {
+            exchange.getRequestBody().close();
+            sendJson(exchange, 200, koboProtocol.initialization(base));
+            return;
+        }
+        if (("/v1/auth/device".equals(endpoint) || "/v1/auth/refresh".equals(endpoint)) && "POST".equals(method)) {
+            readBounded(exchange.getRequestBody(), 64 * 1024);
+            sendJson(exchange, 200, koboProtocol.deviceAuth(koboSync.status().deviceId()));
+            return;
+        }
+        if ("/v1/library/sync".equals(endpoint) && "GET".equals(method)) {
+            exchange.getRequestBody().close();
+            KoboSyncCursor cursor = koboProtocol.parseToken(exchange.getRequestHeaders().getFirst("x-kobo-synctoken"));
+            KoboSyncBatch batch = koboSync.synchronize(cursor, 100);
+            exchange.getResponseHeaders().set("x-kobo-synctoken", koboProtocol.token(batch.nextCursor()));
+            if (batch.hasMore()) exchange.getResponseHeaders().set("x-kobo-sync", "continue");
+            sendJson(exchange, 200, koboProtocol.sync(batch, base));
+            return;
+        }
+        if (endpoint.startsWith("/v1/library/")) {
+            handleKoboLibrary(exchange, endpoint, method, base);
+            return;
+        }
+        if (endpoint.startsWith("/download/") && "GET".equals(method)) {
+            exchange.getRequestBody().close();
+            String rest = endpoint.substring("/download/".length());
+            int next = rest.indexOf('/');
+            String bookId = decode(next < 0 ? rest : rest.substring(0, next));
+            var projection = koboSync.book(bookId);
+            if (projection.isEmpty()) {
+                sendJson(exchange, 404, "{\"error\":\"book_not_found\"}");
+            } else if (koboDownloads == null) {
+                sendJson(exchange, 503, "{\"error\":\"content_service_unavailable\"}");
+            } else {
+                downloadKobo(exchange, projection.get());
+            }
+            return;
+        }
+        exchange.getRequestBody().close();
+        exchange.getResponseHeaders().set("Allow", "GET, POST, PUT");
+        sendJson(exchange, 404, "{\"error\":\"not_found\"}");
+    }
+
+    private void handleKoboLibrary(HttpExchange exchange, String endpoint, String method, String base) throws IOException {
+        String rest = endpoint.substring("/v1/library/".length());
+        int slash = rest.indexOf('/');
+        if (slash <= 0) {
+            exchange.getRequestBody().close();
+            sendJson(exchange, 404, "{\"error\":\"not_found\"}");
+            return;
+        }
+        String bookId = decode(rest.substring(0, slash));
+        String action = rest.substring(slash);
+        if ("/metadata".equals(action) && "GET".equals(method)) {
+            exchange.getRequestBody().close();
+            var book = koboSync.book(bookId);
+            if (book.isEmpty()) sendJson(exchange, 404, "{\"error\":\"book_not_found\"}");
+            else sendJson(exchange, 200, koboProtocol.metadata(book.get(), base));
+            return;
+        }
+        if ("/state".equals(action) && "GET".equals(method)) {
+            exchange.getRequestBody().close();
+            var state = koboSync.progress(bookId);
+            if (state.isEmpty()) sendJson(exchange, 200, "{\"ReadingState\":null}");
+            else sendJson(exchange, 200, koboProtocol.state(state.get()));
+            return;
+        }
+        if ("/state".equals(action) && "PUT".equals(method)) {
+            String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+            if (contentType != null && !contentType.toLowerCase(Locale.ROOT).startsWith("application/json")) {
+                exchange.getRequestBody().close();
+                sendJson(exchange, 415, "{\"error\":\"expected_json\"}");
+                return;
+            }
+            String json = new String(readBounded(exchange.getRequestBody(), 32 * 1024), StandardCharsets.UTF_8);
+            Double rawProgress = jsonDouble(json, "ProgressPercent");
+            double percent = rawProgress == null ? 0.0 : (rawProgress <= 1.00000001 ? rawProgress * 100.0 : rawProgress);
+            String status = nonBlank(jsonString(json, "Status"), percent >= 99.999 ? "Finished" : percent > 0 ? "Reading" : "ReadyToRead");
+            String location = nonBlank(jsonString(json, "Value"), "");
+            Instant modified = parseInstantOrNow(jsonString(json, "LastModified"));
+            Long bodyVersion = jsonLong(json, "MyHomeLibVersion");
+            Long headerVersion = parseNonNegativeLong(exchange.getRequestHeaders().getFirst("X-MyHomeLib-Progress-Version"));
+            long baseVersion = bodyVersion != null && bodyVersion >= 0 ? bodyVersion
+                    : headerVersion != null ? headerVersion
+                    : koboSync.progress(bookId).map(KoboProgressState::version).orElse(0L);
+            try {
+                KoboProgressState accepted = koboSync.updateProgress(new KoboProgressUpdate(
+                        bookId, percent, status, location, modified, baseVersion));
+                sendJson(exchange, 200, koboProtocol.state(accepted));
+            } catch (IllegalArgumentException invalid) {
+                sendJson(exchange, 400, "{\"error\":\"invalid_progress\"}");
+            }
+            return;
+        }
+        exchange.getRequestBody().close();
+        exchange.getResponseHeaders().set("Allow", "GET, PUT");
+        sendJson(exchange, 405, "{\"error\":\"method_not_allowed\"}");
+    }
+
+    private boolean koboAuthorized(HttpExchange exchange, String token) throws IOException {
+        String client = clientKey(exchange);
+        OpdsRequestLimiter limiter = requestLimiter.get();
+        OpdsRequestLimiter.AuthThrottle throttle = limiter.beforeAuthentication(client);
+        if (throttle.blocked()) {
+            sendThrottled(exchange, throttle.retryAfterSeconds());
+            return false;
+        }
+        if (token != null && !token.isBlank() && koboSync.authenticate(token)) {
+            limiter.authenticationSucceeded(client);
+            return true;
+        }
+        OpdsRequestLimiter.AuthThrottle after = limiter.authenticationFailed(client);
+        exchange.getResponseHeaders().set("Connection", "close");
+        if (after.blocked()) sendThrottled(exchange, after.retryAfterSeconds());
+        else sendJson(exchange, 401, "{\"error\":\"invalid_device_credential\"}");
+        return false;
+    }
+
+    private String koboBaseUrl(HttpExchange exchange, String token) {
+        String scheme = activeSettings.tls().enabled() ? "https" : "http";
+        String host = exchange.getRequestHeaders().getFirst("Host");
+        if (host == null || !host.matches("[A-Za-z0-9.\\-\\[\\]:]+")) {
+            InetSocketAddress local = exchange.getLocalAddress();
+            host = local.getHostString() + ":" + local.getPort();
+        }
+        return scheme + "://" + host + "/kobo/" + encode(token);
+    }
+
+    private static URI safeRequestPath(URI uri) {
+        if (uri == null) return URI.create("/");
+        String path = normalizePath(uri.getPath());
+        if (path.startsWith("/kobo/")) {
+            String tail = path.substring("/kobo/".length());
+            int slash = tail.indexOf('/');
+            path = "/kobo/<redacted>" + (slash < 0 ? "" : tail.substring(slash));
+        }
+        try { return new URI(null, null, path, null); }
+        catch (Exception ignored) { return URI.create("/"); }
+    }
+
+    private static Double jsonDouble(String json, String field) {
+        if (json == null) return null;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                "\\\"" + java.util.regex.Pattern.quote(field) + "\\\"\\s*:\\s*(-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[eE][+-]?\\d+)?)")
+                .matcher(json);
+        if (!matcher.find()) return null;
+        try { return Double.parseDouble(matcher.group(1)); }
+        catch (NumberFormatException ignored) { return null; }
+    }
+
+    private static String jsonString(String json, String field) {
+        if (json == null) return null;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                "\\\"" + java.util.regex.Pattern.quote(field) + "\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"\\\\])*)\\\"")
+                .matcher(json);
+        if (!matcher.find()) return null;
+        return unescapeJsonString(matcher.group(1));
+    }
+
+    private static String unescapeJsonString(String value) {
+        if (value == null || value.indexOf('\\') < 0) return value;
+        StringBuilder out = new StringBuilder(value.length());
+        boolean escaped = false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (!escaped) {
+                if (c == '\\') escaped = true; else out.append(c);
+            } else {
+                escaped = false;
+                switch (c) {
+                    case 'n' -> out.append('\n');
+                    case 'r' -> out.append('\r');
+                    case 't' -> out.append('\t');
+                    case 'b' -> out.append('\b');
+                    case 'f' -> out.append('\f');
+                    case '"' -> out.append('"');
+                    case '\\' -> out.append('\\');
+                    default -> out.append(c);
+                }
+            }
+        }
+        if (escaped) out.append('\\');
+        return out.toString();
+    }
+
+    private static Instant parseInstantOrNow(String value) {
+        if (value != null && !value.isBlank()) {
+            try { return Instant.parse(value); } catch (RuntimeException ignored) { }
+        }
+        return Instant.now();
+    }
+
+    private static Long parseNonNegativeLong(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            long parsed = Long.parseLong(value.trim());
+            return parsed < 0 ? null : parsed;
+        } catch (RuntimeException ignored) { return null; }
     }
 
     private void handleWeb(HttpExchange exchange, String path, Map<String, String> query, String method, String language) throws IOException {
@@ -307,6 +556,21 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             } else {
                 sendHtml(exchange, 200, web.books(language, t(language, "web.continue.title"), "/web/continue", "",
                         catalog.continueReading(offset(query), limit(query))));
+            }
+        } else if (path.startsWith("/web/offline/books/") && path.endsWith("/manifest.json")) {
+            if (webReader == null) {
+                sendText(exchange, 503, t(language, "web.reader.unavailable"));
+                return;
+            }
+            String encoded = path.substring("/web/offline/books/".length(), path.length() - "/manifest.json".length());
+            String id = decode(encoded);
+            var document = webReader.open(id, -1);
+            if (document.isEmpty()) {
+                sendJson(exchange, 404, "{\"error\":\"book_not_found\"}");
+            } else if (!document.get().supported() || document.get().chapters().isEmpty()) {
+                sendJson(exchange, 422, "{\"error\":\"unsupported_format\"}");
+            } else {
+                sendJson(exchange, 200, offlineBookPackages.manifest(document.get()));
             }
         } else if (path.startsWith("/web/read/")) {
             if (webReader == null) {
@@ -350,12 +614,67 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
         String json = new String(body, StandardCharsets.UTF_8);
         Long chapter = jsonLong(json, "chapter");
         Long offset = jsonLong(json, "offset");
-        if (chapter == null || offset == null || chapter < 0 || chapter > 1_000_000 || offset < 0) {
+        Long clientTimestamp = jsonLong(json, "clientTimestamp");
+        Long clientSequence = jsonLong(json, "clientSequence");
+        if (chapter == null || offset == null || chapter < 0 || chapter > 1_000_000 || offset < 0
+                || (clientTimestamp != null && clientTimestamp < 0)
+                || (clientSequence != null && clientSequence < 0)) {
             sendText(exchange, 400, t(language, "web.error.invalid_progress"));
             return;
         }
-        var saved = webReader.saveProgress(id, chapter.intValue(), offset);
-        sendJson(exchange, 200, "{\"percent\":" + String.format(Locale.ROOT, "%.4f", saved.getPercent()) + "}");
+        long timestamp = clientTimestamp == null ? System.currentTimeMillis() : clientTimestamp;
+        long sequence = clientSequence == null ? 0L : clientSequence;
+        final java.time.Instant clientInstant;
+        try {
+            clientInstant = java.time.Instant.ofEpochMilli(timestamp);
+        } catch (RuntimeException invalidTimestamp) {
+            sendText(exchange, 400, t(language, "web.error.invalid_progress"));
+            return;
+        }
+        var result = webReader.saveProgress(id, new WebProgressUpdate(chapter.intValue(), offset, clientInstant, sequence));
+        var canonical = result.canonical();
+        String updatedAt = canonical.getUpdatedAt() == null ? "" : canonical.getUpdatedAt().toString();
+        sendJson(exchange, 200, "{\"accepted\":" + result.accepted()
+                + ",\"percent\":" + String.format(Locale.ROOT, "%.4f", canonical.getPercent())
+                + ",\"anchorId\":\"" + JsonStrings.escape(canonical.getAnchorId()) + "\""
+                + ",\"updatedAt\":\"" + JsonStrings.escape(updatedAt) + "\""
+                + ",\"clientSequence\":" + sequence + "}");
+    }
+
+    private static boolean isPublicPwaAsset(String path) {
+        return WebPwaAssets.MANIFEST_PATH.equals(path)
+                || WebPwaAssets.SERVICE_WORKER_PATH.equals(path)
+                || WebPwaAssets.OFFLINE_PATH.equals(path)
+                || WebPwaAssets.CLIENT_JS_PATH.equals(path)
+                || WebPwaAssets.CSS_PATH.equals(path)
+                || WebPwaAssets.ICON_192_PATH.equals(path)
+                || WebPwaAssets.ICON_512_PATH.equals(path);
+    }
+
+    private void sendPublicPwaAsset(HttpExchange exchange, String path, String language) throws IOException {
+        if (WebPwaAssets.MANIFEST_PATH.equals(path)) {
+            sendStatic(exchange, 200, "application/manifest+json;charset=utf-8",
+                    pwaAssets.manifest(language).getBytes(StandardCharsets.UTF_8), "public, max-age=300");
+        } else if (WebPwaAssets.SERVICE_WORKER_PATH.equals(path)) {
+            exchange.getResponseHeaders().set("Service-Worker-Allowed", "/web/");
+            sendStatic(exchange, 200, "application/javascript;charset=utf-8",
+                    pwaAssets.serviceWorker().getBytes(StandardCharsets.UTF_8), "no-cache");
+        } else if (WebPwaAssets.OFFLINE_PATH.equals(path)) {
+            sendStatic(exchange, 200, "text/html;charset=utf-8",
+                    pwaAssets.offlinePage(language).getBytes(StandardCharsets.UTF_8), "public, max-age=300");
+        } else if (WebPwaAssets.CLIENT_JS_PATH.equals(path)) {
+            sendStatic(exchange, 200, "application/javascript;charset=utf-8",
+                    pwaAssets.clientScript().getBytes(StandardCharsets.UTF_8), "public, max-age=31536000, immutable");
+        } else if (WebPwaAssets.CSS_PATH.equals(path)) {
+            sendStatic(exchange, 200, "text/css;charset=utf-8",
+                    pwaAssets.stylesheet().getBytes(StandardCharsets.UTF_8), "public, max-age=31536000, immutable");
+        } else if (WebPwaAssets.ICON_192_PATH.equals(path)) {
+            sendStatic(exchange, 200, "image/png", pwaAssets.icon192(), "public, max-age=31536000, immutable");
+        } else if (WebPwaAssets.ICON_512_PATH.equals(path)) {
+            sendStatic(exchange, 200, "image/png", pwaAssets.icon512(), "public, max-age=31536000, immutable");
+        } else {
+            sendText(exchange, 404, t(language, "web.error.not_found"));
+        }
     }
 
     private static byte[] readBounded(InputStream input, int maxBytes) throws IOException {
@@ -653,6 +972,31 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
                 .append(escapeAttr(path + separator + "offset=" + (offset + limit) + "&limit=" + limit)).append("\"/>");
     }
 
+    private void downloadKobo(HttpExchange exchange, KoboBookProjection projection) throws IOException {
+        Optional<KoboContentService.Content> opened;
+        try {
+            opened = koboDownloads.open(projection);
+        } catch (Exception conversionFailure) {
+            log.warn("Kobo content preparation failed for book {}: {}", projection.bookId(), conversionFailure.getClass().getSimpleName());
+            sendJson(exchange, 422, "{\"error\":\"content_conversion_failed\"}");
+            return;
+        }
+        if (opened.isEmpty()) {
+            sendJson(exchange, 404, "{\"error\":\"content_not_found\"}");
+            return;
+        }
+        try (KoboContentService.Content download = opened.get()) {
+            Headers headers = exchange.getResponseHeaders();
+            headers.set("Content-Type", "application/epub+zip");
+            headers.set("Content-Disposition", "attachment; filename*=UTF-8''" + encode(download.fileName()));
+            headers.set("Cache-Control", "private, no-store");
+            applyBrowserHardening(headers);
+            long size = download.size();
+            exchange.sendResponseHeaders(200, size > 0 ? size : 0);
+            try (OutputStream out = exchange.getResponseBody()) { download.transferTo(out); }
+        }
+    }
+
     private void download(HttpExchange exchange, String bookId) throws IOException {
         String language = webText.resolveLanguage(exchange.getRequestHeaders().getFirst("Accept-Language"));
         Optional<OpdsDownloadService.Download> opened;
@@ -692,7 +1036,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
         String ext = extension(name);
         return switch (ext) {
             case "fb2", "fbd" -> "application/fb2+xml";
-            case "epub" -> "application/epub+zip";
+            case "epub", "kepub" -> "application/epub+zip";
             case "pdf" -> "application/pdf";
             case "mobi", "azw", "azw3" -> "application/x-mobipocket-ebook";
             case "txt", "text", "md" -> "text/plain;charset=utf-8";
@@ -747,16 +1091,25 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
     private static void sendXml(HttpExchange exchange, int code, String body) throws IOException { send(exchange, code, ATOM, body); }
     private static void sendOpds2(HttpExchange exchange, int code, String body) throws IOException { send(exchange, code, Opds2JsonRenderer.TYPE, body); }
     private static void sendJson(HttpExchange exchange, int code, String body) throws IOException { send(exchange, code, "application/json;charset=utf-8", body); }
-    private static void sendHtml(HttpExchange exchange, int code, String body) throws IOException { send(exchange, code, "text/html;charset=utf-8", body); }
+    private static void sendHtml(HttpExchange exchange, int code, String body) throws IOException {
+        sendWithCache(exchange, code, "text/html;charset=utf-8", body.getBytes(StandardCharsets.UTF_8), "private, no-store");
+    }
     private static void sendText(HttpExchange exchange, int code, String body) throws IOException { send(exchange, code, "text/plain;charset=utf-8", body); }
     private static void sendTextSafe(HttpExchange exchange, int code, String body) {
         try { sendText(exchange, code, body); } catch (Exception ignored) { }
     }
     private static void send(HttpExchange exchange, int code, String type, String body) throws IOException {
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        sendWithCache(exchange, code, type, body.getBytes(StandardCharsets.UTF_8), "no-store");
+    }
+
+    private static void sendStatic(HttpExchange exchange, int code, String type, byte[] body, String cacheControl) throws IOException {
+        sendWithCache(exchange, code, type, body, cacheControl);
+    }
+
+    private static void sendWithCache(HttpExchange exchange, int code, String type, byte[] bytes, String cacheControl) throws IOException {
         Headers headers = exchange.getResponseHeaders();
         headers.set("Content-Type", type);
-        headers.set("Cache-Control", "no-store");
+        headers.set("Cache-Control", cacheControl);
         applyBrowserHardening(headers);
         exchange.sendResponseHeaders(code, bytes.length);
         try (OutputStream out = exchange.getResponseBody()) { out.write(bytes); }

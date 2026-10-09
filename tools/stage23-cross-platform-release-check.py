@@ -8,6 +8,7 @@ import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import re
+import subprocess
 import sys
 import tarfile
 import zipfile
@@ -89,7 +90,13 @@ def archive_members(path: Path) -> list[str]:
 
 
 def verify_portable_archives(dist: Path, version: str) -> int:
-    archives = sorted(list(dist.glob(f"myhomelib-{version}-*.zip")) + list(dist.glob(f"myhomelib-{version}-*.tar.gz")))
+    # R18 Windows portable has a canonical task-level artifact name.  Keep the
+    # legacy lowercase pattern for Linux/macOS and historical release evidence.
+    archives = sorted(
+        list(dist.glob(f"MyHomeLib-R18-{version}-portable-windows-*.zip"))
+        + list(dist.glob(f"myhomelib-{version}-*.zip"))
+        + list(dist.glob(f"myhomelib-{version}-*.tar.gz"))
+    )
     for archive in archives:
         if archive.stat().st_size <= 0:
             raise RuntimeError(f"Portable archive is empty: {archive.name}")
@@ -111,8 +118,113 @@ def verify_portable_archives(dist: Path, version: str) -> int:
             )
         if not has_runtime:
             raise RuntimeError(f"Portable archive does not contain a bundled Java runtime: {archive.name}")
+        windows_launchers = [name for name in lower if name.endswith("/myhomelib.exe")]
+        for windows_launcher in windows_launchers:
+            parent = PurePosixPath(windows_launcher).parent
+            required_compat = {
+                str(parent / "start-myhomelib.cmd"),
+                str(parent / "myhomelib.vbs"),
+            }
+            missing_compat = sorted(required_compat.difference(lower))
+            if missing_compat:
+                raise RuntimeError(
+                    f"Windows portable archive is missing compatibility launcher(s) {missing_compat}: {archive.name}"
+                )
         print(f"PASS portable archive: {archive.name} ({len(members)} entries)")
     return len(archives)
+
+
+RUNTIME_REQUIRED_MODULES = {
+    "java.base",
+    "java.desktop",
+    "java.instrument",
+    "java.management",
+    "java.net.http",
+    "java.prefs",
+    "java.scripting",
+    "java.sql.rowset",
+    "jdk.compiler",
+    "jdk.httpserver",
+    "jdk.incubator.vector",
+    "jdk.jfr",
+    "jdk.management",
+    "jdk.unsupported",
+    "jdk.charsets",
+    "jdk.crypto.ec",
+    "jdk.localedata",
+    "jdk.zipfs",
+}
+
+RUNTIME_FORBIDDEN_DEV_MODULES = {
+    "jdk.javadoc",
+    "jdk.jshell",
+    "jdk.jconsole",
+    "jdk.jdeps",
+    "jdk.jlink",
+    "jdk.jpackage",
+    "jdk.jdi",
+    "jdk.jdwp.agent",
+}
+
+
+def runtime_java(runtime: Path) -> Path | None:
+    candidates = [
+        runtime / "bin" / "java",
+        runtime / "bin" / "java.exe",
+        runtime / "Contents" / "Home" / "bin" / "java",
+    ]
+    return next((path for path in candidates if path.is_file()), None)
+
+
+def verify_runtime_modules(runtime: Path) -> None:
+    java = runtime_java(runtime)
+    if java is None:
+        raise RuntimeError(f"Bundled runtime has no Java launcher: {runtime}")
+    result = subprocess.run(
+        [str(java), "--list-modules"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"Cannot inspect bundled runtime modules ({java}): {detail}")
+    modules = {line.split("@", 1)[0].strip() for line in result.stdout.splitlines() if line.strip()}
+    missing = sorted(RUNTIME_REQUIRED_MODULES - modules)
+    forbidden = sorted(RUNTIME_FORBIDDEN_DEV_MODULES & modules)
+    if missing:
+        raise RuntimeError(f"Bundled runtime is missing required module(s): {', '.join(missing)}")
+    if forbidden:
+        raise RuntimeError(f"Bundled runtime contains development-only module(s): {', '.join(forbidden)}")
+    print(f"PASS bundled runtime modules: {len(modules)} module(s), development tools excluded")
+
+
+def verify_external_runtime_tools_are_not_on_app_classpath(image: Path) -> None:
+    app_roots = [
+        image / "lib" / "app",
+        image / "app",
+        image / "Contents" / "app",
+    ]
+    app_root = next((path for path in app_roots if path.is_dir()), None)
+    if app_root is None:
+        raise RuntimeError(f"Packaged app-image has no application payload directory: {image}")
+
+    epubcheck = app_root / "tools" / "validators" / "epubcheck" / "epubcheck.jar"
+    if not epubcheck.is_file() or epubcheck.stat().st_size <= 0:
+        raise RuntimeError(f"Packaged EPUBCheck tool is missing/empty: {epubcheck}")
+
+    configs = sorted(app_root.glob("MyHomeLib*.cfg"))
+    if not configs:
+        raise RuntimeError(f"Packaged app-image has no MyHomeLib launcher config in {app_root}")
+    for config in configs:
+        for raw in config.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.strip().replace("\\", "/")
+            if line.startswith("app.classpath=") and "/tools/" in line:
+                raise RuntimeError(
+                    f"External runtime tool leaked into application classpath ({config.name}): {raw.strip()}"
+                )
+    print("PASS external runtime tools: bundled outside application classpath")
 
 
 def verify_app_image(dist: Path) -> bool:
@@ -129,8 +241,11 @@ def verify_app_image(dist: Path) -> bool:
         app_index = launcher.parts.index("MyHomeLib.app")
         image = Path(*launcher.parts[: app_index + 1])
     runtime_candidates = [image / "lib" / "runtime", image / "runtime", image / "Contents" / "runtime"]
-    if not any(path.is_dir() for path in runtime_candidates):
+    runtime = next((path for path in runtime_candidates if path.is_dir()), None)
+    if runtime is None:
         raise RuntimeError(f"Packaged app-image has no bundled runtime near {launcher}")
+    verify_runtime_modules(runtime)
+    verify_external_runtime_tools_are_not_on_app_classpath(image)
     print(f"PASS app-image launcher/runtime: {launcher}")
     return True
 

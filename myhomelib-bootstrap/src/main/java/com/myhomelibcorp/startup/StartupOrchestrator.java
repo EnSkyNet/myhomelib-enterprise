@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Explicit desktop startup sequence. Constructor order is deliberate and is guarded by tests/static CI.
@@ -43,10 +44,18 @@ public class StartupOrchestrator {
     }
 
     public StartupReport run() {
+        return run(null);
+    }
+
+    /** Runs startup and reports the task that is about to execute for splash/progress UI. */
+    public StartupReport run(Consumer<String> taskStarted) {
         StartupContext context = new StartupContext(collectionResolver.resolve());
         List<StartupTaskOutcome> outcomes = new ArrayList<>(tasks.size());
 
         for (StartupTask task : tasks) {
+            if (taskStarted != null) {
+                try { taskStarted.accept(task.id()); } catch (RuntimeException ignored) { }
+            }
             long started = System.nanoTime();
             try {
                 StartupTaskResult result = task.execute(context);

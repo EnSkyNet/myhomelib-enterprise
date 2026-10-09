@@ -19,7 +19,11 @@ class WebReaderRendererTest {
 
         String html = renderer.render(doc);
 
-        assertThat(html).contains("name=\"viewport\"", "Зміст", "id=theme", "id=font", "localStorage", "/web/read/b%201?chapter=1", "/progress");
+        assertThat(html).contains("name=\"viewport\"", "Зміст", "id=theme", "id=font", "localStorage", "/web/read/b%201?chapter=1",
+                "rel=\"manifest\" href=\"/web/app.webmanifest\"", WebPwaAssets.CLIENT_JS_PATH,
+                "data-pwa-save-book=\"b 1\"", "data-pwa-remove-book=\"b 1\"", "data-pwa-clear-books",
+                "MyHomeLibPwa.queueProgress");
+        assertThat(html).doesNotContain("fetch('/web/read/'+encodeURIComponent(c.dataset.book)+'/progress");
         assertThat(html).contains("&lt;script&gt;x&lt;/script&gt;").doesNotContain("<script>x</script>");
         assertThat(html).contains("data-resume=\"5\"", "data-resume-chapter=\"0\"");
     }

@@ -25,6 +25,38 @@ class LuceneResourceLifecycleTest {
     @TempDir Path temp;
 
     @Test
+    void writerConfigurationKeepsMeasuredBoundedBufferingPolicy() {
+        try (var analyzer = new StandardAnalyzer()) {
+            var config = LuceneIndexWriterFactory.config(analyzer, IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
+
+            assertThat(config.getRAMBufferSizeMB()).isEqualTo(LuceneIndexWriterFactory.RAM_BUFFER_SIZE_MB);
+            assertThat(config.getMaxBufferedDocs()).isEqualTo(LuceneIndexWriterFactory.MAX_BUFFERED_DOCS);
+            assertThat(config.getCommitOnClose()).isFalse();
+        }
+    }
+
+    @Test
+    void productionConstructionWaitsForCollectionDirectoryBeforeOpeningLucene() {
+        try (var analyzer = new StandardAnalyzer()) {
+            var search = new LuceneSearchService(analyzer, new QueryParser("title", analyzer),
+                    mock(BookQueryRepository.class), null, null);
+            try {
+                // No temporary writer/searcher is created by the production constructor.
+                assertThat(search.getDocumentCount()).isZero();
+
+                search.switchDirectory(new ByteBuffersDirectory());
+                search.indexSnapshot(BookSnapshot.builder()
+                        .id(BookId.generate()).title("Collection-scoped index").build());
+                search.commit();
+
+                assertThat(search.getDocumentCount()).isEqualTo(1);
+            } finally {
+                search.close();
+            }
+        }
+    }
+
+    @Test
     void standaloneConstructionDoesNotCommitEveryDocument() {
         try (var analyzer = new StandardAnalyzer()) {
             var search = new LuceneSearchService(new ByteBuffersDirectory(), analyzer,

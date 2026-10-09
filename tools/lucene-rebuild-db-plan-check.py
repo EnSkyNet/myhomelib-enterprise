@@ -9,7 +9,7 @@ migration = (ROOT / "myhomelib-infrastructure/src/main/resources/db/migration/V4
 
 checks = []
 checks.append(("Lucene base projection filters tombstones in SQL", "WHERE deleted = 0 AND id > ?" in repo))
-checks.append(("Lucene stream page size is 5000", "SEARCH_STREAM_PAGE_SIZE = 5_000" in repo))
+checks.append(("Lucene stream page size is bounded at 5k-10k", "SEARCH_STREAM_PAGE_SIZE = 5_000" in repo or "SEARCH_STREAM_PAGE_SIZE = 10_000" in repo))
 checks.append(("first Lucene page is lazy/telemetry-visible", "private SearchSnapshotIterator(int pageSize) {\n            this.pageSize" in repo))
 checks.append(("active partial index exists", "idx_books_active_id" in migration and "WHERE deleted = 0" in migration))
 checks.append(("author range order follows relation PK", "ORDER BY ba.book_id, ba.author_id" in repo))

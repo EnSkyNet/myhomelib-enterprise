@@ -14,7 +14,7 @@ assert "baseline_sha256" in migration and "last_modified_millis" in migration
 assert "CORRUPT_ARCHIVE" in migration and "HASH_CHANGED" in migration
 
 scanner = text("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/integrity/ArtifactIntegrityService.java")
-for token in ["auditIncremental", "Files.getLastModifiedTime", "MessageDigest", "listArchiveEntries", "readBookData", "artifact_integrity_state", "!/" ]:
+for token in ["auditIncremental", "BasicFileAttributes", "Files.readAttributes", "LinkOption.NOFOLLOW_LINKS", "MessageDigest", "listArchiveEntries", "readBookData", "artifact_integrity_state", "!/" ]:
     assert token in scanner, f"scanner missing {token}"
 assert "UPDATE book_artifacts" not in scanner, "audit must not rewrite catalogue artifact baseline"
 assert "DELETE FROM book_artifacts" not in scanner, "audit must not destructively repair artifacts"
@@ -27,7 +27,7 @@ ui = text("myhomelib-ui/src/main/resources/view/integrity-check.fxml")
 ui_controller = text("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/IntegrityCheckController.java")
 for token in ['fx:id="overallStatusLabel"', "onShowMissing", "onShowCorrupt", "onShowChanged", "onShowDuplicates", "onShowMetadata", "onShowIndex", "onShowBackup", "onExportReport", "issueTable", "detailArea"]:
     assert token in ui, f"dashboard missing {token}"
-assert "executor.submit(healthService::refresh)" in ui_controller, "Library Health refresh must stay off the FX thread"
+assert "executor.submit(() -> healthService.refresh(expectedCollectionId))" in ui_controller, "Library Health refresh must stay off the FX thread and remain collection-scoped"
 
 benchmark = text("myhomelib-benchmark/src/main/java/com/myhomelibcorp/benchmark/search/SmartCollectionLuceneBenchmark.java")
 for token in ["DEFAULT_DOCUMENTS = 500_000", "cold_first_page", "warm_first_page", "and_5_rules", "or_20_rules", "numeric_range", "docvalues_sort", "bounded_max_results", "rssBytes", "gcCollections"]:

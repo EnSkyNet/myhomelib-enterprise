@@ -20,7 +20,10 @@ class ExportControllerSendToDeviceContractTest {
                 .contains(".completionPolicy(ExportRequest.CompletionPolicy.EJECT_SAFE)")
                 .contains("exportToDeviceUseCase.execute(request, exportCancelFlag, progress ->")
                 .contains("this::resolveCollision")
-                .contains("exportCancelFlag.set(true)")
+                .contains("requestExportCancellation()")
+                .contains("answer.get(250, TimeUnit.MILLISECONDS)")
+                .contains("exportCancelFlag.get()")
+                .doesNotContain("return answer.get();")
                 .contains("UiText.text(\"ui.java.export_controller.a7c94edeb8\")");
     }
 }

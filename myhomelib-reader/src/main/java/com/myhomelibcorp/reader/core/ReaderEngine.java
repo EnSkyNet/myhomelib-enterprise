@@ -22,6 +22,7 @@ import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * UI-незалежний стан та навігація reader-а.
@@ -140,7 +141,7 @@ public class ReaderEngine {
         log.info("✅ Книгу відкрито: '{}' ({} символів, {} розділів)",
                 currentDocument.metadata().title(),
                 currentDocument.totalTextLength(),
-                currentDocument.chapters().size());
+                chapterCount(currentDocument));
     }
 
     public void close() {
@@ -193,7 +194,7 @@ public class ReaderEngine {
         if (total <= 0) {
             return;
         }
-        double safePercent = Math.max(0, Math.min(100, percent));
+        double safePercent = Double.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0.0;
         long offset = safePercent >= 100
                 ? total - 1
                 : (long) (total * safePercent / 100.0);
@@ -297,11 +298,12 @@ public class ReaderEngine {
     }
 
     public void nextChapter() {
-        if (!isOpen || currentDocument == null || currentDocument.chapters().isEmpty()) {
+        int chapterCount = chapterCount(currentDocument);
+        if (!isOpen || currentDocument == null || chapterCount == 0) {
             return;
         }
         int currentChapter = currentDocument.chapterIndexAt(currentPosition.textOffset());
-        if (currentChapter < currentDocument.chapters().size() - 1) {
+        if (currentChapter < chapterCount - 1) {
             ChapterIndex next = currentDocument.chapter(currentChapter + 1);
             if (next != null) {
                 goToPosition(new ReaderPosition(currentChapter + 1, next.startOffset(), 0, 0));
@@ -310,7 +312,7 @@ public class ReaderEngine {
     }
 
     public void previousChapter() {
-        if (!isOpen || currentDocument == null || currentDocument.chapters().isEmpty()) {
+        if (!isOpen || currentDocument == null || chapterCount(currentDocument) == 0) {
             return;
         }
         int currentChapter = currentDocument.chapterIndexAt(currentPosition.textOffset());
@@ -450,6 +452,12 @@ public class ReaderEngine {
     public TextLayoutEngine getLayoutEngine() {
         return layoutEngine;
     }
+    private static int chapterCount(ReaderDocument document) {
+        if (document == null) return 0;
+        List<ChapterIndex> chapters = document.chapters();
+        return chapters == null ? 0 : chapters.size();
+    }
+
     private static void closeDocumentResources(ReaderDocument document) {
         if (document != null && document.resources() instanceof AutoCloseable closeable) {
             try {

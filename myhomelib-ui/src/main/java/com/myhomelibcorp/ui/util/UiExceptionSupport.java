@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.util;
 
+import com.myhomelibcorp.application.operation.LibraryOperationConflictException;
 import com.myhomelibcorp.ui.service.UiText;
 
 import javax.net.ssl.SSLException;
@@ -43,6 +44,9 @@ public final class UiExceptionSupport {
         if (current == null) return UiText.text("common.error.unknown");
 
         if (isCancellation(current)) return UiText.text("common.error.cancelled");
+        if (current instanceof LibraryOperationConflictException) {
+            return UiText.text("common.error.library_busy");
+        }
 
         boolean ioFailure = false;
         while (current != null) {

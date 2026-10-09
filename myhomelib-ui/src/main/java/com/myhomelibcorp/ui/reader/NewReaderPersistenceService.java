@@ -135,7 +135,7 @@ public class NewReaderPersistenceService {
         try {
             return withReaderState(collectionId, () -> {
                 Optional<ReadingProgressDto> existing = readingProgressRepository.findByBookId(bookId);
-                double percent = Math.min(100.0, Math.max(0.0, progressPercent));
+                double percent = finitePercent(progressPercent);
                 ReadingProgressDto dto = existing.orElseGet(() -> ReadingProgressDto.builder()
                         .bookId(bookId).readingTimeSeconds(0).build());
                 dto.setAnchorId(position.serialize());
@@ -181,7 +181,7 @@ public class NewReaderPersistenceService {
                         .bookId(bookId)
                         .paragraphId(position.serialize())
                         .charOffset(0)
-                        .position(Math.max(0.0, Math.min(100.0, percent)))
+                        .position(finitePercent(percent))
                         .chapterTitle(title != null ? title : i18n.text("ui.reader.bookmark.default_title"))
                         .context(context != null ? context : "")
                         .createdAt(LocalDateTime.now())
@@ -195,6 +195,15 @@ public class NewReaderPersistenceService {
 
     public Optional<AudioPosition> audioBookmarkToPosition(Bookmark bookmark) {
         return bookmark == null ? Optional.empty() : AudioPosition.parse(bookmark.getParagraphId());
+    }
+
+    public ReaderBookmarkItem saveAudioBookmarkItem(
+            String collectionId, String bookId, AudioPosition position, double percent, String title, String context) {
+        return toReaderBookmarkItem(saveAudioBookmark(collectionId, bookId, position, percent, title, context));
+    }
+
+    public Optional<AudioPosition> audioBookmarkToPosition(ReaderBookmarkItem bookmark) {
+        return bookmark == null ? Optional.empty() : AudioPosition.parse(bookmark.paragraphId());
     }
 
     // ==================== ЗАКЛАДКИ ====================
@@ -249,6 +258,15 @@ public class NewReaderPersistenceService {
         }
     }
 
+    public ReaderBookmarkItem saveBookmarkItem(
+            String collectionId, String bookId, ReaderPosition position, long totalTextLength, String title, String context) {
+        return toReaderBookmarkItem(saveBookmark(collectionId, bookId, position, totalTextLength, title, context));
+    }
+
+    public List<ReaderBookmarkItem> loadBookmarkItems(String collectionId, String bookId) {
+        return loadBookmarks(collectionId, bookId).stream().map(NewReaderPersistenceService::toReaderBookmarkItem).toList();
+    }
+
     public void deleteBookmark(String bookmarkId) {
         if (bookmarkId == null) return;
         String collectionId = activeCollectionId();
@@ -295,7 +313,20 @@ public class NewReaderPersistenceService {
 
     public ReaderPosition bookmarkToPosition(Bookmark bookmark, long totalTextLength) {
         if (bookmark == null) return ReaderPosition.start();
-        String paragraphId = bookmark.getParagraphId();
+        return bookmarkPosition(bookmark.getParagraphId(), bookmark.getPosition(), bookmark.getCharOffset(), totalTextLength);
+    }
+
+    public ReaderPosition bookmarkToPosition(ReaderBookmarkItem bookmark, long totalTextLength) {
+        if (bookmark == null) return ReaderPosition.start();
+        return bookmarkPosition(bookmark.paragraphId(), bookmark.position(), bookmark.charOffset(), totalTextLength);
+    }
+
+    private static double finitePercent(double value) {
+        return Double.isFinite(value) ? Math.max(0.0, Math.min(100.0, value)) : 0.0;
+    }
+
+    private static ReaderPosition bookmarkPosition(
+            String paragraphId, double storedPercent, int charOffset, long totalTextLength) {
         if (paragraphId != null && paragraphId.startsWith("rp:")) {
             return ReaderPosition.parse(paragraphId.substring(3));
         }
@@ -309,9 +340,22 @@ public class NewReaderPersistenceService {
                 paragraphIndex = 0;
             }
         }
-        double percent = Math.max(0.0, Math.min(100.0, bookmark.getPosition()));
+        double percent = finitePercent(storedPercent);
         long offset = totalTextLength <= 0 ? 0L : Math.round(totalTextLength * percent / 100.0);
-        return new ReaderPosition(0, offset, paragraphIndex, bookmark.getCharOffset());
+        return new ReaderPosition(0, offset, paragraphIndex, charOffset);
+    }
+
+    private static ReaderBookmarkItem toReaderBookmarkItem(Bookmark bookmark) {
+        if (bookmark == null) return null;
+        return new ReaderBookmarkItem(
+                bookmark.getId(),
+                bookmark.getBookId(),
+                bookmark.getParagraphId(),
+                bookmark.getCharOffset(),
+                bookmark.getPosition(),
+                bookmark.getChapterTitle(),
+                bookmark.getContext(),
+                bookmark.getCreatedAt());
     }
 
     private String activeCollectionId() {

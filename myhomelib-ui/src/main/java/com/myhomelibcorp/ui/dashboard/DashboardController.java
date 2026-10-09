@@ -5,6 +5,7 @@ import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.ContinueReadingItemDto;
 import com.myhomelibcorp.application.dto.DashboardData;
+import com.myhomelibcorp.application.dto.NextInSeriesItemDto;
 import com.myhomelibcorp.application.usecase.dashboard.LoadDashboardDataUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.service.NavigationService;
@@ -43,6 +44,8 @@ public class DashboardController implements WorkspaceLifecycle {
 
     @FXML private VBox continueReadingBox;
     @FXML private VBox continueReadingItemsBox;
+    @FXML private VBox nextInSeriesBox;
+    @FXML private VBox nextInSeriesItemsBox;
     @FXML private VBox recentBooksBox;
     @FXML private VBox newBooksBox;
     @FXML private Label booksCount;
@@ -81,6 +84,7 @@ public class DashboardController implements WorkspaceLifecycle {
         vm.setContinueReading(data.getContinueReading());
         vm.setRecentBooks(data.getRecentBooks());
         vm.setNewBooks(data.getRecentAdded());
+        vm.setNextInSeries(data.getNextInSeries());
         vm.setStatistics(data.getStatistics());
 
         var shelf = data.getContinueReadingShelf() == null ? java.util.List.<ContinueReadingItemDto>of() : data.getContinueReadingShelf();
@@ -91,6 +95,12 @@ public class DashboardController implements WorkspaceLifecycle {
         } else {
             continueReadingBox.setVisible(false);
         }
+
+        var onDeck = data.getNextInSeries() == null ? java.util.List.<NextInSeriesItemDto>of() : data.getNextInSeries();
+        nextInSeriesItemsBox.getChildren().clear();
+        nextInSeriesBox.setVisible(!onDeck.isEmpty());
+        nextInSeriesBox.setManaged(!onDeck.isEmpty());
+        onDeck.forEach(item -> nextInSeriesItemsBox.getChildren().add(createNextInSeriesRow(item)));
 
         recentBooksBox.getChildren().clear();
         data.getRecentBooks().forEach(book -> recentBooksBox.getChildren().add(createBookLabel(book)));
@@ -136,6 +146,23 @@ public class DashboardController implements WorkspaceLifecycle {
         HBox header = new HBox(10, title, open);
         HBox.setHgrow(title, javafx.scene.layout.Priority.ALWAYS);
         VBox row = new VBox(4, header, meta, progress);
+        row.setStyle("-fx-padding: 6 0 6 0;");
+        return row;
+    }
+
+
+    private VBox createNextInSeriesRow(NextInSeriesItemDto item) {
+        Label title = new Label("📚 " + item.title());
+        title.setWrapText(true);
+        Label meta = new Label(item.series() + " · #" + item.sequenceNumber());
+        meta.setStyle("-fx-opacity: 0.75;");
+        Button open = new Button(UiText.text("ui.next_in_series.open"));
+        open.setOnAction(e -> navigationService.navigateToBook(BookId.fromString(item.bookId())));
+        Button series = new Button(UiText.text("ui.next_in_series.show_series"));
+        series.setOnAction(e -> navigationService.navigateToSeriesByName(item.series()));
+        HBox header = new HBox(10, title, open, series);
+        HBox.setHgrow(title, javafx.scene.layout.Priority.ALWAYS);
+        VBox row = new VBox(4, header, meta);
         row.setStyle("-fx-padding: 6 0 6 0;");
         return row;
     }

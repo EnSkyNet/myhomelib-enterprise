@@ -2,6 +2,9 @@ package com.myhomelibcorp.application.usecase.conversion;
 
 import com.myhomelibcorp.application.conversion.BookConversionCapability;
 import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
+import com.myhomelibcorp.application.operation.LibraryOperationCompletion;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationOutcome;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
@@ -24,6 +27,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -80,7 +84,7 @@ class ConvertBookUseCaseTest {
         Path output = Files.createDirectories(temp.resolve("converted"));
 
         ConvertBookUseCase.Result result = f.useCase.execute(new ConvertBookUseCase.Request(
-                f.id, "EPUB", output, true, 1024, 4096, () -> false));
+                f.id, "EPUB", output, 1024, 4096, () -> false));
 
         assertThat(result.converterId()).isEqualTo("test-copy");
         Path finalFile = Path.of(result.artifact().getFile().getFullPath());
@@ -91,9 +95,67 @@ class ConvertBookUseCaseTest {
         assertThat(result.artifact().getMetadata()).containsEntry("conversion.provider", "test-copy");
 
         ArgumentCaptor<BookArtifact> artifact = ArgumentCaptor.forClass(BookArtifact.class);
-        verify(f.mutations).upsertArtifact(eq(f.id), artifact.capture(), eq(true));
+        verify(f.mutations).upsertArtifact(eq(f.id), artifact.capture(), eq(false));
         assertThat(artifact.getValue().getId()).isEqualTo(result.artifact().getId());
         assertNoStagingFiles(output);
+    }
+
+    @Test
+    void publishesPlainUserFacingFileNameWithoutArtifactIdSuffix() throws Exception {
+        Fixture f = new Fixture(new CopyConverter("plain-name", Set.of("fb2"), "epub", ".epub"));
+        Path output = Files.createDirectories(temp.resolve("plain-name"));
+
+        ConvertBookUseCase.Result result = f.useCase.execute(new ConvertBookUseCase.Request(
+                f.id, "epub", output, 1024, 4096, () -> false));
+
+        Path finalFile = Path.of(result.artifact().getFile().getFullPath());
+        assertThat(finalFile.getFileName().toString()).isEqualTo("A Book.epub");
+        assertThat(finalFile.getFileName().toString()).doesNotContain(
+                result.artifact().getId().substring(result.artifact().getId().length() - 8));
+    }
+
+    @Test
+    void existingTargetUsesDeterministicNonDestructiveCollisionName() throws Exception {
+        Fixture f = new Fixture(new CopyConverter("collision", Set.of("fb2"), "epub", ".epub"));
+        Path output = Files.createDirectories(temp.resolve("collision"));
+        Path existing = output.resolve("A Book.epub");
+        Files.writeString(existing, "EXISTING", StandardCharsets.UTF_8);
+
+        ConvertBookUseCase.Result first = f.useCase.execute(new ConvertBookUseCase.Request(
+                f.id, "epub", output, 1024, 4096, () -> false));
+        ConvertBookUseCase.Result second = f.useCase.execute(new ConvertBookUseCase.Request(
+                f.id, "epub", output, 1024, 4096, () -> false));
+
+        assertThat(Path.of(first.artifact().getFile().getFullPath()).getFileName().toString())
+                .isEqualTo("A Book (2).epub");
+        assertThat(Path.of(second.artifact().getFile().getFullPath()).getFileName().toString())
+                .isEqualTo("A Book (3).epub");
+        assertThat(Files.readString(existing)).isEqualTo("EXISTING");
+    }
+
+    @Test
+    void blankTitleRetainsSafeBookIdFallbackWithoutTechnicalArtifactSuffix() throws Exception {
+        Fixture f = new Fixture(new CopyConverter("blank-title", Set.of("fb2"), "epub", ".epub"),
+                "SOURCE-FB2".length(), ".");
+        Path output = Files.createDirectories(temp.resolve("blank-title"));
+
+        ConvertBookUseCase.Result result = f.useCase.execute(new ConvertBookUseCase.Request(
+                f.id, "epub", output, 1024, 4096, () -> false));
+
+        assertThat(Path.of(result.artifact().getFile().getFullPath()).getFileName().toString())
+                .isEqualTo("book-" + f.id.asString() + ".epub");
+    }
+
+    @Test
+    void publicFileNameUsesSelectedTargetExtension() throws Exception {
+        Fixture f = new Fixture(new CopyConverter("azw3-name", Set.of("fb2"), "azw3", ".azw3"));
+        Path output = Files.createDirectories(temp.resolve("azw3-name"));
+
+        ConvertBookUseCase.Result result = f.useCase.execute(new ConvertBookUseCase.Request(
+                f.id, "azw3", output, 1024, 4096, () -> false));
+
+        assertThat(Path.of(result.artifact().getFile().getFullPath()).getFileName().toString())
+                .isEqualTo("A Book.azw3");
     }
 
     @Test
@@ -108,7 +170,7 @@ class ConvertBookUseCaseTest {
         Path output = Files.createDirectories(temp.resolve("broken"));
 
         assertThatThrownBy(() -> f.useCase.execute(new ConvertBookUseCase.Request(
-                f.id, "epub", output, false, 1024, 4096, () -> false)))
+                f.id, "epub", output, 1024, 4096, () -> false)))
                 .isInstanceOfSatisfying(BookConversionException.class, failure -> {
                     assertThat(failure.stage()).isEqualTo(BookConversionException.Stage.PROVIDER);
                     assertThat(failure.getCause()).isInstanceOf(IllegalStateException.class).hasMessageContaining("boom");
@@ -124,7 +186,7 @@ class ConvertBookUseCaseTest {
         Fixture f = new Fixture(converter, 50);
 
         assertThatThrownBy(() -> f.useCase.execute(new ConvertBookUseCase.Request(
-                f.id, "epub", Files.createDirectories(temp.resolve("limit-in")), false, 10, 4096, () -> false)))
+                f.id, "epub", Files.createDirectories(temp.resolve("limit-in")), 10, 4096, () -> false)))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("input exceeds limit");
 
         verify(converter, never()).convert(any(), any(), any(Path.class));
@@ -142,7 +204,7 @@ class ConvertBookUseCaseTest {
         Path output = Files.createDirectories(temp.resolve("limit-out"));
 
         assertThatThrownBy(() -> f.useCase.execute(new ConvertBookUseCase.Request(
-                f.id, "epub", output, false, 1024, 32, () -> false)))
+                f.id, "epub", output, 1024, 32, () -> false)))
                 .isInstanceOfSatisfying(BookConversionException.class, failure -> {
                     assertThat(failure.stage()).isEqualTo(BookConversionException.Stage.OUTPUT_VALIDATION);
                     assertThat(failure.getCause()).isInstanceOf(java.io.IOException.class)
@@ -159,7 +221,7 @@ class ConvertBookUseCaseTest {
         Path output = Files.createDirectories(temp.resolve("exact-limit"));
 
         ConvertBookUseCase.Result result = f.useCase.execute(new ConvertBookUseCase.Request(
-                f.id, "epub", output, false, "SOURCE-FB2".length(), 4096, () -> false));
+                f.id, "epub", output, "SOURCE-FB2".length(), 4096, () -> false));
 
         assertThat(Path.of(result.artifact().getFile().getFullPath())).exists();
         verify(f.mutations).upsertArtifact(eq(f.id), any(BookArtifact.class), eq(false));
@@ -174,7 +236,7 @@ class ConvertBookUseCaseTest {
                 .when(f.mutations).upsertArtifact(eq(f.id), any(BookArtifact.class), eq(false));
 
         assertThatThrownBy(() -> f.useCase.execute(new ConvertBookUseCase.Request(
-                f.id, "epub", output, false, 1024, 4096, () -> false)))
+                f.id, "epub", output, 1024, 4096, () -> false)))
                 .isInstanceOfSatisfying(BookConversionException.class, failure -> {
                     assertThat(failure.stage()).isEqualTo(BookConversionException.Stage.CATALOG_REGISTRATION);
                     assertThat(failure.getCause()).isInstanceOf(IllegalStateException.class)
@@ -197,7 +259,7 @@ class ConvertBookUseCaseTest {
         }).when(f.mutations).upsertArtifact(eq(f.id), any(BookArtifact.class), eq(false));
 
         assertThatThrownBy(() -> f.useCase.execute(new ConvertBookUseCase.Request(
-                f.id, "epub", output, false, 1024, 4096, () -> false)))
+                f.id, "epub", output, 1024, 4096, () -> false)))
                 .isInstanceOfSatisfying(BookConversionException.class, failure -> {
                     assertThat(failure.stage()).isEqualTo(BookConversionException.Stage.CATALOG_REGISTRATION);
                     assertThat(failure.getCause()).isInstanceOf(IllegalStateException.class)
@@ -237,7 +299,7 @@ class ConvertBookUseCaseTest {
                 resources, mutations);
 
         ConvertBookUseCase.Result result = useCase.execute(new ConvertBookUseCase.Request(
-                id, "epub", Files.createDirectories(temp.resolve("prefer-original")), false, 1024, 4096, () -> false));
+                id, "epub", Files.createDirectories(temp.resolve("prefer-original")), 1024, 4096, () -> false));
 
         assertThat(Files.readString(Path.of(result.artifact().getFile().getFullPath()))).isEqualTo("ORIGINAL-FB2");
         assertThat(result.artifact().getMetadata()).containsEntry("conversion.sourceArtifactId", "original-fb2");
@@ -263,11 +325,63 @@ class ConvertBookUseCaseTest {
                 List.of(new CopyConverter("fb2-to-txt", Set.of("fb2"), "txt", ".txt")), resources, mutations);
 
         ConvertBookUseCase.Result result = useCase.execute(new ConvertBookUseCase.Request(
-                id, "txt", Files.createDirectories(temp.resolve("alternatives")), false, 1024, 4096, () -> false));
+                id, "txt", Files.createDirectories(temp.resolve("alternatives")), 1024, 4096, () -> false));
 
         assertThat(Files.readString(Path.of(result.artifact().getFile().getFullPath()))).isEqualTo("SOURCE-FB2");
         assertThat(result.artifact().getMetadata()).containsEntry("conversion.sourceArtifactId", "fallback-fb2");
         verify(resources, never()).readBookData(eq("preferred.epub"), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void repeatedConversionToSameFormatReusesExistingDerivedArtifactRow() throws Exception {
+        BookId id = BookId.generate();
+        BookArtifact source = BookArtifact.builder().id("source-fb2").format("fb2").local(true)
+                .file(new BookFile("source.fb2", "", "", 10, temp.toString())).build();
+        BookArtifact existingEpub = BookArtifact.builder().id("conversion:legacy-random-id")
+                .sourceId("conversion:old-provider").format("epub").local(true)
+                .file(new BookFile("old.epub", "", "", 20, temp.toString()))
+                .metadata(java.util.Map.of("conversion.sourceFormat", "fb2"))
+                .build();
+        Book book = Book.builder().id(id).title("Repeat conversion").file(source.getFile())
+                .artifacts(List.of(source, existingEpub)).preferredArtifactId(source.getId()).local(true).build();
+        BookQueryRepository books = mock(BookQueryRepository.class);
+        BookResourcePort resources = mock(BookResourcePort.class);
+        CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
+        when(books.findById(id)).thenReturn(Optional.of(book));
+        when(resources.readBookData(eq("source.fb2"), anyString(), eq(temp.toString()), anyString()))
+                .thenReturn(Optional.of(new ByteArrayInputStream("SOURCE-FB2".getBytes(StandardCharsets.UTF_8))));
+        ConvertBookUseCase useCase = new ConvertBookUseCase(books,
+                List.of(new CopyConverter("repeat", Set.of("fb2"), "epub", ".epub")), resources, mutations);
+
+        ConvertBookUseCase.Result result = useCase.execute(new ConvertBookUseCase.Request(
+                id, "epub", Files.createDirectories(temp.resolve("repeat-conversion")),
+                1024, 4096, () -> false));
+
+        assertThat(result.artifact().getId()).isEqualTo("conversion:legacy-random-id");
+        verify(mutations).upsertArtifact(eq(id), argThat(a -> "conversion:legacy-random-id".equals(a.getId())), eq(false));
+    }
+
+    @Test
+    void cancellationPublishesCancelledOperationOutcomeInsteadOfFailure() throws Exception {
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+        BookConverter cancellable = new CopyConverter("cancel-outcome", Set.of("fb2"), "epub", ".epub") {
+            @Override public void convert(Book book, InputStream sourceStream, Path targetFile) throws Exception {
+                assertThat(sourceStream.read()).isNotNegative();
+                cancelled.set(true);
+                sourceStream.read();
+            }
+        };
+        Fixture f = new Fixture(cancellable);
+        AtomicReference<LibraryOperationCompletion> completion = new AtomicReference<>();
+        f.coordinator.addCompletionListener(completion::set);
+        Path output = Files.createDirectories(temp.resolve("cancelled-outcome"));
+
+        assertThatThrownBy(() -> f.useCase.execute(new ConvertBookUseCase.Request(
+                f.id, "epub", output, 1024, 4096, cancelled::get)))
+                .isInstanceOf(CancellationException.class);
+
+        assertThat(completion.get()).isNotNull();
+        assertThat(completion.get().outcome()).isEqualTo(LibraryOperationOutcome.CANCELLED);
     }
 
     @Test
@@ -284,7 +398,7 @@ class ConvertBookUseCaseTest {
         Path output = Files.createDirectories(temp.resolve("cancelled"));
 
         assertThatThrownBy(() -> f.useCase.execute(new ConvertBookUseCase.Request(
-                f.id, "epub", output, false, 1024, 4096, cancelled::get)))
+                f.id, "epub", output, 1024, 4096, cancelled::get)))
                 .isInstanceOf(CancellationException.class);
 
         verifyNoInteractions(f.mutations);
@@ -310,19 +424,22 @@ class ConvertBookUseCaseTest {
         final BookQueryRepository books = mock(BookQueryRepository.class);
         final BookResourcePort resources = mock(BookResourcePort.class);
         final CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
+        final LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
         final ConvertBookUseCase useCase;
 
-        Fixture(BookConverter converter) { this(converter, "SOURCE-FB2".length()); }
+        Fixture(BookConverter converter) { this(converter, "SOURCE-FB2".length(), "A Book"); }
 
-        Fixture(BookConverter converter, long declaredSize) {
+        Fixture(BookConverter converter, long declaredSize) { this(converter, declaredSize, "A Book"); }
+
+        Fixture(BookConverter converter, long declaredSize, String title) {
             BookArtifact source = BookArtifact.builder().id("source-artifact").format("fb2").local(true)
                     .file(new BookFile("source.fb2", "", "", declaredSize, temp.toString())).build();
-            book = Book.builder().id(id).title("A Book").file(source.getFile())
+            book = Book.builder().id(id).title(title).file(source.getFile())
                     .artifacts(List.of(source)).preferredArtifactId(source.getId()).local(true).build();
             when(books.findById(id)).thenReturn(Optional.of(book));
             when(resources.readBookData(eq("source.fb2"), anyString(), eq(temp.toString()), anyString()))
                     .thenAnswer(ignored -> Optional.of(new ByteArrayInputStream("SOURCE-FB2".getBytes(StandardCharsets.UTF_8))));
-            useCase = new ConvertBookUseCase(books, List.of(converter), resources, mutations);
+            useCase = new ConvertBookUseCase(books, List.of(converter), resources, mutations, coordinator);
         }
     }
 

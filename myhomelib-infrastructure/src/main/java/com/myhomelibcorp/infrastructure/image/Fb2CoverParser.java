@@ -6,9 +6,11 @@ import org.springframework.stereotype.Component;
 import javax.xml.stream.XMLInputFactory;
 import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.util.Base64;
 
 @Component
@@ -62,8 +64,10 @@ public class Fb2CoverParser {
         String coverId = null;
         byte[] firstValidImage = null;
         boolean inCoverpage = false;
+        int parsedEvents = 0;
 
         while (xmlReader.hasNext()) {
+            if (((++parsedEvents) & 0xFF) == 0) checkCancelled();
             int event = xmlReader.next();
 
             if (event == XMLStreamConstants.START_ELEMENT) {
@@ -87,11 +91,12 @@ public class Fb2CoverParser {
                 if ("binary".equals(localName)) {
                     String id = xmlReader.getAttributeValue(null, "id");
                     String contentType = xmlReader.getAttributeValue(null, "content-type");
-                    String content = xmlReader.getElementText();
-                    if (content == null || content.isBlank()) continue;
-
                     boolean declaredCover = sameResourceId(id, coverId);
-                    if (!declaredCover && !isImage(contentType, id)) continue;
+                    // Skip body illustrations after a fallback image was found, but keep
+                    // looking for the declared cover. Never materialize unwanted Base64.
+                    boolean needed = declaredCover || (firstValidImage == null && isImage(contentType, id));
+                    String content = readBoundedBinaryText(xmlReader, needed);
+                    if (content == null || content.isBlank()) continue;
 
                     byte[] decoded = decodeImage(content);
                     if (decoded == null || !looksLikeImage(decoded)) continue;
@@ -109,6 +114,48 @@ public class Fb2CoverParser {
         // Broken/minimal FB2 without <coverpage>: first image is a much safer fallback
         // than the old "last binary wins" behaviour.
         return firstValidImage;
+    }
+
+    /**
+     * Read only bounded FB2 binary text. XMLStreamReader.getElementText() previously
+     * built an unbounded Java String even though the decoded cover size was later
+     * capped. A malformed/massive FB2 could therefore exhaust heap before the
+     * 10 MiB cover limit was evaluated. When oversize, consume the XML element
+     * without retaining its remaining payload so subsequent valid covers work.
+     */
+    private static String readBoundedBinaryText(XMLStreamReader reader, boolean wanted)
+            throws XMLStreamException, InterruptedIOException {
+        // Base64 overhead + whitespace allowance, with a strict total retention cap.
+        final int maxChars = ((MAX_IMAGE_SIZE + 2) / 3) * 4 + 512 * 1024;
+        StringBuilder text = wanted ? new StringBuilder(4096) : null;
+        boolean overflow = false;
+        while (reader.hasNext()) {
+            checkCancelled();
+            int event = reader.next();
+            if (event == XMLStreamConstants.END_ELEMENT && "binary".equalsIgnoreCase(reader.getLocalName())) {
+                return overflow || text == null ? null : text.toString();
+            }
+            if (event == XMLStreamConstants.START_ELEMENT) {
+                throw new XMLStreamException("Unexpected nested XML element inside FB2 binary");
+            }
+            if (text != null && !overflow && (event == XMLStreamConstants.CHARACTERS
+                    || event == XMLStreamConstants.CDATA || event == XMLStreamConstants.SPACE)) {
+                int length = reader.getTextLength();
+                if (length > maxChars - text.length()) {
+                    overflow = true;
+                    text = null;
+                } else {
+                    text.append(reader.getTextCharacters(), reader.getTextStart(), length);
+                }
+            }
+        }
+        throw new XMLStreamException("FB2 binary ended before closing tag");
+    }
+
+    private static void checkCancelled() throws InterruptedIOException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedIOException("FB2 cover parsing cancelled");
+        }
     }
 
     private static boolean sameResourceId(String id, String coverId) {

@@ -18,6 +18,6 @@ public record ContinueReadingItemDto(
         authors = authors == null ? "" : authors;
         chapterTitle = chapterTitle == null ? "" : chapterTitle;
         lastDevice = lastDevice == null || lastDevice.isBlank() ? "desktop" : lastDevice;
-        percent = Math.max(0.0, Math.min(100.0, percent));
+        percent = Double.isFinite(percent) ? Math.max(0.0, Math.min(100.0, percent)) : 0.0;
     }
 }

@@ -14,13 +14,16 @@ import java.util.Set;
 public class HelpTopicRegistry {
     private static final Map<String, String> WORKSPACES = Map.ofEntries(
             Map.entry("dashboard", "index"),
-            Map.entry("author", "navigation"), Map.entry("series", "navigation"),
+            Map.entry("author", "navigation"), Map.entry("downloaded-author", "navigation"),
+            Map.entry("publisher", "navigation"), Map.entry("series", "navigation"),
             Map.entry("genre", "navigation"), Map.entry("year", "navigation"),
             Map.entry("language", "navigation"), Map.entry("archive", "navigation"),
             Map.entry("keyword", "navigation"), Map.entry("group-nav", "navigation"),
-            Map.entry("groups", "navigation"), Map.entry("reviews", "navigation"),
+            Map.entry("groups", "navigation"), Map.entry("reading-lists", "reading-lists"), Map.entry("reviews", "navigation"),
             Map.entry("all-books", "navigation"), Map.entry("already-read", "navigation"),
             Map.entry("history", "navigation"), Map.entry("updates", "updates"),
+            Map.entry("followed-authors", "updates"), Map.entry("operations", "operations"),
+            Map.entry("annotations", "annotations"),
             Map.entry("search", "search"), Map.entry("book", "details"),
             Map.entry("reader", "reader"), Map.entry("new-reader", "reader"),
             Map.entry("collection", "collections"), Map.entry("import", "import")
@@ -31,13 +34,15 @@ public class HelpTopicRegistry {
             Map.entry("dialog:inpx", "inpx"), Map.entry("dialog:export", "export"),
             Map.entry("dialog:device", "device"), Map.entry("dialog:opds", "opds"),
             Map.entry("dialog:maintenance", "maintenance"), Map.entry("dialog:actions", "actions"),
-            Map.entry("dialog:filters", "filters"), Map.entry("dialog:backup", "backup")
+            Map.entry("dialog:filters", "filters"), Map.entry("dialog:backup", "backup"),
+            Map.entry("dialog:integration", "integrations")
     );
 
     private static final Set<String> TOPICS = Set.of(
             "index", "collections", "inpx", "import", "search", "navigation", "updates",
             "filters", "details", "reader", "export", "device", "settings", "portable",
-            "hlc2", "archives", "mcp", "maintenance", "actions", "opds", "backup"
+            "hlc2", "archives", "mcp", "maintenance", "actions", "opds", "backup",
+            "annotations", "operations", "reading-lists", "integrations", "functions"
     );
 
     public String topicForWorkspace(String workspaceType) {

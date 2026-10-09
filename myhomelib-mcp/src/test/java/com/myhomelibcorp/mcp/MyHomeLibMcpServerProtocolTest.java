@@ -1,7 +1,7 @@
 package com.myhomelibcorp.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -37,7 +37,7 @@ class MyHomeLibMcpServerProtocolTest {
         List<JsonNode> out = run(db, input.getBytes(StandardCharsets.UTF_8));
         assertEquals(6, out.size()); // notification produces no response
         assertEquals(-32700, out.get(0).path("error").path("code").asInt());
-        assertEquals("2025-06-18", out.get(1).path("result").path("protocolVersion").asText());
+        assertEquals("2025-06-18", out.get(1).path("result").path("protocolVersion").asString());
         assertTrue(out.get(2).path("result").path("tools").isArray());
         assertTrue(out.get(2).path("result").path("tools").toString().contains("book_text"));
         assertFalse(out.get(3).path("result").path("content").isEmpty());
@@ -66,6 +66,20 @@ class MyHomeLibMcpServerProtocolTest {
     void cleanClientDisconnectEndsLoopWithoutOutput() throws Exception {
         Path db = createDb();
         assertTrue(run(db, new byte[0]).isEmpty());
+    }
+
+    @Test
+    void searchInsideBookPreservesOriginalUnicodeOffsets() throws Exception {
+        Path db = createDb();
+        String text = "AİB tail";
+        java.nio.file.Files.writeString(temp.resolve("book.txt"), text, StandardCharsets.UTF_8);
+        String input = "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/call\",\"params\":{\"name\":\"search_inside_book\",\"arguments\":{\"book_id\":\"b1\",\"query\":\"b\"}}}\n";
+
+        List<JsonNode> out = run(db, input.getBytes(StandardCharsets.UTF_8));
+
+        JsonNode payload = json.readTree(out.getFirst().path("result").path("content").get(0).path("text").asString());
+        assertEquals(1, payload.path("matches").asInt());
+        assertEquals(text.indexOf('B'), payload.path("hits").get(0).path("offset").asInt());
     }
 
     private List<JsonNode> run(Path db, byte[] input) throws Exception {

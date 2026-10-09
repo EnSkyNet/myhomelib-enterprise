@@ -14,7 +14,6 @@ import com.myhomelibcorp.application.search.SearchIndexUnavailableException;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.book.BookSnapshot;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.lucene.analysis.Analyzer;
@@ -73,10 +72,21 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         this(directory, analyzer, queryParser, bookQueryRepository, customFieldRepository, null);
     }
 
+    /**
+     * Production constructor. The persistent Lucene directory is collection-scoped and is opened
+     * by {@link LuceneCollectionIndexLifecycle}; keeping this service resource-free until then
+     * avoids opening and immediately discarding a bootstrap writer/searcher on every application start.
+     */
     @Autowired
-    public LuceneSearchService(Directory directory, Analyzer analyzer, QueryParser queryParser,
+    public LuceneSearchService(Analyzer analyzer, QueryParser queryParser,
                                BookQueryRepository bookQueryRepository, CustomFieldRepository customFieldRepository,
                                BookActivityQueryPort bookActivityQueryPort) {
+        this(null, analyzer, queryParser, bookQueryRepository, customFieldRepository, bookActivityQueryPort);
+    }
+
+    private LuceneSearchService(Directory directory, Analyzer analyzer, QueryParser queryParser,
+                                BookQueryRepository bookQueryRepository, CustomFieldRepository customFieldRepository,
+                                BookActivityQueryPort bookActivityQueryPort) {
         this.directory = directory;
         this.analyzer = analyzer;
         this.bookQueryRepository = bookQueryRepository;
@@ -84,14 +94,19 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         this.queryNormalizer = new LuceneQueryNormalizer(queryParser);
     }
 
-    @PostConstruct
-    public void init() {
-        log.info("Ініціалізація LuceneSearchService...");
-        LuceneIndexWriterFactory.OpenedIndex opened = LuceneIndexWriterFactory.open(directory, analyzer);
+    /** Opens the explicitly supplied directory for standalone tests/benchmarks. */
+    void init() {
+        if (directory == null) {
+            throw new IllegalStateException("Standalone Lucene directory is not configured");
+        }
+        openDirectory(directory);
+    }
+
+    private void openDirectory(Directory nextDirectory) {
+        LuceneIndexWriterFactory.OpenedIndex opened = LuceneIndexWriterFactory.open(nextDirectory, analyzer);
         directory = opened.directory();
         indexWriter = opened.writer();
         searcherManager = opened.searcherManager();
-        log.info("LuceneSearchService ініціалізовано");
     }
 
     // Package-private hooks owned by LuceneCollectionIndexLifecycle.
@@ -112,10 +127,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     synchronized void switchDirectory(Directory nextDirectory) {
         if (isClosed.get()) throw new IllegalStateException("LuceneSearchService is closed");
         closeIndexResources(false);
-        LuceneIndexWriterFactory.OpenedIndex opened = LuceneIndexWriterFactory.open(nextDirectory, analyzer);
-        directory = opened.directory();
-        indexWriter = opened.writer();
-        searcherManager = opened.searcherManager();
+        openDirectory(nextDirectory);
         indexedSinceLastCommit = 0;
         atomicUpdate = false;
         setQueryAvailability(false, "Пошуковий індекс перемикається на іншу колекцію");
@@ -135,7 +147,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
 
     @Override
     public void indexSnapshot(BookSnapshot snapshot) {
-        if (snapshot == null || isClosed.get()) return;
+        if (snapshot == null || isClosed.get() || indexWriter == null) return;
         try {
             Document doc = documentMapper.toDocument(snapshot);
             indexWriter.updateDocument(new Term("id", snapshot.getId().asString()), doc);
@@ -150,7 +162,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
 
     @Override
     public void indexAll(List<Book> books) {
-        if (books == null || books.isEmpty() || isClosed.get()) return;
+        if (books == null || books.isEmpty() || isClosed.get() || indexWriter == null) return;
         int indexed = 0;
         try {
             var activities = snapshotEnricher.activitySummaries(books);
@@ -172,7 +184,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
 
     @Override
     public void deleteBook(BookId bookId) {
-        if (bookId == null || isClosed.get()) return;
+        if (bookId == null || isClosed.get() || indexWriter == null) return;
         try {
             indexWriter.deleteDocuments(new Term("id", bookId.asString()));
             indexedSinceLastCommit++;
@@ -222,8 +234,8 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     public synchronized void rebuildIndex(AtomicBoolean cancelFlag, Consumer<SearchIndexProgress> progressListener) {
         if (isClosed.get()) return;
         if (indexWriter == null) {
-            log.warn("IndexWriter is null, cannot rebuild index");
-            return;
+            throw new SearchIndexUnavailableException(
+                    "Пошуковий індекс зараз недоступний для перебудови; можливо, його використовує інший процес");
         }
         log.info("Початок повної перебудови індексу (bounded keyset + atomic commit)...");
         Instant startedAt = Instant.now();

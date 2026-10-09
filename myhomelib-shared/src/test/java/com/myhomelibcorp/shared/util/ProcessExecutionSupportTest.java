@@ -2,10 +2,18 @@ package com.myhomelibcorp.shared.util;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -68,6 +76,36 @@ class ProcessExecutionSupportTest {
     }
 
     @Test
+    void terminateWaitsForDescendantsAfterForcibleTermination() {
+        DelayedTerminationHandle child = new DelayedTerminationHandle(2002, List.of(), true);
+        DelayedTerminationHandle root = new DelayedTerminationHandle(2001, List.of(child), false);
+        DelayedTerminationProcess process = new DelayedTerminationProcess(root);
+
+        ProcessExecutionSupport.terminate(process);
+
+        assertThat(root.isAlive()).isFalse();
+        assertThat(child.isAlive()).as("terminate must not return while a forcibly-killed child is still alive").isFalse();
+    }
+
+    @Test
+    void terminationGraceWaitsBeyondLegacyTwoSecondsForSlowNativeDescendant() throws Exception {
+        DelayedTerminationHandle child = new DelayedTerminationHandle(2012, List.of(), 2500);
+        DelayedTerminationHandle root = new DelayedTerminationHandle(2011, List.of(), 0);
+        DelayedTerminationProcess process = new DelayedTerminationProcess(root);
+        root.destroyForcibly();
+        child.destroyForcibly();
+
+        var await = ProcessExecutionSupport.class.getDeclaredMethod(
+                "awaitTermination", Process.class, List.class);
+        await.setAccessible(true);
+        await.invoke(null, process, List.of(child));
+
+        assertThat(child.isAlive())
+                .as("cleanup must not run while a slowly terminating native child can still hold input.fb2")
+                .isFalse();
+    }
+
+    @Test
     void writesStdinAndCapturesResponse() throws Exception {
         var result = ProcessExecutionSupport.run(javaCommand(EchoStdin.class), "secret-value", Duration.ofSeconds(5), 4096);
 
@@ -80,6 +118,86 @@ class ProcessExecutionSupportTest {
         String java = Path.of(System.getProperty("java.home"), "bin",
                 System.getProperty("os.name", "").toLowerCase().contains("win") ? "java.exe" : "java").toString();
         return List.of(java, "-cp", System.getProperty("java.class.path"), mainClass.getName());
+    }
+
+    private static final class DelayedTerminationProcess extends Process {
+        private final DelayedTerminationHandle handle;
+
+        private DelayedTerminationProcess(DelayedTerminationHandle handle) {
+            this.handle = handle;
+        }
+
+        @Override public OutputStream getOutputStream() { return new ByteArrayOutputStream(); }
+        @Override public InputStream getInputStream() { return new ByteArrayInputStream(new byte[0]); }
+        @Override public InputStream getErrorStream() { return new ByteArrayInputStream(new byte[0]); }
+        @Override public int waitFor() throws InterruptedException {
+            while (handle.isAlive()) Thread.sleep(5);
+            return 0;
+        }
+        @Override public boolean waitFor(long timeout, TimeUnit unit) throws InterruptedException {
+            long deadline = System.nanoTime() + unit.toNanos(timeout);
+            while (handle.isAlive() && System.nanoTime() < deadline) Thread.sleep(5);
+            return !handle.isAlive();
+        }
+        @Override public int exitValue() {
+            if (handle.isAlive()) throw new IllegalThreadStateException("running");
+            return 0;
+        }
+        @Override public void destroy() { handle.destroy(); }
+        @Override public Process destroyForcibly() { handle.destroyForcibly(); return this; }
+        @Override public boolean isAlive() { return handle.isAlive(); }
+        @Override public ProcessHandle toHandle() { return handle; }
+    }
+
+    private static final class DelayedTerminationHandle implements ProcessHandle {
+        private final long pid;
+        private final List<ProcessHandle> descendants;
+        private final long forcibleExitDelayMillis;
+        private final AtomicBoolean alive = new AtomicBoolean(true);
+        private final CompletableFuture<ProcessHandle> exited = new CompletableFuture<>();
+
+        private DelayedTerminationHandle(long pid, List<? extends ProcessHandle> descendants, boolean delayedForcibleExit) {
+            this(pid, descendants, delayedForcibleExit ? 150 : 0);
+        }
+
+        private DelayedTerminationHandle(long pid, List<? extends ProcessHandle> descendants, long forcibleExitDelayMillis) {
+            this.pid = pid;
+            this.descendants = List.copyOf(descendants);
+            this.forcibleExitDelayMillis = Math.max(0L, forcibleExitDelayMillis);
+        }
+
+        @Override public long pid() { return pid; }
+        @Override public Optional<ProcessHandle> parent() { return Optional.empty(); }
+        @Override public java.util.stream.Stream<ProcessHandle> children() { return descendants.stream(); }
+        @Override public java.util.stream.Stream<ProcessHandle> descendants() { return descendants.stream(); }
+        @Override public Info info() { throw new UnsupportedOperationException(); }
+        @Override public CompletableFuture<ProcessHandle> onExit() { return exited; }
+        @Override public boolean supportsNormalTermination() { return true; }
+        @Override public boolean destroy() {
+            if (forcibleExitDelayMillis == 0L) markExited();
+            return true;
+        }
+        @Override public boolean destroyForcibly() {
+            if (forcibleExitDelayMillis == 0L) {
+                markExited();
+            } else {
+                Thread.startVirtualThread(() -> {
+                    try { Thread.sleep(forcibleExitDelayMillis); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                    markExited();
+                });
+            }
+            return true;
+        }
+        @Override public boolean isAlive() { return alive.get(); }
+        @Override public int compareTo(ProcessHandle other) { return Long.compare(pid, other.pid()); }
+        @Override public int hashCode() { return Long.hashCode(pid); }
+        @Override public boolean equals(Object other) {
+            return other instanceof ProcessHandle handle && handle.pid() == pid;
+        }
+
+        private void markExited() {
+            if (alive.compareAndSet(true, false)) exited.complete(this);
+        }
     }
 
     public static class OutputFlood {

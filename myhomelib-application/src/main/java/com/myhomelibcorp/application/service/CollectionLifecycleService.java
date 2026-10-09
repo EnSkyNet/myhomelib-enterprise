@@ -8,6 +8,7 @@ import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecycle
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.application.port.out.search.SearchIndexLifecycle;
+import com.myhomelibcorp.application.search.SearchIndexUnavailableException;
 import com.myhomelibcorp.domain.event.collection.CollectionOpenedEvent;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.shared.event.DomainEventPublisher;
@@ -17,6 +18,9 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -73,13 +77,24 @@ public class CollectionLifecycleService {
             // 4. Validate Lucene freshness before derived series normalization.
             // syncSeriesFromBooks() may write the SQLite file but does not change searchable book data,
             // so it must not by itself force a 500k–1M full index rebuild on startup.
-            boolean reusableIndex = searchIndexLifecycle.activateCollectionIndex(collection);
+            boolean reusableIndex = false;
+            boolean searchIndexAvailable = true;
+            try {
+                reusableIndex = searchIndexLifecycle.activateCollectionIndex(collection);
+            } catch (SearchIndexUnavailableException unavailable) {
+                // Lucene is derived state. A stale write.lock or a second instance must not make the
+                // SQLite catalogue unusable; search stays explicitly unavailable until the lock is
+                // released and the user/restart can reopen or rebuild the index.
+                searchIndexAvailable = false;
+                log.warn("Пошуковий індекс тимчасово недоступний для колекції {}: {}",
+                        collection.getName(), unavailable.getMessage());
+            }
 
             // 5. Do not run catalog-wide repair/series normalization on the startup critical path.
             // Remote-root repair is handled lazily when a remote book is downloaded; series identities
             // are synchronized after imports. Both operations can scan/write hundreds of thousands of rows
             // and previously kept the splash screen blocked even when Lucene was already reusable.
-            boolean shouldRebuild = rebuildIndex && !reusableIndex;
+            boolean shouldRebuild = rebuildIndex && searchIndexAvailable && !reusableIndex;
             if (shouldRebuild) rebuildIndexAsync(collection);
 
             // 6. Публікуємо доменну подію
@@ -89,6 +104,8 @@ public class CollectionLifecycleService {
                 log.info("✅ Ініціалізацію колекції {} завершено; dirty/absent індекс перебудовується у фоні", collection.getName());
             } else if (reusableIndex) {
                 log.info("✅ Ініціалізацію колекції {} завершено; готовий per-collection індекс перевикористано", collection.getName());
+            } else if (!searchIndexAvailable) {
+                log.warn("✅ Колекцію {} відкрито; пошук тимчасово недоступний через зайнятий Lucene index", collection.getName());
             } else {
                 log.info("✅ Ініціалізацію колекції {} завершено без автоматичної перебудови індексу", collection.getName());
             }
@@ -136,11 +153,23 @@ public class CollectionLifecycleService {
     private long rebuildSearchIndexLocked() {
         log.info("🔄 Перебудова індексу...");
         long startTime = System.currentTimeMillis();
-        indexRebuilder.rebuildIndex();
+        try {
+            indexRebuilder.rebuildIndex();
+        } catch (SearchIndexUnavailableException unavailable) {
+            reactivateCurrentSearchIndex(unavailable);
+            indexRebuilder.rebuildIndex();
+        }
         long duration = System.currentTimeMillis() - startTime;
         long indexed = indexRebuilder.getIndexedDocumentCount();
         log.info("✅ Індекс перебудовано за {} мс. Проіндексовано {} документів", duration, indexed);
         return indexed;
+    }
+
+    private void reactivateCurrentSearchIndex(SearchIndexUnavailableException originalFailure) {
+        Collection current = collectionLifecyclePort.getCurrentCollection();
+        if (current == null) throw originalFailure;
+        log.info("Повторне відкриття Lucene перед ручною перебудовою колекції {}", current.getName());
+        searchIndexLifecycle.activateCollectionIndex(current);
     }
 
     /**
@@ -160,6 +189,21 @@ public class CollectionLifecycleService {
     }
 
     /**
+     * Marks the active index stale and queues a rebuild that waits for the current coordinated
+     * operation (for example a large catalog UPDATE) to release its lease. This keeps a large
+     * full rebuild out of the user-visible update critical path without ever advertising the old
+     * index as reusable after a restart.
+     */
+    public void markSearchIndexDirty() {
+        searchIndexLifecycle.markCurrentIndexDirty();
+    }
+
+    public CompletableFuture<Void> rebuildSearchIndexAfterCurrentOperation() {
+        markSearchIndexDirty();
+        return startAsyncRebuild(collectionLifecyclePort.getCurrentCollection(), false);
+    }
+
+    /**
      * Invalidates and cooperatively cancels the current background rebuild, waiting until its
      * detached INDEX lease is released. SWITCH calls this before acquiring its own lease.
      */
@@ -169,10 +213,23 @@ public class CollectionLifecycleService {
         if (task == null) return;
         task.cancelFlag().set(true);
         try {
-            task.future().join();
-        } catch (CancellationException | java.util.concurrent.CompletionException expected) {
+            long waitMillis = indexCancellationWaitMillis();
+            task.future().get(waitMillis, TimeUnit.MILLISECONDS);
+        } catch (CancellationException | ExecutionException expected) {
             log.debug("Попередню фонову перебудову індексу завершено/скасовано перед lifecycle operation");
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Очікування скасування перебудови індексу перервано", interrupted);
+        } catch (TimeoutException timeout) {
+            throw new IllegalStateException(
+                    "Фонова перебудова індексу не завершилася після запиту скасування за "
+                            + indexCancellationWaitMillis() + " мс", timeout);
         }
+    }
+
+    private static long indexCancellationWaitMillis() {
+        long configured = Long.getLong("myhomelib.index.cancelWaitMs", 30_000L);
+        return Math.max(100L, Math.min(120_000L, configured));
     }
 
     private CompletableFuture<Void> startAsyncRebuild(Collection expectedCollection, boolean acquireImmediately) {
@@ -237,7 +294,12 @@ public class CollectionLifecycleService {
                 cancelled = true;
             } else {
                 long startTime = System.currentTimeMillis();
-                indexRebuilder.rebuildIndex(task.cancelFlag());
+                try {
+                    indexRebuilder.rebuildIndex(task.cancelFlag());
+                } catch (SearchIndexUnavailableException unavailable) {
+                    reactivateCurrentSearchIndex(unavailable);
+                    indexRebuilder.rebuildIndex(task.cancelFlag());
+                }
                 if (!isRebuildStillValid(task) || task.cancelFlag().get()) {
                     cancelled = true;
                 } else {

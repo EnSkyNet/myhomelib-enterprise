@@ -32,6 +32,10 @@ import java.util.function.BooleanSupplier;
 public final class CalibreCliBookConverter implements BookConverter {
     static final String EXECUTABLE_SETTING = "converter.calibre.executable";
     static final String TIMEOUT_SETTING = "converter.calibre.timeoutSeconds";
+    static final int DEFAULT_TIMEOUT_SECONDS = 30 * 60;
+    private static final int LEGACY_DEFAULT_TIMEOUT_SECONDS = 5 * 60;
+    private static final int MIN_TIMEOUT_SECONDS = 10;
+    private static final int MAX_TIMEOUT_SECONDS = 60 * 60;
     private static final int MAX_CAPTURE_BYTES = 64 * 1024;
     private static final int MAX_FAILURE_TEXT = 2048;
     private static final Set<String> SOURCE_FORMATS = Set.of(
@@ -127,7 +131,7 @@ public final class CalibreCliBookConverter implements BookConverter {
             checkCancelled(cancelled);
 
             List<String> argv = List.of(executable.toString(), source.toString(), processOutput.toString());
-            int timeoutSeconds = Math.max(10, Math.min(3600, settings.getInt(TIMEOUT_SETTING, 300)));
+            int timeoutSeconds = configuredTimeoutSeconds();
             AtomicBoolean outputTooLarge = new AtomicBoolean();
             AtomicReference<Exception> unsafeOutput = new AtomicReference<>();
             BooleanSupplier guardedCancellation = () -> {
@@ -167,12 +171,17 @@ public final class CalibreCliBookConverter implements BookConverter {
                         + failureSuffix(result.output()));
             }
             checkCancelled(cancelled);
-            SafeFilePublication.requireSafeRegularFile(processOutput, "Calibre converter output");
-            long outputBytes = Files.size(processOutput);
+            SafeFilePublication.FileSnapshot outputSnapshot =
+                    SafeFilePublication.snapshot(processOutput, "Calibre converter output");
+            long outputBytes = outputSnapshot.size();
+            if (outputBytes <= 0) {
+                throw new IllegalStateException("calibre did not create a non-empty output file");
+            }
             if (outputBytes > maxOutputBytes) {
                 throw new IllegalStateException("calibre output exceeded limit " + maxOutputBytes + " bytes");
             }
-            SafeFilePublication.moveNoReplace(processOutput, normalizedTarget, "Calibre converter publication");
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    processOutput, normalizedTarget, null, outputSnapshot.sha256(), "Calibre converter publication");
         } finally {
             try {
                 SafeFilePublication.cleanupPrivateWorkspace(workspace);
@@ -180,6 +189,15 @@ public final class CalibreCliBookConverter implements BookConverter {
                 log.warn("Cannot remove temporary calibre workspace {}", workspace, cleanupFailure);
             }
         }
+    }
+
+
+    private int configuredTimeoutSeconds() {
+        int configured = settings.getInt(TIMEOUT_SETTING, DEFAULT_TIMEOUT_SECONDS);
+        // 300 s was the historical product default, not a safe bound for large FB2/EPUB jobs.
+        // Treat that exact legacy value as an upgrade marker while preserving any explicit custom value.
+        if (configured == LEGACY_DEFAULT_TIMEOUT_SECONDS) configured = DEFAULT_TIMEOUT_SECONDS;
+        return Math.max(MIN_TIMEOUT_SECONDS, Math.min(MAX_TIMEOUT_SECONDS, configured));
     }
 
     private Optional<Path> executable() {

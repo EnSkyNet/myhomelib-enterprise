@@ -9,6 +9,7 @@ files = {
     "collection_repo": ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteCollectionRepository.java",
     "author_repo": ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteAuthorRepository.java",
     "group_batch": ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/group/AddToGroupBatchUseCase.java",
+    "group_mutation": ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/group/GroupMutationExecutor.java",
 }
 for name, path in files.items():
     if not path.exists():
@@ -19,6 +20,7 @@ meta = files["meta"].read_text(encoding="utf-8")
 collection_repo = files["collection_repo"].read_text(encoding="utf-8")
 author_repo = files["author_repo"].read_text(encoding="utf-8")
 group_batch = files["group_batch"].read_text(encoding="utf-8")
+group_mutation = files["group_mutation"].read_text(encoding="utf-8")
 
 requirements = [
     ("explicit metadata transaction-manager bean", '@Bean(name = "metadataTransactionManager")' in meta),
@@ -26,7 +28,7 @@ requirements = [
     ("metadata transaction manager is primary/default", '@Primary\n    @Bean(name = "metadataTransactionManager")' in meta),
     ("collection save uses metadata transaction manager", '@Transactional(transactionManager = "metadataTransactionManager")' in collection_repo),
     ("author reads use collection transaction manager", '@Transactional(transactionManager = "collectionTransactionManager", readOnly = true)' in author_repo),
-    ("group batch uses collection transaction manager", '@Transactional(transactionManager = "collectionTransactionManager")' in group_batch),
+    ("group batch uses collection transaction manager", '@Qualifier("collectionTransactionTemplate") TransactionTemplate transactionTemplate' in group_mutation and 'transactionTemplate.execute' in group_mutation and 'mutationExecutor.execute' in group_batch),
 ]
 
 failed = [name for name, ok in requirements if not ok]

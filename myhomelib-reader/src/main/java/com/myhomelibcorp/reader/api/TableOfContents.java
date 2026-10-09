@@ -7,8 +7,10 @@ public interface TableOfContents {
     List<TocEntry> entries();
 
     default TocEntry findEntryAt(long textOffset) {
-        for (TocEntry entry : entries()) {
-            if (entry.containsOffset(textOffset)) {
+        List<TocEntry> entries = entries();
+        if (entries == null || entries.isEmpty()) return null;
+        for (TocEntry entry : entries) {
+            if (entry != null && entry.containsOffset(textOffset)) {
                 return entry;
             }
         }
@@ -16,10 +18,12 @@ public interface TableOfContents {
     }
 
     default int size() {
-        return entries().size();
+        List<TocEntry> entries = entries();
+        return entries == null ? 0 : entries.size();
     }
 
     default boolean isEmpty() {
-        return entries().isEmpty();
+        List<TocEntry> entries = entries();
+        return entries == null || entries.isEmpty();
     }
 }

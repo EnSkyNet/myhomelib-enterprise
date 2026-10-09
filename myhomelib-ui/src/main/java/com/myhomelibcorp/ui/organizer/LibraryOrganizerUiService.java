@@ -1,6 +1,6 @@
 package com.myhomelibcorp.ui.organizer;
 
-import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.application.settings.ApplicationSettingsQueryService;
 import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import com.myhomelibcorp.epub.optimizer.EpubOptimizationProfile;
 import com.myhomelibcorp.organizer.analysis.AnalyzeLibraryOrganizationUseCase;
@@ -24,7 +24,12 @@ import com.myhomelibcorp.organizer.policy.OrganizerProfile;
 import com.myhomelibcorp.organizer.policy.OrganizerProfiles;
 import com.myhomelibcorp.organizer.policy.PdfPolicy;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
+import com.myhomelibcorp.ui.operation.OperationKind;
+import com.myhomelibcorp.application.progress.OperationProgress;
+import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
@@ -62,12 +67,11 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
-import javafx.stage.DirectoryChooser;
-import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
@@ -88,6 +92,7 @@ import java.util.stream.Collectors;
 /** Six-step Organizer wizard: source -> rules -> analyze -> preview -> apply -> result. */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class LibraryOrganizerUiService {
     private final ApplicationState appState;
     private final AnalyzeLibraryOrganizationUseCase analyzer;
@@ -95,14 +100,18 @@ public class LibraryOrganizerUiService {
     private final ApplyLibraryOrganizationUseCase applyUseCase;
     private final UndoLibraryOrganizationUseCase undoUseCase;
     private final GetLibraryOrganizationStatusUseCase statusUseCase;
-    private final ApplicationSettingsPort settings;
+    private final ApplicationSettingsQueryService settings;
     private final UiBackgroundExecutor background;
     private final DialogService dialogs;
+    private final FileChooserService fileChooserService;
     private final ApplicationEventPublisher events;
+    private final OperationCenterService operationCenter;
 
     public void show(Window owner) {
         new Wizard(owner).show();
     }
+
+    private record AnalysisProgressUpdate(String operationId, OrganizationAnalysisProgress progress) { }
 
     private final class Wizard {
         private final Stage stage = new Stage();
@@ -161,10 +170,25 @@ public class LibraryOrganizerUiService {
         private final List<Node> pages = new ArrayList<>();
         private int pageIndex;
         private volatile boolean busy;
+        private String analysisOperationId;
+        private String analysisOperationTitle;
+        private String analysisCollectionId;
         private OrganizationAnalysis analysis;
         private OrganizationPlan plan;
         private OrganizationPlan appliedPlan;
         private ApplyResult applyResult;
+        private final LatestUiProgress<AnalysisProgressUpdate> analysisUiProgress =
+                new LatestUiProgress<>(UiExecutor::runOnUiThread, update -> {
+                    if (busy && Objects.equals(analysisOperationId, update.operationId())) {
+                        updateAnalysisProgress(update.progress());
+                    }
+                });
+        private final LatestUiProgress<OrganizationApplyProgress> applyUiProgress =
+                new LatestUiProgress<>(UiExecutor::runOnUiThread, value -> {
+                    if (busy) updateApplyProgress(value);
+                });
+
+
 
         Wizard(Window owner) {
             stage.setTitle(UiText.text("ui.organizer.title"));
@@ -264,26 +288,26 @@ public class LibraryOrganizerUiService {
                 if (newValue != null) applyProfile(newValue.profile());
             });
 
-            canonicalFormat.getItems().setAll(
+            canonicalFormat.getItems().setAll(List.of(
                     new LabeledValue<>("epub", UiText.text("ui.organizer.format.epub3")),
-                    new LabeledValue<>("original", UiText.text("ui.organizer.format.original")));
-            pdfPolicy.getItems().setAll(
+                    new LabeledValue<>("original", UiText.text("ui.organizer.format.original"))));
+            pdfPolicy.getItems().setAll(List.of(
                     new LabeledValue<>(PdfPolicy.KEEP_PDF, UiText.text("ui.organizer.pdf.keep")),
-                    new LabeledValue<>(PdfPolicy.CONVERT_WHEN_EXPLICITLY_SUPPORTED, UiText.text("ui.organizer.pdf.convert_explicit")));
-            originalRetention.getItems().setAll(
+                    new LabeledValue<>(PdfPolicy.CONVERT_WHEN_EXPLICITLY_SUPPORTED, UiText.text("ui.organizer.pdf.convert_explicit"))));
+            originalRetention.getItems().setAll(List.of(
                     new LabeledValue<>(OriginalRetentionPolicy.KEEP_ORIGINAL, UiText.text("ui.organizer.original.keep")),
                     new LabeledValue<>(OriginalRetentionPolicy.MOVE_ORIGINAL_TO_ARCHIVE, UiText.text("ui.organizer.original.archive")),
-                    new LabeledValue<>(OriginalRetentionPolicy.DELETE_ORIGINAL_AFTER_VERIFIED_CONVERSION, UiText.text("ui.organizer.original.quarantine")));
-            duplicatePolicy.getItems().setAll(
+                    new LabeledValue<>(OriginalRetentionPolicy.DELETE_ORIGINAL_AFTER_VERIFIED_CONVERSION, UiText.text("ui.organizer.original.quarantine"))));
+            duplicatePolicy.getItems().setAll(List.of(
                     new LabeledValue<>(OrganizerDuplicatePolicy.KEEP_ALL, UiText.text("ui.organizer.duplicates.keep")),
                     new LabeledValue<>(OrganizerDuplicatePolicy.REVIEW, UiText.text("ui.organizer.duplicates.review")),
-                    new LabeledValue<>(OrganizerDuplicatePolicy.DELETE_EXACT_ONLY, UiText.text("ui.organizer.duplicates.exact")));
-            epubOptimization.getItems().setAll(
+                    new LabeledValue<>(OrganizerDuplicatePolicy.DELETE_EXACT_ONLY, UiText.text("ui.organizer.duplicates.exact"))));
+            epubOptimization.getItems().setAll(List.of(
                     new LabeledValue<>(EpubOptimizationProfile.NONE, UiText.text("ui.settings.converters.optimizer.none")),
                     new LabeledValue<>(EpubOptimizationProfile.COMPATIBLE_EPUB33, UiText.text("ui.settings.converters.optimizer.compatible")),
                     new LabeledValue<>(EpubOptimizationProfile.BALANCED_EPUB33, UiText.text("ui.settings.converters.optimizer.balanced")),
                     new LabeledValue<>(EpubOptimizationProfile.MAXIMUM_EPUB33, UiText.text("ui.settings.converters.optimizer.maximum")),
-                    new LabeledValue<>(EpubOptimizationProfile.MODERN_EPUB34, UiText.text("ui.settings.converters.optimizer.modern")));
+                    new LabeledValue<>(EpubOptimizationProfile.MODERN_EPUB34, UiText.text("ui.settings.converters.optimizer.modern"))));
             analysisThreads.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 16, Math.min(4, Runtime.getRuntime().availableProcessors())));
             conversionThreads.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 4, 1));
 
@@ -591,21 +615,37 @@ public class LibraryOrganizerUiService {
             showPage(2);
             updateNavigation();
 
+            String operationTitle = UiText.text("ui.organizer.title") + " — " + UiText.text("ui.organizer.page.analysis");
+            String operationId = operationCenter.start(operationTitle, expectedCollectionId, OperationKind.GENERIC,
+                    OperationStage.VALIDATING, true, () -> cancelRequested.set(true));
+            analysisUiProgress.clear();
+            analysisOperationId = operationId;
+            analysisOperationTitle = operationTitle;
+            analysisCollectionId = expectedCollectionId;
+            log.info("ORGANIZER_ANALYSIS_START source='{}' destination='{}' collection={}",
+                    source, destination, expectedCollectionId);
+
             background.submit(() -> {
                         OrganizationAnalysis analyzed = analyzer.analyze(source, destination, profile, cancelRequested::get,
-                                progress -> UiExecutor.runOnUiThread(() -> updateAnalysisProgress(progress)));
+                                progress -> analysisUiProgress.offer(new AnalysisProgressUpdate(operationId, progress)));
                         if (cancelRequested.get()) throw new CancellationException("Organizer analysis cancelled");
                         OrganizationPlan planned = planner.plan(analyzed, profile)
                                 .withExpectedCollectionId(expectedCollectionId);
                         return new AnalysisAndPlan(analyzed, planned);
                     })
                     .whenComplete((value, error) -> UiExecutor.runOnUiThread(() -> {
+                        analysisUiProgress.clear();
                         if (error != null) {
                             busy = false;
                             Throwable cause = UiExceptionSupport.unwrapAsync(error);
                             if (cause instanceof CancellationException) {
+                                operationCenter.cancel(operationId, UiText.text("ui.organizer.analysis.cancelled"));
+                                log.info("ORGANIZER_ANALYSIS_CANCEL source='{}' collection={}", source, expectedCollectionId);
                                 analysisStatus.setText(UiText.text("ui.organizer.analysis.cancelled"));
                             } else {
+                                operationCenter.fail(operationId, cause);
+                                log.error("ORGANIZER_ANALYSIS_FAIL source='{}' collection={} error={}",
+                                        source, expectedCollectionId, UiExceptionSupport.message(cause), cause);
                                 analysisStatus.setText(UiText.text("ui.organizer.analysis.failed") + " " + UiExceptionSupport.message(cause));
                             }
                             analysisProgress.setProgress(0);
@@ -621,6 +661,15 @@ public class LibraryOrganizerUiService {
                         buildPreviewIncrementally(() -> {
                             busy = false;
                             analysisProgress.setProgress(1);
+                            if (cancelRequested.get()) {
+                                operationCenter.cancel(operationId, UiText.text("ui.organizer.analysis.cancelled"));
+                                log.info("ORGANIZER_ANALYSIS_CANCEL source='{}' collection={}", source, expectedCollectionId);
+                            } else {
+                                operationCenter.complete(operationId, UiText.text("ui.organizer.analysis.completed"));
+                                log.info("ORGANIZER_ANALYSIS_DONE source='{}' collection={} files={} books={} actions={}",
+                                        source, expectedCollectionId, analysis == null ? 0 : analysis.items().size(),
+                                        analysis == null ? 0 : analysis.items().size(), plan == null ? 0 : plan.actions().size());
+                            }
                             analysisStatus.setText(cancelRequested.get()
                                     ? UiText.text("ui.organizer.analysis.cancelled")
                                     : UiText.text("ui.organizer.analysis.completed"));
@@ -643,6 +692,12 @@ public class LibraryOrganizerUiService {
                         : Math.min(1.0, (double) progress.filesProcessed() / progress.filesDiscovered()));
             }
             analysisCurrentFile.setText(progress.currentPath() == null ? "" : progress.currentPath().toString());
+            if (analysisOperationId != null) {
+                OperationProgress telemetry = OperationProgress.stage(analysisOperationId, OperationStage.VALIDATING, true)
+                        .withProgress(progress.filesProcessed(), progress.filesDiscovered())
+                        .withCurrentItem(progress.currentPath() == null ? "" : progress.currentPath().toString());
+                operationCenter.accept(analysisOperationTitle, analysisCollectionId, OperationKind.GENERIC, telemetry);
+            }
         }
 
         private void buildPreviewIncrementally(Runnable finished) {
@@ -764,9 +819,11 @@ public class LibraryOrganizerUiService {
             showPage(4);
             updateNavigation();
 
+            applyUiProgress.clear();
             background.submit(() -> applyUseCase.apply(selectedPlan, cancelRequested::get,
-                            progress -> UiExecutor.runOnUiThread(() -> updateApplyProgress(progress))))
+                            applyUiProgress::offer))
                     .whenComplete((value, error) -> UiExecutor.runOnUiThread(() -> {
+                        applyUiProgress.clear();
                         busy = false;
                         if (error != null) {
                             Throwable cause = UiExceptionSupport.unwrapAsync(error);
@@ -841,7 +898,10 @@ public class LibraryOrganizerUiService {
                     dialogs.showWarning(UiText.text("ui.organizer.title"), UiText.text("ui.organizer.result.destination_missing"));
                     return;
                 }
-                if (!Desktop.isDesktopSupported()) throw new UnsupportedOperationException("Desktop API is unavailable");
+                if (!Desktop.isDesktopSupported()) {
+                    dialogs.showWarning(UiText.text("ui.organizer.title"), UiText.text("ui.organizer.result.open_failed"));
+                    return;
+                }
                 Desktop.getDesktop().open(destination.toFile());
             } catch (Exception error) {
                 dialogs.showWarning(UiText.text("ui.organizer.title"), UiText.text("ui.organizer.result.open_failed") + " " + UiExceptionSupport.message(error));
@@ -850,11 +910,10 @@ public class LibraryOrganizerUiService {
 
         private void exportReport() {
             if (plan == null) return;
-            FileChooser chooser = new FileChooser();
-            chooser.setTitle(UiText.text("ui.organizer.result.export_report"));
-            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV (UTF-8)", "*.csv"));
-            chooser.setInitialFileName("myhomelib-organizer-report.csv");
-            var file = chooser.showSaveDialog(stage);
+            var file = fileChooserService.chooseFileToSave(stage,
+                    UiText.text("ui.organizer.result.export_report"),
+                    "myhomelib-organizer-report.csv",
+                    List.of(new javafx.stage.FileChooser.ExtensionFilter("CSV (UTF-8)", "*.csv")));
             if (file == null) return;
             try {
                 StringBuilder out = new StringBuilder();
@@ -879,15 +938,14 @@ public class LibraryOrganizerUiService {
         }
 
         private void chooseDirectory(TextField target, String title) {
-            DirectoryChooser chooser = new DirectoryChooser();
-            chooser.setTitle(title);
+            java.io.File initialDirectory = null;
             try {
                 if (!target.getText().isBlank()) {
                     Path existing = Path.of(target.getText()).toAbsolutePath().normalize();
-                    if (Files.isDirectory(existing)) chooser.setInitialDirectory(existing.toFile());
+                    if (Files.isDirectory(existing)) initialDirectory = existing.toFile();
                 }
             } catch (Exception ignored) { }
-            var selected = chooser.showDialog(stage);
+            var selected = fileChooserService.chooseDirectory(stage, title, initialDirectory);
             if (selected != null) target.setText(selected.toPath().toAbsolutePath().normalize().toString());
         }
 

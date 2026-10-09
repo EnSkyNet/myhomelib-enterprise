@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.conversion.ConversionFailureSignal;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
+import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.service.CommittedCatalogMutationService;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
@@ -31,7 +32,7 @@ class ConvertBookUseCaseFallbackTest {
     @TempDir Path tempDir;
 
     @Test
-    void fallsThroughOnlyWhenFailureExplicitlyAllowsNextProvider() throws Exception {
+    void autoFb2ToEpubDoesNotSilentlyFallThroughFromFastToolchainToSlowCalibre() throws Exception {
         BookId id = BookId.generate();
         Book book = Book.builder().id(id).title("Fallback").file(new BookFile("book.fb2", "", "", 4, "")).local(true).build();
         BookQueryRepository books = mock(BookQueryRepository.class);
@@ -50,6 +51,42 @@ class ConvertBookUseCaseFallbackTest {
         });
 
         ConvertBookUseCase useCase = new ConvertBookUseCase(books, List.of(calibre, unavailableToolchain), resources, mutations);
+
+        assertThatThrownBy(() -> useCase.execute(ConvertBookUseCase.Request.withDefaults(id, "epub", tempDir)))
+                .isInstanceOfSatisfying(BookConversionException.class, failure -> {
+                    assertThat(failure.stage()).isEqualTo(BookConversionException.Stage.PROVIDER);
+                    assertThat(failure.providerId()).isEqualTo("myhomelib-toolchain");
+                    assertThat(failure.getCause()).isInstanceOf(RetryableConversionException.class);
+                });
+        assertThat(fallbackCalls).hasValue(0);
+        verifyNoInteractions(mutations);
+    }
+
+    @Test
+    void autoFb2ToEpubCanUseSlowFallbackOnlyWhenExplicitlyOptedIn() throws Exception {
+        BookId id = BookId.generate();
+        Book book = Book.builder().id(id).title("Fallback opt-in").file(new BookFile("book.fb2", "", "", 4, "")).local(true).build();
+        BookQueryRepository books = mock(BookQueryRepository.class);
+        BookResourcePort resources = mock(BookResourcePort.class);
+        CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
+        when(books.findById(id)).thenReturn(Optional.of(book));
+        when(resources.readBookData(book)).thenAnswer(ignored -> Optional.of(new ByteArrayInputStream("<fb2".getBytes(StandardCharsets.UTF_8))));
+
+        AtomicInteger fallbackCalls = new AtomicInteger();
+        BookConverter unavailableToolchain = converter("myhomelib-toolchain", 500, (source, target) -> {
+            throw new RetryableConversionException("tool unavailable");
+        });
+        BookConverter calibre = converter("calibre-core", 100, (source, target) -> {
+            fallbackCalls.incrementAndGet();
+            Files.writeString(target, "converted", StandardCharsets.UTF_8);
+        });
+
+        ConvertBookUseCase useCase = new ConvertBookUseCase(books, List.of(calibre, unavailableToolchain), resources, mutations);
+        ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
+        when(settings.get("converter.mode", "AUTO")).thenReturn("AUTO");
+        when(settings.getBoolean("converter.auto.allowSlowFallback", false)).thenReturn(true);
+        useCase.setApplicationSettings(settings);
+
         ConvertBookUseCase.Result result = useCase.execute(ConvertBookUseCase.Request.withDefaults(id, "epub", tempDir));
 
         assertThat(result.converterId()).isEqualTo("calibre-core");

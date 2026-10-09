@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.backup;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import org.flywaydb.core.Flyway;
@@ -28,7 +28,7 @@ class AnnotationBackupRoundTripIntegrationTest {
     }
 
     @Test
-    void schemaV4RoundTripKeepsAnnotationAnchorAndTagsAndSafelyDropsForeignArtifactBinding() throws Exception {
+    void currentSchemaRoundTripKeepsAnnotationAnchorAndTagsAndSafelyDropsForeignArtifactBinding() throws Exception {
         System.setProperty("myhomelib.dataDir", tempDir.resolve("appdata").toString());
         Files.createDirectories(tempDir.resolve("appdata/config"));
         Db source = db("source.db");
@@ -41,7 +41,7 @@ class AnnotationBackupRoundTripIntegrationTest {
         Path manifest = tempDir.resolve("user-data.json");
         VersionedUserDataTransferAdapter sourceAdapter = new VersionedUserDataTransferAdapter(manager(source), new MapSettings(), new ObjectMapper());
         var exported = sourceAdapter.exportTo(manifest);
-        assertThat(exported.schemaVersion()).isEqualTo(4);
+        assertThat(exported.schemaVersion()).isEqualTo(6);
         assertThat(exported.annotations()).isEqualTo(1);
         var json = new ObjectMapper().readTree(manifest.toFile());
         assertThat(json.path("annotations").size()).isEqualTo(1);
@@ -52,7 +52,7 @@ class AnnotationBackupRoundTripIntegrationTest {
         target.jdbc().update("INSERT INTO book_artifacts(artifact_id,book_id,artifact_name,file_name,local,remote,state) VALUES('target-artifact','new-book','book.fb2','book.fb2',1,0,'AVAILABLE')");
         VersionedUserDataTransferAdapter targetAdapter = new VersionedUserDataTransferAdapter(manager(target), new MapSettings(), new ObjectMapper());
         var restored = targetAdapter.restoreFrom(manifest);
-        assertThat(restored.effectiveSchemaVersion()).isEqualTo(4);
+        assertThat(restored.effectiveSchemaVersion()).isEqualTo(6);
         assertThat(restored.annotations()).isEqualTo(1);
         assertThat(restored.searchChanges().updated()).contains("new-book");
 

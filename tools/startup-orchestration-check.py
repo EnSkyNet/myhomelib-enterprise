@@ -11,6 +11,7 @@ expected = [
     'recoveryStartupTask',
     'migrationStartupTask',
     'searchStartupTask',
+    'contentIndexingStartupTask',
     'backupStartupTask',
     'opdsStartupTask',
 ]
@@ -26,6 +27,7 @@ assert 'StartupTaskOutcome.Status.DEGRADED' in orchestrator, 'best-effort failur
 recovery = text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/RecoveryStartupTask.java')
 migration = text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/MigrationStartupTask.java')
 search = text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/SearchStartupTask.java')
+content_indexing = text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/ContentIndexingStartupTask.java')
 backup = text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/BackupStartupTask.java')
 opds = text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/OPDSStartupTask.java')
 manager = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/collection/CollectionManager.java')
@@ -36,10 +38,11 @@ assert 'StartupFailurePolicy.REQUIRED' in migration and 'executeWithStatus(conte
 assert 'context.reusableSearchIndex(result.reusableSearchIndex())' in migration
 assert 'StartupFailurePolicy.BEST_EFFORT' in search and 'rebuildSearchIndexAsync()' in search
 assert 'if (context.reusableSearchIndex())' in search, 'reusable indexes must not be rebuilt at startup'
+assert 'StartupFailurePolicy.BEST_EFFORT' in content_indexing and 'queueService.restore(context.activeCollection().getId())' in content_indexing
 assert 'StartupFailurePolicy.BEST_EFFORT' in backup and '.snapshot.tmp' in backup
-assert 'StartupFailurePolicy.BEST_EFFORT' in opds and 'settings.autostart()' in opds and 'serverControl.start(settings)' in opds
+assert 'StartupFailurePolicy.BEST_EFFORT' in opds and 'settingsService.load()' in opds and 'settings.autostart()' in opds and 'serverControlProvider.getObject().start(settings)' in opds
 assert 'startupRecoveryService.recoverBeforeOpen(collection);' in manager, 'CollectionManager safety net must use the same recovery boundary'
-assert 'startupExecutor.submit(startupOrchestrator::run)' in boot, 'JavaFX startup must delegate backend orchestration off the FX thread'
+assert 'new Thread(() ->' in boot and '"myhomelib-startup"' in boot and 'startupThread.start();' in boot, 'JavaFX startup must delegate backend orchestration off the FX thread'
 for forbidden in ['SqliteCollectionRepository', 'SwitchCollectionUseCase', 'InpxImporter', 'initializeBackend()']:
     assert forbidden not in boot, f'MyHomeLibApp regained startup responsibility: {forbidden}'
 

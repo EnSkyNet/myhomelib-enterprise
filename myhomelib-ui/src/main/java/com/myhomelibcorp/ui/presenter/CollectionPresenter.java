@@ -2,6 +2,10 @@ package com.myhomelibcorp.ui.presenter;
 
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.collection.CollectionUiCommitGuard;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
+import com.myhomelibcorp.ui.operation.OperationKind;
+import com.myhomelibcorp.application.progress.OperationProgress;
+import com.myhomelibcorp.application.progress.OperationStage;
 
 import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.dto.CollectionDto;
@@ -38,6 +42,7 @@ public class CollectionPresenter {
     private final SwitchCollectionUseCase switchCollectionUseCase;
     private final ApplicationState appState;
     private final CollectionUiCommitGuard collectionUiCommitGuard;
+    private final OperationCenterService operationCenter;
 
     public void showCreateCollectionDialog(ObservableList<CollectionDto> collectionList, Stage owner) {
         Optional<String> nameResult = dialogService.showTextInput(UiText.text("ui.java.collection_presenter.365d3d5a7f"),
@@ -59,6 +64,9 @@ public class CollectionPresenter {
             log.info("Використовуємо стандартний шлях для БД: {}", dbFilePath);
         }
 
+        String operationTitle = UiText.text("ui.java.collection_workspace_controller.9dce38545e") + name;
+        String operationId = operationCenter.start(operationTitle, "", OperationKind.COLLECTION_CREATE,
+                OperationStage.CREATING_COLLECTION, false);
         try {
             CreateCollectionRequest request = CreateCollectionRequest.builder()
                     .name(name)
@@ -71,6 +79,8 @@ public class CollectionPresenter {
 
             appState.getStatusBar().setStatusText(UiText.text("ui.java.collection_presenter.581a96f07f") + name + UiText.text("ui.java.collection_presenter.eccde05e49"));
 
+            operationCenter.accept(operationTitle, collection.getId(), OperationKind.COLLECTION_CREATE,
+                    OperationProgress.stage(operationId, OperationStage.FINALIZING, false));
             Collection activated = switchCollectionUseCase.execute(collection);
             boolean committed = collectionUiCommitGuard.runIfStillActive(activated.getId(), () -> {
                 appState.setCurrentLibraryCollection(activated);
@@ -78,8 +88,10 @@ public class CollectionPresenter {
                 appState.getStatusBar().setStatusText(UiText.text("ui.java.collection_presenter.c3d5ffb6d9") + activated.getName());
             });
             if (!committed && collectionList != null) loadCollections(collectionList);
+            operationCenter.complete(operationId, UiText.text("ui.java.collection_workspace_controller.1e198f406d") + activated.getName());
 
         } catch (Exception e) {
+            operationCenter.fail(operationId, e);
             dialogService.showError(UiText.text("common.error"), UiExceptionSupport.message(e));
             log.error("Помилка створення колекції", e);
         }

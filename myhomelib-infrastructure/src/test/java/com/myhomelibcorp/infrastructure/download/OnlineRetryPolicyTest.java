@@ -3,6 +3,8 @@ package com.myhomelibcorp.infrastructure.download;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.net.http.HttpTimeoutException;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -23,6 +25,12 @@ class OnlineRetryPolicyTest {
         assertThat(OnlineRetryPolicy.isRetryableStatus(404)).isFalse();
         assertThat(OnlineRetryPolicy.isRetryableStatus(501)).isFalse();
         assertThat(OnlineRetryPolicy.isRetryableStatus(505)).isFalse();
+    }
+
+    @Test
+    void requestTimeoutIsNotRetriedButOtherIoFailuresAre() {
+        assertThat(OnlineRetryPolicy.isRetryableIOException(new HttpTimeoutException("timeout"))).isFalse();
+        assertThat(OnlineRetryPolicy.isRetryableIOException(new IOException("connection reset"))).isTrue();
     }
 
     @Test
@@ -50,4 +58,11 @@ class OnlineRetryPolicyTest {
         long delay = OnlineRetryPolicy.delayMillis(settings, 3, null);
         assertThat(delay).isBetween(3_200L, 4_800L);
     }
+
+    @Test
+    void delayUsesDefaultsWhenSettingsPortIsUnavailable() {
+        long delay = OnlineRetryPolicy.delayMillis(null, 1, null);
+        assertThat(delay).isBetween(600L, 900L);
+    }
+
 }

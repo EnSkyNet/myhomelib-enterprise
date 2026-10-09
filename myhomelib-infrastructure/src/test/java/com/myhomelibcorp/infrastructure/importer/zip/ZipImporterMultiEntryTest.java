@@ -44,6 +44,25 @@ class ZipImporterMultiEntryTest {
         assertThat(books).extracting(Book::getArchiveEntry).containsExactly("one.txt", "two.txt");
     }
 
+
+    @Test
+    void malformedBookEntryDoesNotHideLaterValidBooks() throws Exception {
+        Path zip = temp.resolve("mixed.zip");
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(zip), StandardCharsets.UTF_8)) {
+            add(out, "bad.txt", "BAD");
+            add(out, "good.txt", "Good");
+        }
+
+        ZipImporter importer = createImporter();
+        List<Book> books;
+        try (Stream<Book> stream = importer.importBooks(zip)) {
+            books = stream.toList();
+        }
+
+        assertThat(books).extracting(Book::getTitle).containsExactly("Good");
+        assertThat(books).extracting(Book::getArchiveEntry).containsExactly("good.txt");
+    }
+
     @Test
     void detectsWindows1251EntryNamesInsteadOfPersistingMojibake() throws Exception {
         assertLegacyEntryName(Charset.forName("Windows-1251"), "Книги/Дмитрий Дорничев.txt");
@@ -86,6 +105,7 @@ class ZipImporterMultiEntryTest {
             @Override public Stream<Book> importBooks(Path file) {
                 try {
                     String title = Files.readString(file, StandardCharsets.UTF_8).trim();
+                    if ("BAD".equals(title)) throw new IllegalArgumentException("malformed test book");
                     return Stream.of(Book.builder().title(title).file(BookFile.empty()).build());
                 } catch (Exception e) {
                     throw new RuntimeException(e);

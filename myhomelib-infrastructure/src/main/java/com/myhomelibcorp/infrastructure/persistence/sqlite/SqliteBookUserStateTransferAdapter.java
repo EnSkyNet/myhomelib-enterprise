@@ -189,6 +189,24 @@ public class SqliteBookUserStateTransferAdapter implements BookUserStateTransfer
                     updated_at=excluded.updated_at
                 """;
         copyRows(source, target, ids, select, upsert, 3, false);
+
+        // V28: BOOK-scoped profiles are collection-owned state too. V42 remains the
+        // compatibility projection, so keep the generic scoped storage synchronized
+        // when a book is copied to another collection. SERIES/FORMAT profiles stay
+        // collection-local and are intentionally not copied with individual books.
+        String scopedSelect = """
+                SELECT scope_key,preferences_json,updated_at
+                FROM reader_preference_overrides
+                WHERE scope_type='BOOK' AND scope_key IN (%s)
+                """.formatted(SqliteInClauseSupport.placeholders(ids.size()));
+        String scopedUpsert = """
+                INSERT INTO reader_preference_overrides(scope_type,scope_key,preferences_json,updated_at)
+                VALUES('BOOK',?,?,?)
+                ON CONFLICT(scope_type,scope_key) DO UPDATE SET
+                    preferences_json=excluded.preferences_json,
+                    updated_at=excluded.updated_at
+                """;
+        copyRows(source, target, ids, scopedSelect, scopedUpsert, 3, false);
     }
 
     private static void copyRows(Connection source,

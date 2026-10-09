@@ -18,6 +18,7 @@ public class SqliteSessionRepository implements SessionRepository {
     private final Preferences prefs = Preferences.userNodeForPackage(SqliteSessionRepository.class);
 
     private static final String PREF_KEY_PREFIX = "lastOpenedBookId_";
+    private static final String PREF_CLEARED_PREFIX = "lastOpenedBookCleared_";
 
     @Override
     public void saveLastOpenedBookId(String collectionId, String bookId) {
@@ -31,7 +32,9 @@ public class SqliteSessionRepository implements SessionRepository {
         }
 
         String prefKey = PREF_KEY_PREFIX + collectionId;
+        String clearedKey = PREF_CLEARED_PREFIX + collectionId;
         prefs.put(prefKey, bookId);
+        prefs.remove(clearedKey);
 
         try {
             String sql = "INSERT OR REPLACE INTO session (key, value) VALUES (?, ?)";
@@ -53,6 +56,19 @@ public class SqliteSessionRepository implements SessionRepository {
         }
 
         String prefKey = PREF_KEY_PREFIX + collectionId;
+        String clearedKey = PREF_CLEARED_PREFIX + collectionId;
+
+        // Preferences are the authoritative local fallback because writes update them before
+        // the best-effort SQLite mirror. Reading SQLite first can resurrect a stale value
+        // after a transient DB write failure.
+        String prefsValue = prefs.get(prefKey, null);
+        if (prefsValue != null && !prefsValue.isEmpty()) {
+            log.debug("Отримано останню книгу для колекції {} з Preferences: {}", collectionId, prefsValue);
+            return prefsValue;
+        }
+        if (prefs.getBoolean(clearedKey, false)) {
+            return null;
+        }
 
         try {
             String sql = "SELECT value FROM session WHERE key = ?";
@@ -64,12 +80,7 @@ public class SqliteSessionRepository implements SessionRepository {
         } catch (Exception e) {
             log.trace("Не вдалося отримати lastOpenedBookId з БД для колекції {}", collectionId, e);
         }
-
-        String prefsValue = prefs.get(prefKey, null);
-        if (prefsValue != null) {
-            log.debug("Отримано останню книгу для колекції {} з Preferences: {}", collectionId, prefsValue);
-        }
-        return prefsValue;
+        return null;
     }
 
     @Override
@@ -78,12 +89,18 @@ public class SqliteSessionRepository implements SessionRepository {
             return;
         }
         String prefKey = PREF_KEY_PREFIX + collectionId;
+        String clearedKey = PREF_CLEARED_PREFIX + collectionId;
         prefs.remove(prefKey);
+        // Tombstone prevents a stale SQLite mirror from resurrecting the cleared book when
+        // DELETE cannot be committed because of a temporary database lock. A later save
+        // removes the tombstone before mirroring its new value to SQLite.
+        prefs.putBoolean(clearedKey, true);
         try {
             busyRetry.run("session clear", () -> queryExecutor.update("DELETE FROM session WHERE key = ?", prefKey));
+            prefs.remove(clearedKey);
             log.debug("Очищено session для колекції {}", collectionId);
         } catch (Exception e) {
-            log.warn("Не вдалося очистити session для колекції {}", collectionId, e);
+            log.warn("Не вдалося очистити session для колекції {}; збережено локальний tombstone", collectionId, e);
         }
     }
 }

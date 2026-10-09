@@ -15,12 +15,14 @@ import com.myhomelibcorp.ui.controller.MainController;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
+import javafx.geometry.Rectangle2D;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.layout.VBox;
+import javafx.stage.Screen;
 import javafx.stage.Stage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.SpringApplication;
@@ -28,9 +30,23 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.scheduling.annotation.EnableAsync;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-@SpringBootApplication(scanBasePackages = "com.myhomelibcorp")
+@SpringBootApplication(scanBasePackages = {
+        "com.myhomelibcorp.application",
+        "com.myhomelibcorp.infrastructure",
+        "com.myhomelibcorp.ui",
+        "com.myhomelibcorp.integration",
+        "com.myhomelibcorp.startup",
+        "com.myhomelibcorp.opds",
+        "com.myhomelibcorp.organizer",
+        "com.myhomelibcorp.epub.optimizer",
+        "com.myhomelibcorp.converter.toolchain"
+})
 @EnableAsync
 @Slf4j
 public class MyHomeLibApp extends Application {
@@ -42,52 +58,105 @@ public class MyHomeLibApp extends Application {
 
     @Override
     public void init() {
-        try {
-            log.info("Запуск Spring Boot контексту...");
-            context = SpringApplication.run(MyHomeLibApp.class);
-            applicationContext = context;
-            // Resolve the selected UI language before JavaFX creates its first Control.
-            // JavaFX caches internal control resource bundles, so setting Locale afterwards
-            // can leave built-in context menus/placeholders/dialog strings in English.
-            context.getBean(LocalizationService.class).language();
-            log.info("Spring Boot контекст завантажено");
-        } catch (Exception e) {
-            log.error("Помилка ініціалізації Spring Boot", e);
-            throw new RuntimeException("Не вдалося завантажити Spring Boot", e);
-        }
+        // Keep JavaFX init intentionally lightweight. Spring used to be started here, before
+        // JavaFX was allowed to show any stage, which caused several seconds of a completely
+        // blank desktop before the splash screen appeared. Backend boot now starts only after
+        // the splash is visible. Resolve only the tiny language.txt file here so JavaFX's own
+        // control bundles see the user's locale before the first splash Control is created.
+        configureEarlyJvmLocale();
+        log.info("JavaFX bootstrap initialized");
     }
 
     public static ConfigurableApplicationContext getContext() {
         return applicationContext;
     }
 
+    private static void configureEarlyJvmLocale() {
+        String code = "uk";
+        Path file = AppPaths.configDir().resolve("language.txt");
+        try {
+            if (Files.isRegularFile(file)) {
+                code = Files.readAllLines(file, StandardCharsets.UTF_8).stream()
+                        .map(String::trim)
+                        .filter(line -> !line.isBlank() && !line.startsWith("#"))
+                        .findFirst()
+                        .orElse(code);
+            }
+        } catch (Exception ignored) {
+            // LocalizationService will apply the authoritative setting after Spring starts.
+        }
+        Locale locale = Locale.forLanguageTag(code.replace('_', '-'));
+        if (!locale.getLanguage().isBlank()) Locale.setDefault(locale);
+    }
+
     @Override
     public void start(Stage primaryStage) {
         splashStage = buildSplashStage();
         splashStage.show();
+        updateSplash("Ініціалізація компонентів…");
 
-        var startupExecutor = context.getBean(com.myhomelibcorp.application.port.out.executor.ExecutorPort.class);
-        StartupOrchestrator startupOrchestrator = context.getBean(StartupOrchestrator.class);
-        startupExecutor.submit(startupOrchestrator::run).thenAccept(report -> {
-            Platform.runLater(() -> {
-                splashStage.close();
-                try {
-                    if (report.degraded()) {
-                        log.warn("Startup completed in degraded mode: {}", report.outcomes());
+        Thread startupThread = new Thread(() -> {
+            try {
+                log.info("Запуск Spring Boot контексту...");
+                context = SpringApplication.run(MyHomeLibApp.class);
+                applicationContext = context;
+                context.getBean(LocalizationService.class).language();
+                log.info("Spring Boot контекст завантажено");
+
+                updateSplash("Завантаження колекції…");
+                StartupOrchestrator startupOrchestrator = context.getBean(StartupOrchestrator.class);
+                StartupReport report = startupOrchestrator.run(taskId ->
+                        updateSplash(startupStatus(taskId)));
+
+                updateSplash("Підготовка інтерфейсу…");
+                Platform.runLater(() -> {
+                    try {
+                        if (report.degraded()) {
+                            log.warn("Startup completed in degraded mode: {}", report.outcomes());
+                        }
+                        showMainWindow(primaryStage, report);
+                        // Close the splash only after the main window is fully constructed and shown.
+                        // This removes the previous blank gap between splash and ready UI.
+                        splashStage.close();
+                    } catch (Exception e) {
+                        log.error("Помилка показу головного вікна", e);
+                        splashStage.close();
+                        showErrorAndExit(e);
                     }
-                    showMainWindow(primaryStage, report);
-                } catch (Exception e) {
-                    log.error("Помилка показу головного вікна", e);
-                    showErrorAndExit(e);
-                }
-            });
-        }).exceptionally(ex -> {
-            Platform.runLater(() -> {
-                splashStage.close();
-                showErrorAndExit(ex);
-            });
-            return null;
+                });
+            } catch (Throwable ex) {
+                log.error("Помилка запуску програми", ex);
+                Platform.runLater(() -> {
+                    if (splashStage != null) splashStage.close();
+                    showErrorAndExit(ex);
+                });
+            }
+        }, "myhomelib-startup");
+        startupThread.setDaemon(true);
+        startupThread.start();
+    }
+
+    private Label splashStatusLabel;
+
+    private void updateSplash(String status) {
+        Platform.runLater(() -> {
+            if (splashStatusLabel != null && status != null && !status.isBlank()) {
+                splashStatusLabel.setText(status);
+            }
         });
+    }
+
+    private static String startupStatus(String taskId) {
+        if (taskId == null) return "Завантаження колекції…";
+        return switch (taskId) {
+            case "RecoveryStartupTask" -> "Перевірка цілісності даних…";
+            case "MigrationStartupTask" -> "Підготовка бази даних…";
+            case "SearchStartupTask" -> "Підготовка пошуку…";
+            case "ContentIndexingStartupTask" -> "Перевірка індексації…";
+            case "BackupStartupTask" -> "Перевірка резервних копій…";
+            case "OPDSStartupTask" -> "Підготовка сервісів…";
+            default -> "Завантаження колекції…";
+        };
     }
 
     // ==================== Splash Screen ====================
@@ -95,8 +164,8 @@ public class MyHomeLibApp extends Application {
     private Stage buildSplashStage() {
         Stage splash = new Stage();
         ProgressIndicator indicator = new ProgressIndicator();
-        Label label = new Label(UiText.text("ui.bootstrap.loading_library"));
-        VBox box = new VBox(15, indicator, label);
+        splashStatusLabel = new Label(UiText.text("ui.bootstrap.loading_library"));
+        VBox box = new VBox(15, indicator, splashStatusLabel);
         box.setAlignment(javafx.geometry.Pos.CENTER);
         box.setPadding(new javafx.geometry.Insets(30));
         Scene scene = new Scene(box, 320, 180);
@@ -132,17 +201,24 @@ public class MyHomeLibApp extends Application {
         Collection activeCollection = startupReport.activeCollection();
         String collectionName = activeCollection != null ? activeCollection.getName() : UiText.text("ui.bootstrap.no_collection");
         primaryStage.setTitle(UiText.format("ui.bootstrap.main_window_title", collectionName));
-        primaryStage.setScene(new Scene(root, 1100, 750));
+        Rectangle2D visualBounds = Screen.getPrimary().getVisualBounds();
+        double minWidth = Math.min(800.0, visualBounds.getWidth());
+        double minHeight = Math.min(600.0, visualBounds.getHeight());
+        double initialWidth = Math.min(1100.0, visualBounds.getWidth());
+        double initialHeight = Math.min(750.0, visualBounds.getHeight());
+        primaryStage.setScene(new Scene(root, initialWidth, initialHeight));
         context.getBean(ApplicationThemeService.class).start();
-        primaryStage.setMinWidth(800);
-        primaryStage.setMinHeight(600);
+        primaryStage.setMinWidth(minWidth);
+        primaryStage.setMinHeight(minHeight);
         if (sessionService.isRestoreEnabled()) {
             double[] windowState = sessionService.getWindowState();
-            primaryStage.setWidth(Math.max(800, windowState[0]));
-            primaryStage.setHeight(Math.max(600, windowState[1]));
+            primaryStage.setWidth(Math.min(visualBounds.getWidth(), Math.max(minWidth, windowState[0])));
+            primaryStage.setHeight(Math.min(visualBounds.getHeight(), Math.max(minHeight, windowState[1])));
         }
+        primaryStage.centerOnScreen();
         primaryStage.setOnHiding(event -> sessionService.saveWindowState(primaryStage.getWidth(), primaryStage.getHeight()));
         primaryStage.show();
+        com.myhomelibcorp.update.ApplicationUpdateHealthMarker.markHealthyIfRequested();
     }
 
     private void showErrorAndExit(Throwable ex) {
@@ -166,6 +242,14 @@ public class MyHomeLibApp extends Application {
         log.info("Завершення програми...");
 
         // 1. Dispose active workspace/Reader before stopping executors and DB.
+        if (context == null) {
+            // Startup may have failed or the user may have closed the splash before Spring finished.
+            // There is no backend to dispose in that case, but JavaFX still needs a clean exit.
+            applicationContext = null;
+            Platform.exit();
+            log.info("Програма завершена до ініціалізації Spring контексту");
+            return;
+        }
         try {
             context.getBean(com.myhomelibcorp.ui.navigation.WorkspaceManager.class).disposeCurrent();
             log.info("Активний workspace закрито");
@@ -209,6 +293,8 @@ public class MyHomeLibApp extends Application {
                 log.warn("Помилка коректного закриття колекції", e);
             }
             context.close(); // @PreDestroy закриє вже неактивний Lucene service та інші beans.
+            applicationContext = null;
+            context = null;
         }
 
         Platform.exit();

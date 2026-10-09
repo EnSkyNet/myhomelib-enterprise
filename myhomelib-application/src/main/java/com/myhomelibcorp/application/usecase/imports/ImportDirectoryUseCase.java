@@ -50,8 +50,20 @@ public class ImportDirectoryUseCase {
 
 
     public ImportResult execute(ImportContext context) {
-        try (var ignored = operationCoordinator.acquire(LibraryOperationType.IMPORT)) {
-            return executeLocked(context);
+        try (var lease = operationCoordinator.acquire(LibraryOperationType.IMPORT)) {
+            try {
+                ImportResult result = executeLocked(context);
+                if (result.status() == ImportStatus.CANCELLED) {
+                    lease.markCancelled("Import cancelled");
+                }
+                return result;
+            } catch (java.util.concurrent.CancellationException cancelled) {
+                lease.markCancelled(cancelled.getMessage());
+                throw cancelled;
+            } catch (RuntimeException | Error failure) {
+                lease.markFailed(failure);
+                throw failure;
+            }
         }
     }
 

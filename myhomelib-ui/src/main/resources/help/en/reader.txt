@@ -7,3 +7,7 @@ PDF opens in the built-in paged viewer; an encrypted PDF may request a password,
 For other formats configure an external application under **Settings → External reading**.
 
 In the text Reader, select text with an ordinary left-mouse drag. The selection menu immediately offers Highlight / Note / Dictionary / Translate / Copy. On touch devices, a long press selects a word while swipe gestures remain available for page navigation.
+
+## Reader setting profiles
+
+Reader settings can be stored globally, for a format, for a series, or only for the current book. The effective profile is resolved with the strict precedence book → series → format → global. The settings dialog shows the source of the active profile and offers Apply globally, Save for this format, Save for this series, Save only for this book, and Clear override. Clearing removes only the currently active override and reveals the next lower scope; other profiles are left unchanged.

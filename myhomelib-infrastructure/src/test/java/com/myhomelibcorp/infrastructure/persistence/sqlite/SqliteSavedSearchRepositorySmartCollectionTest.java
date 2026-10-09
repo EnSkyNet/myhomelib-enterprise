@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.search.*;
 import com.myhomelibcorp.infrastructure.persistence.QueryExecutor;

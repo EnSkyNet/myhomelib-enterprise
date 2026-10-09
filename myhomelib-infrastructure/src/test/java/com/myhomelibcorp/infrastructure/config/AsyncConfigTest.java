@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,6 +31,19 @@ class AsyncConfigTest {
             assertThat(threadNames).singleElement().asString().startsWith("app-io-");
             assertThat(config.metrics()).containsKey("io");
             assertThat(config.metrics().get("io").queueDepth()).isGreaterThanOrEqualTo(0);
+        } finally {
+            config.shutdown();
+        }
+    }
+
+    @Test
+    void idleCoreThreadsAreAllowedToRetire() {
+        AsyncConfig config = new AsyncConfig();
+        ThreadPoolTaskExecutor task = config.taskExecutor();
+        try {
+            ThreadPoolExecutor pool = task.getThreadPoolExecutor();
+            assertThat(pool.allowsCoreThreadTimeOut()).isTrue();
+            assertThat(pool.getKeepAliveTime(TimeUnit.SECONDS)).isEqualTo(AsyncConfig.IDLE_THREAD_SECONDS);
         } finally {
             config.shutdown();
         }

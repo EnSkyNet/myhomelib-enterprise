@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -88,6 +89,7 @@ public class EpubCoverParser {
         Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         int count = 0;
         while (entries.hasMoreElements() && count++ < ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
+            checkCancelled();
             ZipArchiveEntry entry = entries.nextElement();
             if (entry.isDirectory()) continue;
             String lower = entry.getName().toLowerCase(Locale.ROOT);
@@ -103,11 +105,12 @@ public class EpubCoverParser {
         return null;
     }
 
-    private static ZipArchiveEntry findEntry(ZipFile zip, String name) {
+    private static ZipArchiveEntry findEntry(ZipFile zip, String name) throws IOException {
         ZipArchiveEntry direct = zip.getEntry(name);
         if (direct != null) return direct;
         Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         while (entries.hasMoreElements()) {
+            checkCancelled();
             ZipArchiveEntry e = entries.nextElement();
             if (normalize(e.getName()).equalsIgnoreCase(name)) return e;
         }
@@ -120,16 +123,24 @@ public class EpubCoverParser {
         int total = 0;
         int read;
         while ((read = in.read(buffer)) >= 0) {
+            checkCancelled();
             if (read == 0) continue;
             total += read;
             if (total > max) throw new IOException("EPUB resource exceeds safe cover limit");
             out.write(buffer, 0, read);
         }
+        checkCancelled();
         return out.toByteArray();
     }
 
+    private static void checkCancelled() throws InterruptedIOException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedIOException("EPUB cover parsing cancelled");
+        }
+    }
+
     private static String decode(String value) {
-        try { return URLDecoder.decode(value, StandardCharsets.UTF_8); } catch (Exception e) { return value; }
+        try { return URLDecoder.decode(value.replace("+", "%2B"), StandardCharsets.UTF_8); } catch (Exception e) { return value; }
     }
 
     private static String normalize(String value) {

@@ -4,21 +4,13 @@ import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.group.Group;
-import com.myhomelibcorp.ui.action.ActionCustomizationDialog;
 import com.myhomelibcorp.ui.action.ActionRegistry;
-import com.myhomelibcorp.ui.action.BookActionProfilesDialog;
 import com.myhomelibcorp.ui.action.CoreActions;
 import com.myhomelibcorp.ui.accessibility.UiAccessibilitySupport;
-import com.myhomelibcorp.ui.collection.CollectionWorkspaceController;
-import com.myhomelibcorp.ui.duplicate.DuplicateReviewUiService;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.navigation.MainNavigationCoordinator;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
-import com.myhomelibcorp.ui.opds.OpdsUiService;
-import com.myhomelibcorp.ui.organizer.LibraryOrganizerUiService;
-import com.myhomelibcorp.ui.integration.IntegrationCenterDialog;
-import com.myhomelibcorp.ui.integration.AiBookAssistantUiService;
 import com.myhomelibcorp.ui.service.*;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
@@ -58,37 +50,17 @@ public class MainController {
     private final ApplicationEventPublisher eventPublisher;
     private final FxmlLoaderFactory fxmlLoaderFactory;
     private final ActionRegistry actionRegistry;
-    private final ActionCustomizationDialog actionCustomizationDialog;
-    private final BookActionProfilesDialog bookActionProfilesDialog;
-    private final OpdsUiService opdsUiService;
+    private final DeferredMainFeatureActions deferredFeatureActions;
+    private final DeferredMainLibraryActions deferredLibraryActions;
     private final MainLayoutService mainLayoutService;
     private final CatalogUpdateBadgeService catalogUpdateBadgeService;
     private final ApplicationThemeService applicationThemeService;
-    private final DuplicateReviewUiService duplicateReviewUiService;
     private final BookSelectionService bookSelectionService;
-    private final IntegrationCenterDialog integrationCenterDialog;
-    private final AiBookAssistantUiService aiBookAssistantUiService;
-    private final BookConversionUiService bookConversionUiService;
-    private final LibraryOrganizerUiService libraryOrganizerUiService;
     // ===== Контролери =====
-    private final CollectionController collectionController;
-    private final GroupController groupController;
-    private final BatchOperationsController batchOperationsController;
     private final ViewModeController viewModeController;
-    private final ExportController exportController;
-    private final DatabaseToolsController databaseToolsController;
-    private final ImportController importController;
     private final NavigationPanelController navigationPanelController;
-    private final CollectionWorkspaceController collectionWorkspaceController;
-    private final com.myhomelibcorp.ui.service.ApplicationSettingsDialog applicationSettingsDialog;
-    private final com.myhomelibcorp.ui.service.UserDataUiService userDataUiService;
-    private final com.myhomelibcorp.ui.service.BookListExportService bookListExportService;
-    private final com.myhomelibcorp.ui.service.HelpService helpService;
-    private final com.myhomelibcorp.ui.service.CollectionCopyUiService collectionCopyUiService;
-    private final com.myhomelibcorp.ui.service.CollectionAttachUiService collectionAttachUiService;
-    private final com.myhomelibcorp.ui.service.CollectionUpdateUiService collectionUpdateUiService;
-    private final com.myhomelibcorp.ui.service.LocalizationService localizationService;
-    private final com.myhomelibcorp.ui.service.CollectionPropertiesUiService collectionPropertiesUiService;
+    private final CollectionUpdateUiService collectionUpdateUiService;
+    private final LocalizationService localizationService;
     // ===== FXML =====
     @FXML private BorderPane mainPane;
     @FXML private HBox mainToolbar;
@@ -265,8 +237,8 @@ public class MainController {
 
     @FXML
     public void handleRefresh() {
+        // NavigationPanelController already handles this event; a direct refreshAll() here duplicated the catalogue reload.
         eventPublisher.publishEvent(new NavigationRefreshEvent());
-        navigationPanelController.refreshAll();
         refreshUpdateBadge();
         showDashboard();
     }
@@ -302,41 +274,43 @@ public class MainController {
 
     @FXML
     public void handleOpds() {
-        opdsUiService.show(mainPane.getScene().getWindow());
+        deferredFeatureActions.showOpds(mainPane.getScene().getWindow());
     }
 
     @FXML
     public void handleSettings() {
-        applicationSettingsDialog.show(mainPane.getScene().getWindow());
+        deferredFeatureActions.showSettings(mainPane.getScene().getWindow());
     }
 
     @FXML
     public void handleIntegrations() {
-        integrationCenterDialog.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
+        deferredFeatureActions.showIntegrations(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
     }
 
     @FXML
     public void handleConvertBook() {
-        bookConversionUiService.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
-                bookCommandCoordinator.selectedBook());
+        deferredFeatureActions.showBookConversion(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
+                bookCommandCoordinator.selectedBook(), bookCommandCoordinator.selectedBookIds());
     }
 
     @FXML
     public void handleAiSummarizeBook() {
-        aiBookAssistantUiService.summarize(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
+        deferredFeatureActions.summarizeBook(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
                 bookCommandCoordinator.selectedBook());
     }
 
     @FXML
     public void handleAiAskBook() {
-        aiBookAssistantUiService.ask(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
+        deferredFeatureActions.askBook(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
                 bookCommandCoordinator.selectedBook());
     }
 
     @FXML
     public void handleCollectionProperties() {
-        var updated = collectionPropertiesUiService.show(mainPane.getScene().getWindow());
-        if (updated != null) { eventPublisher.publishEvent(new NavigationRefreshEvent()); navigationPanelController.refreshAll(); }
+        if (deferredFeatureActions.showCollectionProperties(mainPane.getScene().getWindow())) {
+            eventPublisher.publishEvent(new NavigationRefreshEvent());
+            navigationPanelController.refreshAll();
+        }
     }
     // ==================== Навігаційні дії ====================
     @FXML
@@ -359,6 +333,12 @@ public class MainController {
         cleanupReader();
         Group currentGroup = appState.getCurrentGroup();
         workspaceManager.showGroupWorkspace(currentGroup);
+    }
+
+    @FXML
+    public void onReadingLists() {
+        cleanupReader();
+        workspaceManager.showReadingListsWorkspace();
     }
 
     @FXML
@@ -402,11 +382,11 @@ public class MainController {
     @FXML
     public void handleNewCollection() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
-        collectionController.handleNewCollection(stage, this::showDashboard);
+        deferredLibraryActions.newCollection(stage, this::showDashboard);
     }
     @FXML
     public void handleSelectCollection() {
-        collectionController.handleSelectCollection(this::showDashboard);
+        deferredLibraryActions.selectCollection(this::showDashboard);
     }
 
     @FXML
@@ -419,13 +399,17 @@ public class MainController {
 
             CollectionWizardController controller = loader.getController();
             // Передаємо список колекцій у візард
-            if (collectionWorkspaceController != null) {
-                controller.setCollectionList(collectionWorkspaceController.getCollectionList());
+            var collectionList = deferredLibraryActions.collectionListIfAvailable();
+            if (collectionList != null) {
+                controller.setCollectionList(collectionList);
             }
 
             Stage stage = new Stage();
             stage.setTitle(localizationService.text("ui.collection.wizard.title"));
-            stage.setScene(new Scene(root, 620, 480));
+            javafx.geometry.Rectangle2D visual = javafx.stage.Screen.getPrimary().getVisualBounds();
+            double sceneWidth = Math.min(620, Math.max(500, visual.getWidth() - 40));
+            double sceneHeight = Math.min(600, Math.max(420, visual.getHeight() - 80));
+            stage.setScene(new Scene(root, sceneWidth, sceneHeight));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(mainPane.getScene().getWindow());
             controller.setStage(stage);
@@ -444,42 +428,42 @@ public class MainController {
     // ==================== Дії з групами ====================
     @FXML
     public void handleAddGroup() {
-        groupController.handleAddGroup(this::showDashboard);
+        deferredLibraryActions.addGroup(this::showDashboard);
     }
 
     @FXML
     public void handleEditGroup() {
-        groupController.handleEditGroup(this::showDashboard);
+        deferredLibraryActions.editGroup(this::showDashboard);
     }
 
     @FXML
     public void handleDeleteGroup() {
-        groupController.handleDeleteGroup(this::showDashboard);
+        deferredLibraryActions.deleteGroup(this::showDashboard);
     }
     // ==================== Пакетні операції ====================
     @FXML
     public void handleBatchRate() {
-        batchOperationsController.handleBatchRate(this::handleRefresh);
+        deferredLibraryActions.batchRate(this::handleRefresh);
     }
 
     @FXML
     public void handleBatchProgress() {
-        batchOperationsController.handleBatchProgress(this::handleRefresh);
+        deferredLibraryActions.batchProgress(this::handleRefresh);
     }
 
     @FXML
     public void handleBatchMarkRead() {
-        batchOperationsController.handleBatchMarkRead(this::handleRefresh);
+        deferredLibraryActions.batchMarkRead(this::handleRefresh);
     }
 
     @FXML
     public void handleBatchAddToGroup() {
-        batchOperationsController.handleBatchAddToGroup(this::handleRefresh);
+        deferredLibraryActions.batchAddToGroup(this::handleRefresh);
     }
 
     @FXML
     public void handleClearSelection() {
-        batchOperationsController.handleClearSelection();
+        deferredLibraryActions.clearSelection();
     }
     // ==================== Вигляд ====================
     @FXML
@@ -515,7 +499,7 @@ public class MainController {
     // ==================== Експорт ====================
     @FXML
     public void handleExport() {
-        exportController.handleExport(mainPane == null || mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
+        deferredLibraryActions.exportBooks(mainPane == null || mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
                 this::refreshAfterSuccessfulExport);
     }
 
@@ -528,71 +512,71 @@ public class MainController {
 
     @FXML
     public void handleExportInpx() {
-        exportController.handleExportInpx(mainPane, this::handleRefresh);
+        deferredLibraryActions.exportInpx(mainPane, this::handleRefresh);
     }
     // ==================== Імпорт ====================
     @FXML
     public void handleImportFb2() {
-        importController.importFb2(this::handleRefresh);
+        deferredLibraryActions.importFb2(this::handleRefresh);
     }
 
     @FXML
     public void handleImportInpx() {
-        importController.importInpx(this::handleRefresh);
+        deferredLibraryActions.importInpx(this::handleRefresh);
     }
 
     @FXML
     public void handleImportDirectory() {
-        importController.importDirectory(this::handleRefresh);
+        deferredLibraryActions.importDirectory(this::handleRefresh);
     }
 
     @FXML
     public void handleSyncFolder() {
-        importController.handleSyncFolder(this::handleRefresh);
+        deferredLibraryActions.syncFolder(this::handleRefresh);
     }
 
     @FXML
     public void handleOrganizeLibrary() {
-        libraryOrganizerUiService.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
+        deferredFeatureActions.showLibraryOrganizer(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
     }
     // ==================== Інструменти БД ====================
     @FXML
     public void handleDuplicates() {
-        duplicateReviewUiService.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
+        deferredFeatureActions.showDuplicateReview(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
     }
 
     @FXML
     public void handleCheckIntegrity() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
-        databaseToolsController.handleCheckIntegrity(stage);
+        deferredLibraryActions.checkIntegrity(stage);
     }
 
     @FXML
     public void handleVacuum() {
-        databaseToolsController.handleVacuum();
+        deferredLibraryActions.vacuum();
     }
 
     @FXML
     public void handleRebuildIndex() {
-        databaseToolsController.handleRebuildIndex();
+        deferredLibraryActions.rebuildIndex();
     }
 
     @FXML
     public void handleBackup() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
-        databaseToolsController.handleBackup(stage);
+        deferredLibraryActions.backup(stage);
     }
 
     @FXML
     public void handleRestore() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
-        databaseToolsController.handleRestore(stage);
+        deferredLibraryActions.restore(stage);
     }
 
     @FXML
     public void handleStatistics() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
-        databaseToolsController.handleStatistics(stage);
+        deferredLibraryActions.statistics(stage);
     }
     // ==================== Редагування книг ====================
     @FXML
@@ -615,12 +599,12 @@ public class MainController {
 
     @FXML
     public void handleDeleteBook() {
-        batchOperationsController.handleBatchDelete(this::handleRefresh);
+        deferredLibraryActions.batchDelete(this::handleRefresh);
     }
 
     @FXML
     public void handleAddBook() {
-        importController.importFb2(this::handleRefresh);
+        deferredLibraryActions.importFb2(this::handleRefresh);
     }
     // ==================== МЕТОДИ ДЛЯ РОБОТИ З READER ====================
     @FXML
@@ -628,12 +612,12 @@ public class MainController {
 
     @FXML
     public void handleDownloadBook() {
-        batchOperationsController.handleBatchDownload(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(), workspaceManager::refreshAfterStorageChange);
+        deferredLibraryActions.batchDownload(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(), workspaceManager::refreshAfterStorageChange);
     }
 
     @FXML
     public void handleRemoveLocalCopy() {
-        batchOperationsController.handleBatchRemoveLocal(this::handleRefresh);
+        deferredLibraryActions.batchRemoveLocal(this::handleRefresh);
     }
 
     @FXML
@@ -647,37 +631,37 @@ public class MainController {
         dialogService.showInfo(localizationService.text("ui.main.reader_closed_title"), localizationService.text("ui.main.reader_closed_message"));
     }
 
-    @FXML public void handleExportUserData() { userDataUiService.exportData(mainPane.getScene().getWindow()); }
-    @FXML public void handleImportUserData() { userDataUiService.importData(mainPane.getScene().getWindow()); handleRefresh(); }
-    @FXML public void handleExportListHtml() { bookListExportService.export(mainPane.getScene().getWindow(), "html"); }
-    @FXML public void handleExportListTxt() { bookListExportService.export(mainPane.getScene().getWindow(), "txt"); }
-    @FXML public void handleExportListRtf() { bookListExportService.export(mainPane.getScene().getWindow(), "rtf"); }
+    @FXML public void handleExportUserData() { deferredLibraryActions.exportUserData(mainPane.getScene().getWindow()); }
+    @FXML public void handleImportUserData() { deferredLibraryActions.importUserData(mainPane.getScene().getWindow()); handleRefresh(); }
+    @FXML public void handleExportListHtml() { deferredLibraryActions.exportBookList(mainPane.getScene().getWindow(), "html"); }
+    @FXML public void handleExportListTxt() { deferredLibraryActions.exportBookList(mainPane.getScene().getWindow(), "txt"); }
+    @FXML public void handleExportListRtf() { deferredLibraryActions.exportBookList(mainPane.getScene().getWindow(), "rtf"); }
 
     @FXML public void handleOpenExternalReader() { bookCommandCoordinator.openExternal(); }
 
     @FXML public void handleCustomizeActions() {
-        actionCustomizationDialog.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
+        deferredFeatureActions.showActionCustomization(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
     }
 
     @FXML public void handleBookActions() {
-        bookActionProfilesDialog.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
+        deferredFeatureActions.showBookActionProfiles(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
         if (appState.getBookTableController() != null) appState.getBookTableController().refreshRows();
     }
 
-    @FXML public void handleHelp() { helpService.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(), workspaceManager.currentHelpTopic()); }
-    @FXML public void handleInpxHelp() { helpService.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(), "inpx"); }
+    @FXML public void handleHelp() { deferredFeatureActions.showHelp(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(), workspaceManager.currentHelpTopic()); }
+    @FXML public void handleAllFunctionsHelp() { deferredFeatureActions.showHelp(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(), "functions"); }
+    @FXML public void handleInpxHelp() { deferredFeatureActions.showHelp(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(), "inpx"); }
 
-    @FXML public void handleClearGroup() { groupController.handleClearGroup(this::handleRefresh); }
+    @FXML public void handleClearGroup() { deferredLibraryActions.clearGroup(this::handleRefresh); }
 
-    @FXML public void handleCopyToCollection() { collectionCopyUiService.copySelected(mainPane.getScene().getWindow(), this::handleRefresh); }
+    @FXML public void handleCopyToCollection() { deferredLibraryActions.copySelectedToCollection(mainPane.getScene().getWindow(), this::handleRefresh); }
 
-    @FXML public void handleUpdateCollectionManual() { importController.updateCollectionFromInpx(this::handleRefresh); }
+    @FXML public void handleUpdateCollectionManual() { deferredLibraryActions.updateCollectionFromInpx(this::handleRefresh); }
     @FXML public void handleUpdateCollectionNetwork() { collectionUpdateUiService.updateFromNetwork(mainPane.getScene().getWindow(), this::handleRefresh); }
     @FXML public void handleCancelCollectionUpdate() { if(!collectionUpdateUiService.cancel()) dialogService.showInfo(localizationService.text("ui.main.update.title"), localizationService.text("ui.main.update.none")); }
 
     @FXML public void handleAttachCollection() {
-        collectionAttachUiService.attach(mainPane.getScene().getWindow(),
-                result -> collectionController.switchToCollection(result.collection(), this::showDashboard));
+        deferredLibraryActions.attachCollection(mainPane.getScene().getWindow(), this::showDashboard);
     }
     @FXML
     public void handleResetNavigation() {

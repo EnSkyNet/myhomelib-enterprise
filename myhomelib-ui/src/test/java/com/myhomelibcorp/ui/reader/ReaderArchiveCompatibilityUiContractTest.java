@@ -11,26 +11,31 @@ class ReaderArchiveCompatibilityUiContractTest {
 
     @Test
     void selectedArchiveMemberUsesSingleResolutionStreamingMaterialization() throws Exception {
-        String source = controllerSource();
+        String controller = controllerSource();
+        String resolver = resolverSource();
 
-        assertThat(source).contains("bookResourcePort.locateBookContainer(book)");
-        assertThat(source).contains("bookResourcePort.materializeArchiveBookEntry(");
-        assertThat(source).contains("ArchiveSafetyLimits.MAX_ENTRY_BYTES");
-        assertThat(source).contains("() -> Thread.currentThread().isInterrupted()");
-        assertThat(source).doesNotContain("bookResourcePort.readBookData(book)");
-        assertThat(source).doesNotContain("bookResourcePort.readArchiveEntry(physicalPath, selectedEntry)");
-        assertThat(source).doesNotContain("stream.transferTo(");
+        assertThat(controller).contains("resolveReadableReaderSource(projectedBook, targetArtifact, bookResourcePort)");
+        assertThat(controller).contains("return ReaderSourceResolver.resolve(book, requestedArtifactId, bookResourcePort)");
+        assertThat(resolver).contains("bookResourcePort.locateBookContainer(candidate)");
+        assertThat(resolver).doesNotContain("locateBookFile(candidate)");
+        assertThat(resolver).contains("bookResourcePort.materializeArchiveBookEntry(");
+        assertThat(resolver).contains("ArchiveSafetyLimits.MAX_ENTRY_BYTES");
+        assertThat(resolver).contains("() -> Thread.currentThread().isInterrupted()");
+        assertThat(resolver).doesNotContain("bookResourcePort.readBookData(book)");
+        assertThat(resolver).doesNotContain("bookResourcePort.readArchiveEntry(physicalPath, selectedEntry)");
+        assertThat(resolver).doesNotContain("stream.transferTo(");
     }
 
     @Test
     void readerMaterializedTempLifecycleCoversFailureSwitchAbandonAndDispose() throws Exception {
-        String source = controllerSource();
+        String controller = controllerSource();
+        String resolver = resolverSource();
 
-        assertThat(source).contains("if (!success) Files.deleteIfExists(temp)");
-        assertThat(source).contains("prepared.closeAbandoned()");
-        assertThat(source).contains("cleanupMaterializedBookFile();");
-        assertThat(source).contains("task.cancel(true)");
-        assertThat(source).contains("deleteTemp(temporaryPath)");
+        assertThat(resolver).contains("if (!success) Files.deleteIfExists(temp)");
+        assertThat(controller).contains("prepared.closeAbandoned()");
+        assertThat(controller).contains("cleanupMaterializedBookFile();");
+        assertThat(controller).contains("task.cancel(true)");
+        assertThat(controller).contains("deleteTemp(temporaryPath)");
     }
 
     @Test
@@ -46,5 +51,10 @@ class ReaderArchiveCompatibilityUiContractTest {
     private static String controllerSource() throws Exception {
         return Files.readString(Path.of(
                 "src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java"));
+    }
+
+    private static String resolverSource() throws Exception {
+        return Files.readString(Path.of(
+                "../myhomelib-application/src/main/java/com/myhomelibcorp/application/reader/ReaderSourceResolver.java"));
     }
 }

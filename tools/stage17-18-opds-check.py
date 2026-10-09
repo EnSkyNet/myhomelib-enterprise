@@ -19,7 +19,8 @@ for forbidden in ('myhomelib-infrastructure','myhomelib-ui','javafx-controls','s
 
 server=text('myhomelib-opds/src/main/java/com/myhomelibcorp/opds/JdkOpdsServer.java')
 for marker in ('/health','/opds/authors','/opds/series','/opds/genres','/opds/search','/opds/books/','/opds/download/',
-               'WWW-Authenticate','Basic realm','Files.copy(path, out)','Executors.newThreadPerTaskExecutor'):
+               'WWW-Authenticate','Basic realm','try (OpdsDownloadService.Download download = opened.get())',
+               'try (OutputStream out = exchange.getResponseBody())','download.transferTo(out)','Executors.newThreadPerTaskExecutor'):
     if marker not in server: fail(f'OPDS server contract missing: {marker}')
 for forbidden in ('javafx.','org.springframework.jdbc','com.myhomelibcorp.infrastructure','readAllBytes('):
     if forbidden in server: fail(f'OPDS server forbidden dependency/behavior: {forbidden}')
@@ -31,21 +32,26 @@ if 'COUNT(DISTINCT LOWER(TRIM(series)))' not in adapter: fail('series count/grou
 
 raw_ui=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/opds/OpdsUiService.java')
 ui=raw_ui
-lifecycle=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/opds/OpdsDesktopLifecycle.java')
+startup=text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/OPDSStartupTask.java')
 main=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/MainController.java')
 fxml=text('myhomelib-ui/src/main/resources/view/MainView.fxml')
 import runpy
 ui = runpy.run_path(str(ROOT/'tools/localization-contract-support.py'))['localized_source'](ui)
 for marker in ('basicAuthEnabled','autostart','exposedBeyondLocalhost','127.0.0.1'):
-    if marker not in ui and marker not in lifecycle: fail(f'Stage 18 UI/lifecycle missing {marker}')
+    if marker not in ui and marker not in startup: fail(f'Stage 18 UI/lifecycle missing {marker}')
 if not all(key in raw_ui for key in ('ui.opds.exposure.lan_https','ui.opds.exposure.running_lan_https')):
     fail('Stage 18 UI/lifecycle missing localized LAN/firewall warning contract')
-if '@PostConstruct' not in lifecycle or '@PreDestroy' not in lifecycle: fail('OPDS desktop lifecycle missing start/stop hooks')
+if ('settings.autostart()' not in startup or 'serverControlProvider.getObject().start(settings)' not in startup):
+    fail('OPDS bootstrap lifecycle missing autostart/start contract')
+if ('DisposableBean' not in server or 'public void destroy()' not in server or 'stop();' not in server):
+    fail('OPDS server lifecycle missing Spring destruction/stop contract')
 if 'CoreActions.OPDS_MANAGE' not in main or 'fx:id="opdsMenuItem"' not in fxml: fail('OPDS main-menu ActionRegistry wiring missing')
-if 'com.myhomelibcorp.opds' in ui+lifecycle+main: fail('UI must depend on application OPDS control, not implementation')
+if 'com.myhomelibcorp.opds' in ui+main: fail('UI must depend on application OPDS control, not implementation')
 
 arch=text('ARCHITECTURE.md')
-if 'The root reactor contains 15 modules.' not in arch or 'opds            -> shared, application, web' not in arch: fail('architecture documentation not updated for OPDS module')
+if ('The root reactor contains 20 child modules (21 Maven projects including the root aggregator).' not in arch
+        or 'opds                     -> shared, application, web' not in arch):
+    fail('architecture documentation not updated for the current OPDS module graph')
 
 required=[
  'myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/opds/OpdsCatalogQueryPort.java',
@@ -62,7 +68,9 @@ for rel in required:
 # now verifies that the loopback/auth/TLS/token/backpressure fixtures remain present
 # instead of compiling a stale hand-written dependency stub graph.
 def http_smoke_fixture():
-    test=text('myhomelib-opds/src/test/java/com/myhomelibcorp/opds/JdkOpdsServerTest.java')
+    server_test=text('myhomelib-opds/src/test/java/com/myhomelibcorp/opds/JdkOpdsServerTest.java')
+    download_test=text('myhomelib-application/src/test/java/com/myhomelibcorp/application/opds/OpdsLifecycleIsolationTest.java')
+    test=server_test + "\n" + download_test
     for marker in (
         'servesRootAndBoundedAuthorsWithoutJavaFx',
         'servesOpds2NavigationLibrarySearchGroupsFavoritesAndContinueReading',
@@ -72,6 +80,8 @@ def http_smoke_fixture():
         'repeatedBadCredentialsTriggerPerClientThrottling',
         'maxConcurrentRequestsAppliesBackPressureWithoutBreakingNormalRequest',
         'failedTlsStartCleansResourcesAndAllowsImmediateRestart',
+        'largeDownloadStreamsFromPinnedHandleWithoutWholeFileMaterialization',
+        'clientDisconnectDuringDownloadStillReleasesPinnedFileAndTemporaryContent',
     ):
         if marker not in test: fail(f'OPDS runtime regression fixture missing: {marker}')
 

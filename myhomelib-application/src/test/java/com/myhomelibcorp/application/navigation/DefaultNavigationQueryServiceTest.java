@@ -4,6 +4,9 @@ import com.myhomelibcorp.application.catalog.CatalogUpdateService;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationOutcome;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.repository.NavigationFacetRepository;
@@ -16,6 +19,8 @@ import java.util.List;
 import java.util.OptionalLong;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -51,6 +56,37 @@ class DefaultNavigationQueryServiceTest {
                 filterStateService,
                 catalogUpdateService,
                 directExecutor());
+    }
+
+    @Test
+    void cancelledNavigationQueryDoesNotPoisonRunningConversionOutcome() {
+        LibraryOperationCoordinator operations = new LibraryOperationCoordinator();
+        AtomicReference<LibraryOperationOutcome> outcome = new AtomicReference<>();
+        operations.addCompletionListener(completion -> outcome.set(completion.outcome()));
+        var conversion = operations.acquireDetachedShared(LibraryOperationType.CONVERSION);
+        ExecutorPort cancelledExecutor = new ExecutorPort() {
+            @Override
+            public <T> CompletableFuture<T> submit(Callable<T> task) {
+                return CompletableFuture.failedFuture(new CancellationException("stale navigation query"));
+            }
+
+            @Override
+            public void execute(Runnable task) {
+                task.run();
+            }
+        };
+        DefaultNavigationQueryService protectedService = new DefaultNavigationQueryService(
+                authorRepository, bookQueryRepository, navigationFacetRepository, filterStateService,
+                catalogUpdateService, cancelledExecutor, operations);
+
+        java.util.concurrent.CompletionException queryFailure = org.junit.jupiter.api.Assertions.assertThrows(
+                java.util.concurrent.CompletionException.class,
+                () -> protectedService.findFirstAuthorInitial().join());
+        assertThat(queryFailure.getCause()).isInstanceOf(CancellationException.class);
+        conversion.markCancelled("conversion cancelled").close();
+
+        assertThat(outcome.get()).isEqualTo(LibraryOperationOutcome.CANCELLED);
+        assertThat(operations.isBusy()).isFalse();
     }
 
     @Test

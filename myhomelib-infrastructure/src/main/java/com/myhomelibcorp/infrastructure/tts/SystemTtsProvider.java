@@ -67,6 +67,9 @@ public class SystemTtsProvider implements TtsProvider {
 
     @Override
     public void speak(String text, String voiceId, double rate) throws Exception {
+        if (!Double.isFinite(rate) || rate < 0.5 || rate > 2.0) {
+            throw new IllegalArgumentException("TTS rate must be between 0.5 and 2.0");
+        }
         if (!isAvailable()) throw new IllegalStateException("System TTS is unavailable");
         String safeText = text == null ? "" : text;
         if (safeText.isBlank()) return;

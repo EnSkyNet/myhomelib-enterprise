@@ -1,9 +1,10 @@
 package com.myhomelibcorp.infrastructure.customfield;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.domain.model.customfield.CustomFieldDefinition;
 import com.myhomelibcorp.domain.model.customfield.CustomFieldDeletePolicy;
 import com.myhomelibcorp.domain.model.customfield.CustomFieldType;
+import com.myhomelibcorp.application.port.out.customfield.CustomFieldRepository;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.TestCollectionManager;
 import org.flywaydb.core.Flyway;
@@ -11,6 +12,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -61,6 +67,57 @@ class SqliteCustomFieldRepositoryIntegrationTest {
         assertThatThrownBy(() -> repo.saveDefinition(new CustomFieldDefinition(definition.id(), "State", CustomFieldType.ENUM, List.of("A"))))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("ENUM");
     }
+
+    @Test
+    void collectionTransactionsRollBackEvenWhenMetadataTransactionManagerIsPrimary() {
+        Path collectionFile = tempDir.resolve("custom-transaction.db");
+        Path metadataFile = tempDir.resolve("metadata-transaction.db");
+        var collectionDs = new DriverManagerDataSource("jdbc:sqlite:" + collectionFile.toAbsolutePath());
+        var metadataDs = new DriverManagerDataSource("jdbc:sqlite:" + metadataFile.toAbsolutePath());
+        Flyway.configure().dataSource(collectionDs).locations("classpath:db/migration").load().migrate();
+        JdbcTemplate jdbc = new JdbcTemplate(collectionDs);
+        jdbc.update("INSERT INTO books(id,title,file_name,deleted,local) VALUES('22222222-2222-2222-2222-222222222222','Book','book.fb2',0,1)");
+        jdbc.update("INSERT INTO custom_field_definitions(name,field_type,enum_options_json) VALUES('State','TEXT','[]')");
+        Long definitionId = jdbc.queryForObject("SELECT id FROM custom_field_definitions WHERE name='State'", Long.class);
+        assertThat(definitionId).isNotNull();
+        jdbc.update("INSERT INTO custom_field_values(book_id,definition_id,value_text) VALUES(?,?,?)",
+                "22222222-2222-2222-2222-222222222222", definitionId, "Ready");
+        jdbc.execute("""
+                CREATE TRIGGER fail_custom_definition_delete
+                BEFORE DELETE ON custom_field_definitions
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced definition delete failure');
+                END
+                """);
+
+        TestCollectionManager collectionManager = manager(jdbc, collectionDs);
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.register(TransactionTestConfig.class);
+            context.registerBean("metadataTransactionManager", PlatformTransactionManager.class,
+                    () -> new DataSourceTransactionManager(metadataDs), definition -> definition.setPrimary(true));
+            context.registerBean("collectionTransactionManager", PlatformTransactionManager.class,
+                    () -> new DataSourceTransactionManager(collectionDs));
+            context.registerBean(com.myhomelibcorp.infrastructure.collection.CollectionManager.class, () -> collectionManager);
+            context.registerBean(SqliteCustomFieldRepository.class,
+                    () -> new SqliteCustomFieldRepository(collectionManager, new ObjectMapper()));
+            context.refresh();
+
+            CustomFieldRepository repository = context.getBean(CustomFieldRepository.class);
+            assertThatThrownBy(() -> repository.deleteDefinition(definitionId, CustomFieldDeletePolicy.CASCADE_VALUES))
+                    .isInstanceOf(RuntimeException.class);
+        }
+
+        Integer values = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM custom_field_values WHERE definition_id=?", Integer.class, definitionId);
+        Integer definitions = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM custom_field_definitions WHERE id=?", Integer.class, definitionId);
+        assertThat(values).as("first delete must roll back with the failed definition delete").isEqualTo(1);
+        assertThat(definitions).isEqualTo(1);
+    }
+
+    @Configuration
+    @EnableTransactionManagement
+    static class TransactionTestConfig { }
 
     private static TestCollectionManager manager(JdbcTemplate jdbc, javax.sql.DataSource ds) {
         TestCollectionManager manager = new TestCollectionManager(jdbc);

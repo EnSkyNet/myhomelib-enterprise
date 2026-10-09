@@ -81,11 +81,11 @@ class DownloadDecisionIntegrationTest {
 
         // 3. Налаштування адаптера
         ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
-        when(settings.getInt("online.retryCount", 3)).thenReturn(0);
+        when(settings.getInt("online.retryCount", 2)).thenReturn(0);
         when(settings.get("online.downloadBufferKb", "256")).thenReturn("256");
         when(settings.get("online.userAgent", "MyHomeLib Enterprise/7.1")).thenReturn("MyHomeLib Enterprise/7.1");
         when(settings.getInt("online.connectTimeoutSeconds", 20)).thenReturn(20);
-        when(settings.getInt("online.readTimeoutSeconds", 120)).thenReturn(120);
+        when(settings.getInt("online.readTimeoutSeconds", 30)).thenReturn(120);
 
         ArchiveReader archiveReader = mock(ArchiveReader.class);
         DownloadPayloadValidator validator = new DownloadPayloadValidator(archiveReader, settings);
@@ -161,11 +161,11 @@ class DownloadDecisionIntegrationTest {
 
         // 3. Налаштування адаптера
         ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
-        when(settings.getInt("online.retryCount", 3)).thenReturn(0);
+        when(settings.getInt("online.retryCount", 2)).thenReturn(0);
         when(settings.get("online.downloadBufferKb", "256")).thenReturn("256");
         when(settings.get("online.userAgent", "MyHomeLib Enterprise/7.1")).thenReturn("MyHomeLib Enterprise/7.1");
         when(settings.getInt("online.connectTimeoutSeconds", 20)).thenReturn(20);
-        when(settings.getInt("online.readTimeoutSeconds", 120)).thenReturn(120);
+        when(settings.getInt("online.readTimeoutSeconds", 30)).thenReturn(120);
 
         ArchiveReader archiveReader = mock(ArchiveReader.class);
         DownloadPayloadValidator validator = new DownloadPayloadValidator(archiveReader, settings);
@@ -238,11 +238,11 @@ class DownloadDecisionIntegrationTest {
 
         // 3. Налаштування адаптера
         ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
-        when(settings.getInt("online.retryCount", 3)).thenReturn(0);
+        when(settings.getInt("online.retryCount", 2)).thenReturn(0);
         when(settings.get("online.downloadBufferKb", "256")).thenReturn("256");
         when(settings.get("online.userAgent", "MyHomeLib Enterprise/7.1")).thenReturn("MyHomeLib Enterprise/7.1");
         when(settings.getInt("online.connectTimeoutSeconds", 20)).thenReturn(20);
-        when(settings.getInt("online.readTimeoutSeconds", 120)).thenReturn(120);
+        when(settings.getInt("online.readTimeoutSeconds", 30)).thenReturn(120);
 
         ArchiveReader archiveReader = mock(ArchiveReader.class);
         DownloadPayloadValidator validator = new DownloadPayloadValidator(archiveReader, settings);

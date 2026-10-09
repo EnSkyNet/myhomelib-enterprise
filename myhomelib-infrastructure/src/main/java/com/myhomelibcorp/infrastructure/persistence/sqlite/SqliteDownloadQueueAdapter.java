@@ -45,21 +45,17 @@ public class SqliteDownloadQueueAdapter implements DownloadQueuePort {
     @Override
     public void markInProgress(String collectionId, String bookId) {
         requireIdentity(collectionId, bookId);
-        int updated = jdbc.update("""
-                UPDATE online_download_queue
-                SET status='IN_PROGRESS', retry_count=retry_count+1,
-                    last_attempt=CURRENT_TIMESTAMP, last_error=NULL, updated_at=CURRENT_TIMESTAMP
-                WHERE collection_id=? AND book_id=?
+        jdbc.update("""
+                INSERT INTO online_download_queue
+                    (collection_id, book_id, status, retry_count, last_attempt, updated_at)
+                VALUES (?, ?, 'IN_PROGRESS', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(collection_id, book_id) DO UPDATE SET
+                    status='IN_PROGRESS',
+                    retry_count=online_download_queue.retry_count+1,
+                    last_attempt=CURRENT_TIMESTAMP,
+                    last_error=NULL,
+                    updated_at=CURRENT_TIMESTAMP
                 """, collectionId, bookId);
-        if (updated == 0) {
-            markPending(collectionId, bookId, null, null);
-            jdbc.update("""
-                    UPDATE online_download_queue
-                    SET status='IN_PROGRESS', retry_count=retry_count+1,
-                        last_attempt=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
-                    WHERE collection_id=? AND book_id=?
-                    """, collectionId, bookId);
-        }
     }
 
     @Override
@@ -82,21 +78,18 @@ public class SqliteDownloadQueueAdapter implements DownloadQueuePort {
     private void updateTerminal(String collectionId, String bookId, DownloadQueueStatus status,
                                 String destination, String error, String resumeInformation) {
         requireIdentity(collectionId, bookId);
-        int updated = jdbc.update("""
-                UPDATE online_download_queue
-                SET status=?,
-                    download_destination=COALESCE(?, download_destination),
-                    last_error=?, resume_information=?, updated_at=CURRENT_TIMESTAMP
-                WHERE collection_id=? AND book_id=?
-                """, status.name(), nullIfBlank(destination), nullIfBlank(error), nullIfBlank(resumeInformation), collectionId, bookId);
-        if (updated == 0) {
-            markPending(collectionId, bookId, null, resumeInformation);
-            jdbc.update("""
-                    UPDATE online_download_queue
-                    SET status=?, download_destination=?, last_error=?, resume_information=?, updated_at=CURRENT_TIMESTAMP
-                    WHERE collection_id=? AND book_id=?
-                    """, status.name(), nullIfBlank(destination), nullIfBlank(error), nullIfBlank(resumeInformation), collectionId, bookId);
-        }
+        jdbc.update("""
+                INSERT INTO online_download_queue
+                    (collection_id, book_id, status, download_destination, last_error, resume_information, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(collection_id, book_id) DO UPDATE SET
+                    status=excluded.status,
+                    download_destination=COALESCE(excluded.download_destination, online_download_queue.download_destination),
+                    last_error=excluded.last_error,
+                    resume_information=excluded.resume_information,
+                    updated_at=CURRENT_TIMESTAMP
+                """, collectionId, bookId, status.name(), nullIfBlank(destination),
+                nullIfBlank(error), nullIfBlank(resumeInformation));
     }
 
     @Override

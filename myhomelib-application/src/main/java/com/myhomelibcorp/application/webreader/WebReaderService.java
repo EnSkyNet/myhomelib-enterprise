@@ -20,7 +20,9 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -96,31 +98,64 @@ public class WebReaderService implements WebReaderUseCase {
     }
 
     public ReadingProgressDto saveProgress(String bookId, int chapterIndex, long absoluteOffset) throws IOException {
+        return withReaderState(() -> saveProgressUnderLease(bookId, chapterIndex, absoluteOffset));
+    }
+
+    @Override
+    public WebProgressSaveResult saveProgress(String bookId, WebProgressUpdate update) throws IOException {
+        Objects.requireNonNull(update, "update");
         return withReaderState(() -> {
-            WebReaderDocument doc = openUnderLease(bookId, chapterIndex)
-                    .orElseThrow(() -> new IOException("Book not found"));
-            if (!doc.supported() || doc.chapters().isEmpty()) throw new IOException("Web Reader format is unsupported");
-            WebReaderChapter chapter = doc.currentChapter();
-            long clamped = Math.max(chapter.startOffset(), Math.min(absoluteOffset, chapter.endOffset()));
-            long total = doc.chapters().getLast().endOffset();
-            int localOffset = (int) Math.min(Integer.MAX_VALUE, Math.max(0L, clamped - chapter.startOffset()));
             ReadingProgressDto existing = progressRepository.findByBookId(bookId).orElse(null);
-            ReadingProgressDto dto = ReadingProgressDto.builder()
-                    .bookId(bookId)
-                    .anchorId(chapter.index() + ":" + clamped + ":0:" + localOffset)
-                    .paragraphIndex(0)
-                    .paragraphId("web:" + chapter.id())
-                    .charOffset(localOffset)
-                    .percent(total <= 0 ? 0.0 : Math.min(100.0, (double) clamped / total * 100.0))
-                    .chapterTitle(chapter.title())
-                    .chapterId(chapter.id())
-                    .updatedAt(LocalDateTime.now())
-                    .readingTimeSeconds(existing == null ? 0L : existing.getReadingTimeSeconds())
-                    .lastDevice("web")
-                    .build();
-            progressRepository.save(dto);
-            return dto;
+            if (existing != null && samePosition(existing, update.chapterIndex(), update.absoluteOffset())) {
+                return new WebProgressSaveResult(true, existing);
+            }
+            if (existing != null && existing.getUpdatedAt() != null) {
+                Instant now = Instant.now();
+                Instant clientTime = update.clientTimestamp().isAfter(now.plusSeconds(300)) ? now : update.clientTimestamp();
+                LocalDateTime incoming = LocalDateTime.ofInstant(clientTime, ZoneId.systemDefault());
+                if (existing.getUpdatedAt().isAfter(incoming)) {
+                    return new WebProgressSaveResult(false, existing);
+                }
+            }
+            return new WebProgressSaveResult(true, saveProgressUnderLease(bookId, update.chapterIndex(), update.absoluteOffset()));
         });
+    }
+
+    private ReadingProgressDto saveProgressUnderLease(String bookId, int chapterIndex, long absoluteOffset) throws IOException {
+        WebReaderDocument doc = openUnderLease(bookId, chapterIndex)
+                .orElseThrow(() -> new IOException("Book not found"));
+        if (!doc.supported() || doc.chapters().isEmpty()) throw new IOException("Web Reader format is unsupported");
+        WebReaderChapter chapter = doc.currentChapter();
+        long clamped = Math.max(chapter.startOffset(), Math.min(absoluteOffset, chapter.endOffset()));
+        long total = doc.chapters().getLast().endOffset();
+        int localOffset = (int) Math.min(Integer.MAX_VALUE, Math.max(0L, clamped - chapter.startOffset()));
+        ReadingProgressDto existing = progressRepository.findByBookId(bookId).orElse(null);
+        ReadingProgressDto dto = ReadingProgressDto.builder()
+                .bookId(bookId)
+                .anchorId(chapter.index() + ":" + clamped + ":0:" + localOffset)
+                .paragraphIndex(0)
+                .paragraphId("web:" + chapter.id())
+                .charOffset(localOffset)
+                .percent(total <= 0 ? 0.0 : Math.min(100.0, (double) clamped / total * 100.0))
+                .chapterTitle(chapter.title())
+                .chapterId(chapter.id())
+                .updatedAt(LocalDateTime.now())
+                .readingTimeSeconds(existing == null ? 0L : existing.getReadingTimeSeconds())
+                .lastDevice("web")
+                .build();
+        progressRepository.save(dto);
+        return dto;
+    }
+
+    private static boolean samePosition(ReadingProgressDto existing, int chapterIndex, long absoluteOffset) {
+        long existingOffset = parseAbsoluteOffset(existing.getAnchorId());
+        if (existingOffset != absoluteOffset) return false;
+        String anchor = existing.getAnchorId();
+        if (anchor == null) return false;
+        int colon = anchor.indexOf(':');
+        if (colon <= 0) return false;
+        try { return Integer.parseInt(anchor.substring(0, colon)) == chapterIndex; }
+        catch (NumberFormatException ignored) { return false; }
     }
 
     private Optional<BookDto> load(String bookId) {
@@ -166,7 +201,8 @@ public class WebReaderService implements WebReaderUseCase {
         long parsed = parseAbsoluteOffset(anchorId);
         long total = chapters.getLast().endOffset();
         if (parsed >= 0) return Math.max(0L, Math.min(parsed, total));
-        return Math.round(Math.max(0.0, Math.min(100.0, percent)) / 100.0 * total);
+        double safePercent = Double.isFinite(percent) ? Math.max(0.0, Math.min(100.0, percent)) : 0.0;
+        return Math.round(safePercent / 100.0 * total);
     }
 
     private static long parseAbsoluteOffset(String anchorId) {

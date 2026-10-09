@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.search;
 
+import com.myhomelibcorp.infrastructure.config.DataSourceConfig;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.domain.model.book.Book;
@@ -13,7 +14,6 @@ import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteBookQueryReposi
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookQueryBuilder;
-import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.queryparser.classic.MultiFieldQueryParser;
@@ -141,13 +141,7 @@ class RealSelectiveLucenePerformanceProbeTest {
     }
 
     private static HikariDataSource dataSource(Path db) {
-        HikariConfig hc = new HikariConfig();
-        hc.setJdbcUrl("jdbc:sqlite:" + db);
-        hc.setDriverClassName("org.sqlite.JDBC");
-        hc.setMaximumPoolSize(2);
-        hc.setMinimumIdle(1);
-        hc.setConnectionInitSql("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=15000; PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768; PRAGMA mmap_size=67108864;");
-        return new HikariDataSource(hc);
+        return new DataSourceConfig().createDataSourceForPath(db.toString());
     }
 
     private static CollectionManager manager(JdbcTemplate jdbc, HikariDataSource ds) {

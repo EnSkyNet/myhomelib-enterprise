@@ -1,8 +1,8 @@
 package com.myhomelibcorp.infrastructure.translation;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.textprovider.TextProviderErrorKind;
 import com.myhomelibcorp.application.textprovider.TextProviderException;
@@ -10,7 +10,7 @@ import com.myhomelibcorp.application.textprovider.TextProviderRequestContext;
 import com.myhomelibcorp.application.translation.TranslationProvider;
 import com.myhomelibcorp.application.translation.TranslationQuery;
 import com.myhomelibcorp.application.translation.TranslationResult;
-import com.myhomelibcorp.infrastructure.download.OnlineHttpPolicy;
+import com.myhomelibcorp.infrastructure.download.OnlineHttpClientProvider;
 import com.myhomelibcorp.infrastructure.textprovider.TextProviderHttpSupport;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -38,9 +38,14 @@ public final class CustomHttpTranslationProvider implements TranslationProvider 
     private final ObjectMapper objectMapper;
     private final HttpClient client;
 
-    @Autowired
     public CustomHttpTranslationProvider(ApplicationSettingsPort settings, ObjectMapper objectMapper) {
-        this(settings, objectMapper, new OnlineHttpPolicy(settings).create(null));
+        this(settings, objectMapper, new OnlineHttpClientProvider(settings).shared());
+    }
+
+    @Autowired
+    public CustomHttpTranslationProvider(ApplicationSettingsPort settings, ObjectMapper objectMapper,
+                 OnlineHttpClientProvider httpClients) {
+        this(settings, objectMapper, Objects.requireNonNull(httpClients, "httpClients").shared());
     }
 
     CustomHttpTranslationProvider(ApplicationSettingsPort settings, ObjectMapper objectMapper, HttpClient client) {
@@ -76,7 +81,7 @@ public final class CustomHttpTranslationProvider implements TranslationProvider 
         String body;
         try {
             body = objectMapper.writeValueAsString(payload);
-        } catch (JsonProcessingException impossible) {
+        } catch (JacksonException impossible) {
             throw new TextProviderException(TextProviderErrorKind.FAILED, "Custom translation request could not be encoded", impossible);
         }
         Duration remaining = context.remainingTimeout();
@@ -97,24 +102,23 @@ public final class CustomHttpTranslationProvider implements TranslationProvider 
     }
 
     private TranslationResult parse(HttpResponse<String> response, TranslationQuery query) throws TextProviderException {
-        int status = response.statusCode();
-        if (status == 429) throw TextProviderException.rateLimited(TextProviderHttpSupport.parseRetryAfter(response));
-        if (status == 401 || status == 403) throw new TextProviderException(TextProviderErrorKind.AUTHENTICATION, "Custom translation request was rejected");
-        if (status == 408 || status == 504) throw TextProviderException.timeout();
-        if (status >= 500) throw new TextProviderException(TextProviderErrorKind.UNAVAILABLE, "Custom translation service is unavailable");
-        if (status < 200 || status >= 300) {
-            throw new TextProviderException(TextProviderErrorKind.FAILED, "Custom translation request failed with HTTP " + status);
-        }
+        TextProviderHttpSupport.requireSuccessStatus(
+                response,
+                status -> status == 401 || status == 403,
+                new TextProviderHttpSupport.FailureMessages(
+                        "Custom translation request was rejected",
+                        "Custom translation service is unavailable",
+                        "Custom translation request failed with HTTP "));
         try {
             JsonNode root = objectMapper.readTree(response.body());
             if (root == null || !root.isObject()) {
                 throw new TextProviderException(TextProviderErrorKind.INVALID_RESPONSE, "Custom translation service returned an invalid response");
             }
-            String text = root.path("translation").asText("").trim();
-            String source = root.path("sourceLanguage").asText(query.sourceLanguage()).trim();
+            String text = root.path("translation").asString("").trim();
+            String source = root.path("sourceLanguage").asString(query.sourceLanguage()).trim();
             if (text.isBlank()) throw new TextProviderException(TextProviderErrorKind.INVALID_RESPONSE, "Custom translation response has no translation");
             return new TranslationResult(PROVIDER_ID, PROVIDER_NAME, source, query.targetLanguage(), text);
-        } catch (JsonProcessingException invalidJson) {
+        } catch (JacksonException invalidJson) {
             throw new TextProviderException(TextProviderErrorKind.INVALID_RESPONSE, "Custom translation service returned invalid JSON", invalidJson);
         }
     }

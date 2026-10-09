@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.cache;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.myhomelibcorp.application.port.out.cache.EntityCache;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -8,7 +9,10 @@ import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
@@ -16,8 +20,8 @@ import java.util.concurrent.TimeUnit;
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class BookCache {
-    private static final int MAX_WEIGHT_KIB = 64 * 1024; // ~64 MiB total budget
+public class BookCache implements EntityCache<BookId, Book> {
+    private static final int MAX_WEIGHT_KIB = 24 * 1024; // ~24 MiB total budget; avoids duplicate retained book aggregates
 
     private final CollectionManager collectionManager;
     private final com.github.benmanes.caffeine.cache.Cache<String, Book> cache = Caffeine.newBuilder()
@@ -45,7 +49,43 @@ public class BookCache {
     }
 
     public void evict(BookId id) {
-        if (id != null) cache.invalidate(buildKey(id));
+        if (id == null) return;
+        evictKeys(List.of(buildKey(id)));
+    }
+
+    /**
+     * Evicts several books in the active collection with one transaction synchronization.
+     *
+     * <p>Repository mutations can call this before their surrounding transaction commits. An
+     * immediate invalidation alone has a race: another reader may repopulate the old committed row
+     * before commit, leaving that stale aggregate cached afterwards. Therefore the same captured
+     * collection-scoped keys are invalidated once more AFTER_COMMIT.</p>
+     */
+    public void evictAll(java.util.Collection<BookId> ids) {
+        if (ids == null || ids.isEmpty()) return;
+        List<String> keys = ids.stream()
+                .filter(java.util.Objects::nonNull)
+                .map(this::buildKey)
+                .distinct()
+                .toList();
+        evictKeys(keys);
+    }
+
+    private void evictKeys(List<String> keys) {
+        if (keys == null || keys.isEmpty()) return;
+        cache.invalidateAll(keys);
+        if (TransactionSynchronizationManager.isSynchronizationActive()
+                && TransactionSynchronizationManager.isActualTransactionActive()) {
+            // Capture exact keys now. A later collection switch must never redirect an after-commit
+            // callback to another collection's cache namespace.
+            List<String> committedKeys = List.copyOf(keys);
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    cache.invalidateAll(committedKeys);
+                }
+            });
+        }
     }
 
     /**

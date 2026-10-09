@@ -18,3 +18,4 @@ Main sections:
 • **Sync, plugins and AI:** the built-in Integration Center configures WebDAV user-data synchronization, conflict review/resolution, plugin installation and lifecycle, and AI providers. Network/secret operations require explicit configuration and user consent. Do not confuse WebDAV sync with **Synchronize folder**, which works with a local file directory.
 • **Web / OPDS:** separate server access channels. Their presence does not imply a dedicated desktop button for every server capability.
 • **MCP:** a separate read-only server for an external MCP client.
+• **Kobo Sync:** Integration Center can issue/revoke the credential, show device status and prepare incremental sync; see the `integrations` topic. Real-device interoperability is validated separately.

@@ -5,6 +5,7 @@ import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.http.HttpTimeoutException;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -13,8 +14,14 @@ import java.util.concurrent.ThreadLocalRandom;
 /** Shared retry classification/backoff policy for online book and catalog HTTP traffic. */
 public final class OnlineRetryPolicy {
     private static final long DEFAULT_MAX_DELAY_MS = 30_000L;
+    private static final int DEFAULT_RETRY_COUNT = 2;
 
     private OnlineRetryPolicy() { }
+
+    public static int retryCount(ApplicationSettingsPort settings) {
+        if (settings == null) return DEFAULT_RETRY_COUNT;
+        return clamp(settings.getInt("online.retryCount", DEFAULT_RETRY_COUNT), 0, 6);
+    }
 
     public static boolean isRetryableStatus(int status) {
         return status == 408
@@ -27,6 +34,14 @@ public final class OnlineRetryPolicy {
                 || status == 504;
     }
 
+    /**
+     * Request/connect timeouts already consume the configured request budget (30 s by default).
+     * Retrying them with the normal retry count would silently stretch one user action to roughly
+     * 90+ seconds. Other I/O failures (for example a reset connection) remain retryable.
+     */
+    public static boolean isRetryableIOException(IOException failure) {
+        return !(failure instanceof HttpTimeoutException);
+    }
 
     public static IOException safeNetworkFailure(String prefix, URI uri, Exception failure) {
         String kind = failure == null ? "" : " (" + failure.getClass().getSimpleName() + ")";
@@ -35,13 +50,13 @@ public final class OnlineRetryPolicy {
     }
 
     public static long delayMillis(ApplicationSettingsPort settings, int attempt, String retryAfterHeader) {
-        long maxDelay = clamp(settings.getInt("online.retryMaxDelayMs", (int) DEFAULT_MAX_DELAY_MS), 1_000, 120_000);
+        long maxDelay = clamp(setting(settings, "online.retryMaxDelayMs", (int) DEFAULT_MAX_DELAY_MS), 1_000, 120_000);
         long serverDelay = retryAfterMillis(retryAfterHeader, System.currentTimeMillis());
         if (serverDelay >= 0) return Math.min(maxDelay, serverDelay);
 
-        long base = clamp(settings.getInt("online.retryBaseDelayMs", 750), 100, 10_000);
+        long base = clamp(setting(settings, "online.retryBaseDelayMs", 750), 100, 10_000);
         long exponential = Math.min(maxDelay, base * (1L << Math.min(6, Math.max(0, attempt - 1))));
-        int jitterPercent = clamp(settings.getInt("online.retryJitterPercent", 20), 0, 50);
+        int jitterPercent = clamp(setting(settings, "online.retryJitterPercent", 20), 0, 50);
         if (jitterPercent == 0 || exponential <= 1) return exponential;
         long spread = Math.max(1L, exponential * jitterPercent / 100L);
         long jitter = ThreadLocalRandom.current().nextLong(-spread, spread + 1L);
@@ -65,6 +80,10 @@ public final class OnlineRetryPolicy {
         } catch (DateTimeParseException ignored) {
             return -1L;
         }
+    }
+
+    private static int setting(ApplicationSettingsPort settings, String key, int fallback) {
+        return settings == null ? fallback : settings.getInt(key, fallback);
     }
 
     private static int clamp(int value, int min, int max) {

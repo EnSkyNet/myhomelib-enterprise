@@ -95,12 +95,13 @@ public class SwitchCollectionUseCase {
             target = collectionRepository.findById(collection.getId()).orElse(collection);
         }
 
-        log.info("🔄 Переключення на колекцію: {}", target.getName());
+        log.info("COLLECTION_SWITCH_START id={} name='{}' rebuildIndex={}", target.getId(), target.getName(), rebuildIndex);
 
         Collection current = collectionLifecycleService.getCurrentCollection();
         if (current != null && current.getId() != null && current.getId().equals(target.getId())) {
             collectionLifecycleService.updateCurrentCollection(target);
-            log.info("Колекція {} вже активна; metadata синхронізовано", target.getName());
+            log.info("COLLECTION_SWITCH_DONE id={} name='{}' alreadyActive=true reusableSearchIndex=true",
+                    target.getId(), target.getName());
             return new SwitchResult(target, true);
         }
 
@@ -117,6 +118,8 @@ public class SwitchCollectionUseCase {
         }
 
         boolean reusableSearchIndex = collectionLifecycleService.initializeCollection(target, rebuildIndex);
+        log.info("COLLECTION_SWITCH_DONE id={} name='{}' reusableSearchIndex={}",
+                target.getId(), target.getName(), reusableSearchIndex);
         if (contentIndexingQueue != null && target.getId() != null && !target.getId().isBlank()) {
             contentIndexingQueue.restore(target.getId());
         }

@@ -27,6 +27,7 @@ import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.table.TableProfileService;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
 import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
 import com.myhomelibcorp.ui.util.UiSubscriptions;
@@ -111,6 +112,8 @@ public class AuthorWorkspaceController implements WorkspaceLifecycle {
 
     private final AtomicLong metadataGeneration = new AtomicLong();
     private final AtomicLong booksGeneration = new AtomicLong();
+    private volatile UiBackgroundExecutor.CancellableSubmission<AuthorWorkspaceMetadata> metadataTask;
+    private volatile UiBackgroundExecutor.CancellableSubmission<LoadedBooks> booksTask;
     private final UiSubscriptions subscriptions = new UiSubscriptions();
     private final List<BookViewModel> allBooks = new ArrayList<>();
     private final Set<String> collapsedSeries = new LinkedHashSet<>();
@@ -401,6 +404,8 @@ public class AuthorWorkspaceController implements WorkspaceLifecycle {
 
     public void setAuthorId(AuthorId authorId) {
         if (authorId == null) throw new IllegalArgumentException("AuthorId cannot be null");
+        cancelMetadataTask();
+        cancelBooksTask();
         currentAuthorId = authorId;
         collapsedSeries.clear();
         bookSelectionService.clear();
@@ -411,7 +416,8 @@ public class AuthorWorkspaceController implements WorkspaceLifecycle {
     private void loadAuthorData(AuthorId authorId) {
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(metadataGeneration, appState);
         setBusy(true);
-        executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
+        UiBackgroundExecutor.CancellableSubmission<AuthorWorkspaceMetadata> submission =
+                executor.submitCollectionScopedInteractiveCancellable(LibraryOperationType.QUERY, () -> {
             AuthorDto author = loadAuthorByIdUseCase.execute(authorId)
                     .orElseThrow(() -> new IllegalStateException("Author not found: " + authorId));
             AuthorBookStatistics statistics = loadAuthorBookStatisticsUseCase.execute(authorId);
@@ -421,7 +427,9 @@ public class AuthorWorkspaceController implements WorkspaceLifecycle {
                     .mapToLong(com.myhomelibcorp.application.catalog.FollowedAuthorSummary::newBookCount)
                     .findFirst().orElse(0L) : 0L;
             return new AuthorWorkspaceMetadata(author, statistics, followed, newBookCount);
-        }).thenAccept(data -> UiExecutor.runOnUiThread(() -> {
+        });
+        metadataTask = submission;
+        submission.completion().thenAccept(data -> UiExecutor.runOnUiThread(() -> {
             if (!UiAsyncRequestGuard.isCurrent(requestToken, metadataGeneration, appState) || !authorId.equals(currentAuthorId)) return;
             currentAuthor = data.author();
             authorStatistics = data.statistics();
@@ -431,17 +439,25 @@ public class AuthorWorkspaceController implements WorkspaceLifecycle {
             updateFollowButton();
             reloadBooks();
         })).exceptionally(ex -> {
-            log.error("Помилка завантаження автора {}", authorId, ex);
+            if (!UiExceptionSupport.isCancellation(ex)) {
+                log.error("Помилка завантаження автора {}", authorId, ex);
+            }
             UiExecutor.runOnUiThread(() -> {
                 if (UiAsyncRequestGuard.isCurrent(requestToken, metadataGeneration, appState) && authorId.equals(currentAuthorId)) {
+                    currentAuthor = null;
                     allBooks.clear();
                     booksTableView.getItems().clear();
                     authorStatistics = AuthorBookStatistics.empty();
+                    if (authorNameLabel != null) authorNameLabel.setText(i18n.text("ui.author.load_failed"));
+                    if (bioLabel != null) bioLabel.clear();
+                    if (followAuthorButton != null) followAuthorButton.setDisable(true);
                     updateStatisticsLabels(0);
                     setBusy(false);
                 }
             });
             return null;
+        }).whenComplete((ignored, failure) -> {
+            if (metadataTask == submission) metadataTask = null;
         });
     }
 
@@ -457,15 +473,19 @@ public class AuthorWorkspaceController implements WorkspaceLifecycle {
         SortDirection direction = currentDirection;
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(booksGeneration, appState);
         setBusy(true);
+        cancelBooksTask();
 
-        executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
+        UiBackgroundExecutor.CancellableSubmission<LoadedBooks> submission =
+                executor.submitCollectionScopedInteractiveCancellable(LibraryOperationType.QUERY, () -> {
             List<BookListItem> items = loadBooksByAuthorUseCase.executeAll(authorId, filter, sort, direction);
             Set<String> physicallyLocal = new LinkedHashSet<>();
             for (BookListItem item : items) {
                 if (resolveBookLocalAvailabilityUseCase.execute(item)) physicallyLocal.add(item.getId());
             }
             return new LoadedBooks(items, physicallyLocal);
-        }).thenAccept(loaded -> UiExecutor.runOnUiThread(() -> {
+        });
+        booksTask = submission;
+        submission.completion().thenAccept(loaded -> UiExecutor.runOnUiThread(() -> {
             if (!UiAsyncRequestGuard.isCurrent(requestToken, booksGeneration, appState) || !authorId.equals(currentAuthorId)) return;
             allBooks.clear();
             for (BookListItem item : loaded.items()) {
@@ -479,9 +499,13 @@ public class AuthorWorkspaceController implements WorkspaceLifecycle {
             restoreCurrentBookSelection(preferredCurrentBookId);
             setBusy(false);
         })).exceptionally(ex -> {
-            log.error("Помилка завантаження книг автора {}", authorId, ex);
+            if (!UiExceptionSupport.isCancellation(ex)) {
+                log.error("Помилка завантаження книг автора {}", authorId, ex);
+            }
             UiExecutor.runOnUiThread(() -> { if (UiAsyncRequestGuard.isCurrent(requestToken, booksGeneration, appState) && authorId.equals(currentAuthorId)) setBusy(false); });
             return null;
+        }).whenComplete((ignored, failure) -> {
+            if (booksTask == submission) booksTask = null;
         });
     }
 
@@ -803,10 +827,24 @@ public class AuthorWorkspaceController implements WorkspaceLifecycle {
     }
 
 
+    private void cancelMetadataTask() {
+        UiBackgroundExecutor.CancellableSubmission<AuthorWorkspaceMetadata> task = metadataTask;
+        metadataTask = null;
+        if (task != null) task.cancel();
+    }
+
+    private void cancelBooksTask() {
+        UiBackgroundExecutor.CancellableSubmission<LoadedBooks> task = booksTask;
+        booksTask = null;
+        if (task != null) task.cancel();
+    }
+
     @Override
     public void dispose() {
         UiAsyncRequestGuard.invalidate(metadataGeneration);
         UiAsyncRequestGuard.invalidate(booksGeneration);
+        cancelMetadataTask();
+        cancelBooksTask();
         subscriptions.close();
         profileSaveDelay.stop();
         if (filterDebounce != null) filterDebounce.stop();

@@ -20,8 +20,8 @@ $Version = if ($env:MHL_VERSION) { $env:MHL_VERSION } else { [string]$rootPom.pr
 if ([string]::IsNullOrWhiteSpace($Version)) { throw "Cannot determine application version from pom.xml" }
 
 if ([string]::IsNullOrWhiteSpace($Archive)) {
-    $matches = @(Get-ChildItem -Path "dist" -Filter "myhomelib-$Version-windows-*.zip" -File -ErrorAction SilentlyContinue)
-    if ($matches.Count -ne 1) { throw "Expected exactly one Windows portable archive, found $($matches.Count)" }
+    $matches = @(Get-ChildItem -Path "dist" -Filter "MyHomeLib-R18-$Version-portable-windows-*.zip" -File -ErrorAction SilentlyContinue)
+    if ($matches.Count -ne 1) { throw "Expected exactly one canonical R18 Windows portable archive, found $($matches.Count)" }
     $Archive = $matches[0].FullName
 }
 if (-not (Test-Path $Archive -PathType Leaf)) { throw "Portable archive not found: $Archive" }
@@ -68,8 +68,13 @@ $result = [ordered]@{
     syntheticHome = $home
     workingDirectory = $cwd
     launcher = $null
+    cmdLauncher = $null
+    vbsLauncher = $null
     markerPresent = $false
+    bundledRuntimePresent = $false
     launcherExitCode = $null
+    cmdLauncherExitCode = $null
+    vbsLauncherExitCode = $null
     portableDataCreated = $false
     profileEnvironmentRedirected = $false
     syntheticHomeWriteDetected = $false
@@ -88,6 +93,16 @@ try {
     $marker = Join-Path $launcherDir "myhomelib2.ini"
     if (-not (Test-Path $marker -PathType Leaf)) { throw "Portable marker is missing beside launcher: $marker" }
     $result.markerPresent = $true
+    $runtimeDir = Join-Path $launcherDir "runtime"
+    $result.bundledRuntimePresent = Test-Path $runtimeDir -PathType Container
+    if (-not $result.bundledRuntimePresent) { throw "Bundled Java runtime is missing: $runtimeDir" }
+
+    $cmdLauncher = Join-Path $launcherDir "Start-MyHomeLib.cmd"
+    $vbsLauncher = Join-Path $launcherDir "MyHomeLib.vbs"
+    $result.cmdLauncher = $cmdLauncher
+    $result.vbsLauncher = $vbsLauncher
+    if (-not (Test-Path $cmdLauncher -PathType Leaf)) { throw "Compatibility CMD launcher is missing: $cmdLauncher" }
+    if (-not (Test-Path $vbsLauncher -PathType Leaf)) { throw "Compatibility VBS launcher is missing: $vbsLauncher" }
 
     # Redirect the common Windows/Java profile locations into the synthetic home.
     # Any file created there is evidence that portable mode leaked outside the launcher tree.
@@ -100,10 +115,20 @@ try {
     Push-Location $cwd
     $pushed = $true
     $process = Start-Process -FilePath $launcher -ArgumentList "--release-smoke" -Wait -PassThru
+    $result.launcherExitCode = $process.ExitCode
+    if ($process.ExitCode -ne 0) { throw "Extracted native portable launcher smoke failed with exit code $($process.ExitCode)" }
+
+    & $cmdLauncher --release-smoke
+    $result.cmdLauncherExitCode = $LASTEXITCODE
+    if ($result.cmdLauncherExitCode -ne 0) { throw "Start-MyHomeLib.cmd smoke failed with exit code $($result.cmdLauncherExitCode)" }
+
+    $cscript = Join-Path $env:SystemRoot "System32\cscript.exe"
+    & $cscript //nologo $vbsLauncher --release-smoke
+    $result.vbsLauncherExitCode = $LASTEXITCODE
+    if ($result.vbsLauncherExitCode -ne 0) { throw "MyHomeLib.vbs smoke failed with exit code $($result.vbsLauncherExitCode)" }
+
     Pop-Location
     $pushed = $false
-    $result.launcherExitCode = $process.ExitCode
-    if ($process.ExitCode -ne 0) { throw "Extracted portable launcher smoke failed with exit code $($process.ExitCode)" }
 
     $dataDir = Join-Path $launcherDir "data"
     $result.portableDataCreated = Test-Path $dataDir -PathType Container
@@ -141,7 +166,10 @@ finally {
         "- Unicode extract path: ``$($result.extractPath)``",
         "- Unicode synthetic home: ``$($result.syntheticHome)``",
         "- Unicode working directory: ``$($result.workingDirectory)``",
-        "- Launcher exit code: $($result.launcherExitCode)",
+        "- Native launcher exit code: $($result.launcherExitCode)",
+        "- Start-MyHomeLib.cmd exit code: $($result.cmdLauncherExitCode)",
+        "- MyHomeLib.vbs exit code: $($result.vbsLauncherExitCode)",
+        "- Bundled Java runtime present: $($result.bundledRuntimePresent)",
         "- Portable marker present: $($result.markerPresent)",
         "- Portable data created beside launcher: $($result.portableDataCreated)",
         "- Profile environment redirected: $($result.profileEnvironmentRedirected)",

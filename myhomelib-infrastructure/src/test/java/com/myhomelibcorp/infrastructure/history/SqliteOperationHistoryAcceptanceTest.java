@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.history;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.bulkedit.BatchMetadataEditRule;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.TestCollectionManager;
 import org.flywaydb.core.Flyway;

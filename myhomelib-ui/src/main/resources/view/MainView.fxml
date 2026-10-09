@@ -33,6 +33,7 @@
                     <MenuItem text="ui.main.fxml.series" onAction="#onSeries"/>
                     <MenuItem text="ui.main.fxml.genres" onAction="#onGenres"/>
                     <MenuItem text="ui.main.fxml.groups" onAction="#onGroups"/>
+                    <MenuItem text="ui.main.fxml.reading_lists" onAction="#onReadingLists"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="ui.main.fxml.new_books" onAction="#onNewBooks"/>
                     <MenuItem text="ui.main.fxml.author_tracking" onAction="#onFollowedAuthors"/>
@@ -131,6 +132,7 @@
 
                 <Menu text="ui.main.fxml.help">
                     <MenuItem fx:id="helpMenuItem" text="ui.main.fxml.help_f1" onAction="#handleHelp"/>
+                    <MenuItem text="ui.main.fxml.all_user_functions" onAction="#handleAllFunctionsHelp"/>
                     <MenuItem text="ui.main.fxml.inpx_online" onAction="#handleInpxHelp"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="ui.main.fxml.about" onAction="#handleAbout"/>

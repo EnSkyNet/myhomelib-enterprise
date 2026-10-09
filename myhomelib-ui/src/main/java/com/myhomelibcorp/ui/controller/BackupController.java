@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.service.BackupRestoreService;
 import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.operation.OperationCenterService;
@@ -12,7 +13,6 @@ import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
-import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +32,7 @@ public class BackupController {
 
     private final BackupRestoreService backupRestoreService;
     private final DialogService dialogService;
+    private final FileChooserService fileChooserService;
     private final UiBackgroundExecutor executor;
     private final OperationCenterService operationCenter;
     private final ApplicationState appState;
@@ -65,10 +66,8 @@ public class BackupController {
 
     @FXML
     public void onSelectPath() {
-        DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle(i18n.text("ui.backup.choose_folder.title"));
-        chooser.setInitialDirectory(AppPaths.backupsDir().toFile());
-        File dir = chooser.showDialog(stage);
+        File dir = fileChooserService.chooseDirectory(
+                stage, i18n.text("ui.backup.choose_folder.title"), AppPaths.backupsDir().toFile());
         if (dir != null) {
             backupPathField.setText(dir.getAbsolutePath());
         }

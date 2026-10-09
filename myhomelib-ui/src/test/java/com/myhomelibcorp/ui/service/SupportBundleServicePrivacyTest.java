@@ -110,6 +110,20 @@ class SupportBundleServicePrivacyTest {
     }
 
     @Test
+    void truncationDoesNotSplitSurrogatePair() throws Exception {
+        ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
+        SupportBundleService service = new SupportBundleService(settings);
+        String input = "a".repeat(4095) + "😀" + "b".repeat(10);
+
+        var method = SupportBundleService.class.getDeclaredMethod("safeValue", String.class);
+        method.setAccessible(true);
+        String value = (String) method.invoke(service, input);
+
+        assertThat(value).isEqualTo("a".repeat(4095) + "…<truncated>");
+        assertThat(hasUnpairedSurrogate(value)).isFalse();
+    }
+
+    @Test
     void optionsActuallyRemoveOptionalSections() throws Exception {
         Path launch = temp.resolve("launch");
         Path data = temp.resolve("data");
@@ -192,6 +206,19 @@ class SupportBundleServicePrivacyTest {
             }
         }
         return out;
+    }
+
+    private static boolean hasUnpairedSurrogate(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            char current = value.charAt(i);
+            if (Character.isHighSurrogate(current)) {
+                if (i + 1 >= value.length() || !Character.isLowSurrogate(value.charAt(i + 1))) return true;
+                i++;
+            } else if (Character.isLowSurrogate(current)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean canCreateSymlink(Path link, Path target) {

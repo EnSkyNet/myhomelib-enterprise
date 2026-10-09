@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.service;
 
+import static com.myhomelibcorp.application.operation.LibraryOperationLeaseSupport.withSharedLease;
 import com.myhomelibcorp.application.dto.ReadingHistoryItemDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
@@ -76,18 +77,7 @@ public class ReadingHistoryService {
     }
 
     private <T> T withReaderState(Supplier<T> action) {
-        if (operationCoordinator == null) return action.get();
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.READER_STATE);
-        try {
-            T result = action.get();
-            lease.markCompleted("");
-            return result;
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        return withSharedLease(operationCoordinator, LibraryOperationType.READER_STATE, action);
     }
 
     private void withReaderState(Runnable action) {

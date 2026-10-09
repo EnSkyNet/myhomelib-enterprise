@@ -25,6 +25,7 @@ import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.progress.OperationProgress;
 import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
+import com.myhomelibcorp.application.service.DeferredImportIndexMaintenanceService;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
@@ -63,6 +64,7 @@ public class UpdateCollectionFromNetworkUseCase {
     private final int changeTrackingLimit;
     private final LibraryOperationCoordinator operationCoordinator;
     private final ContentIndexAutoSchedulingService contentIndexScheduling;
+    private final DeferredImportIndexMaintenanceService deferredImportIndexMaintenance;
 
     public UpdateCollectionFromNetworkUseCase(
             RemoteCatalogDownloadPort downloader,
@@ -72,7 +74,7 @@ public class UpdateCollectionFromNetworkUseCase {
             SearchIndexer searchIndexer,
             BookQueryRepository bookQueryRepository) {
         this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null, null,
-                ImportChangeAccumulator.DEFAULT_TRACKED_ID_LIMIT, new LibraryOperationCoordinator(), null);
+                ImportChangeAccumulator.DEFAULT_TRACKED_ID_LIMIT, new LibraryOperationCoordinator(), null, null);
     }
 
     public UpdateCollectionFromNetworkUseCase(
@@ -84,7 +86,7 @@ public class UpdateCollectionFromNetworkUseCase {
             BookQueryRepository bookQueryRepository,
             int changeTrackingLimit) {
         this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null, null,
-                changeTrackingLimit, new LibraryOperationCoordinator(), null);
+                changeTrackingLimit, new LibraryOperationCoordinator(), null, null);
     }
 
     public UpdateCollectionFromNetworkUseCase(
@@ -97,7 +99,7 @@ public class UpdateCollectionFromNetworkUseCase {
             int changeTrackingLimit,
             LibraryOperationCoordinator operationCoordinator) {
         this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null, null,
-                changeTrackingLimit, operationCoordinator, null);
+                changeTrackingLimit, operationCoordinator, null, null);
     }
 
     public UpdateCollectionFromNetworkUseCase(
@@ -112,7 +114,7 @@ public class UpdateCollectionFromNetworkUseCase {
             int changeTrackingLimit,
             LibraryOperationCoordinator operationCoordinator) {
         this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, statisticsRepository,
-                collectionBackupPort, changeTrackingLimit, operationCoordinator, null);
+                collectionBackupPort, changeTrackingLimit, operationCoordinator, null, null);
     }
 
     public UpdateCollectionFromNetworkUseCase(
@@ -127,6 +129,23 @@ public class UpdateCollectionFromNetworkUseCase {
             int changeTrackingLimit,
             LibraryOperationCoordinator operationCoordinator,
             ContentIndexAutoSchedulingService contentIndexScheduling) {
+        this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, statisticsRepository,
+                collectionBackupPort, changeTrackingLimit, operationCoordinator, contentIndexScheduling, null);
+    }
+
+    public UpdateCollectionFromNetworkUseCase(
+            RemoteCatalogDownloadPort downloader,
+            ImportFileUseCase importer,
+            CollectionLifecycleService lifecycle,
+            CatalogSourceStatePort sourceState,
+            SearchIndexer searchIndexer,
+            BookQueryRepository bookQueryRepository,
+            StatisticsRepository statisticsRepository,
+            CollectionBackupPort collectionBackupPort,
+            int changeTrackingLimit,
+            LibraryOperationCoordinator operationCoordinator,
+            ContentIndexAutoSchedulingService contentIndexScheduling,
+            DeferredImportIndexMaintenanceService deferredImportIndexMaintenance) {
         this.downloader = downloader;
         this.importer = importer;
         this.lifecycle = lifecycle;
@@ -138,6 +157,7 @@ public class UpdateCollectionFromNetworkUseCase {
         this.changeTrackingLimit = ImportChangeAccumulator.normalizeLimit(changeTrackingLimit);
         this.operationCoordinator = java.util.Objects.requireNonNull(operationCoordinator, "operationCoordinator");
         this.contentIndexScheduling = contentIndexScheduling;
+        this.deferredImportIndexMaintenance = deferredImportIndexMaintenance;
     }
 
     public ImportResult execute(Collection collection, String source, AtomicBoolean cancel, DoubleConsumer progress) {
@@ -176,6 +196,16 @@ public class UpdateCollectionFromNetworkUseCase {
         Path checkpoint = null;
         boolean mutationMayHaveCommitted = false;
         boolean keepCheckpoint = false;
+        boolean fullSearchRebuildRequired = false;
+
+        long recoveryMs = 0L;
+        long downloadMs = 0L;
+        long checkpointMs = 0L;
+        long importMs = 0L;
+        long searchMs = 0L;
+        long contentIndexScheduleMs = 0L;
+        long statisticsMs = 0L;
+        long finalizationMs = 0L;
 
         long imported = 0, skipped = 0, duplicates = 0, errors = 0;
         long withoutAuthor = 0, withoutGenre = 0, explicitlyDeleted = 0;
@@ -183,7 +213,9 @@ public class UpdateCollectionFromNetworkUseCase {
         List<ImportIssue> issues = new ArrayList<>();
 
         try {
+            long phaseStarted = System.nanoTime();
             recoverPendingUpdateBeforeNewAttempt(active, telemetry, operationId);
+            recoveryMs += elapsedMillis(phaseStarted);
 
             currentStage.set(OperationStage.CHECKING_SERVER);
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.CHECKING_SERVER, true)
@@ -193,10 +225,12 @@ public class UpdateCollectionFromNetworkUseCase {
             currentStage.set(OperationStage.DOWNLOADING);
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.DOWNLOADING, true)
                     .withCurrentItem(safeSource));
+            phaseStarted = System.nanoTime();
             RemoteCatalogUpdatePlan plan = downloader.downloadUpdates(
                     active, source.trim(), localVersion, flag,
                     p -> sink.accept(Math.min(0.35, 0.03 + p * 0.32)),
                     p -> emitDownloadProgress(telemetry, operationId, p));
+            downloadMs += elapsedMillis(phaseStarted);
             if (plan == null) throw new IllegalStateException("Сервер не повернув план оновлення каталогу");
             sourceState.recordChecked(sourceKey, safeSource, profileType(source), plan.latestVersion());
             checkCancelled(flag);
@@ -242,7 +276,9 @@ public class UpdateCollectionFromNetworkUseCase {
                 // createDatabaseSnapshot publishes only a successfully validated staged copy.
                 // Do not run a second full quick_check here: on multi-GB catalogues that doubles
                 // checkpoint latency without adding another safety boundary.
+                phaseStarted = System.nanoTime();
                 collectionBackupPort.createRecoveryCheckpoint(active, checkpoint);
+                checkpointMs += elapsedMillis(phaseStarted);
                 // The durable marker is the crash boundary: from this point a JVM/OS termination
                 // will cause the next collection open to restore this validated pre-update DB.
                 CatalogUpdateRecoveryFiles.markPending(active.getId(), operationId);
@@ -270,6 +306,7 @@ public class UpdateCollectionFromNetworkUseCase {
                 // Bounded import batches may commit before execute() returns. From this point onward any
                 // failure/cancellation must restore the pre-update checkpoint when one is available.
                 mutationMayHaveCommitted = true;
+                phaseStarted = System.nanoTime();
                 ImportResult current = importer.execute(ImportContext.builder()
                         .file(pkg.file())
                         .rootDirectory(root)
@@ -290,6 +327,7 @@ public class UpdateCollectionFromNetworkUseCase {
                         .statusConsumer(ignored -> { })
                         .progressListener(p -> sink.accept(Math.min(0.80, importStart + p * importSpan)))
                         .build());
+                importMs += elapsedMillis(phaseStarted);
 
                 if (flag.get() || current.status() == ImportStatus.CANCELLED) throw new UpdateCancelledException();
                 if (isFailure(current.status())) {
@@ -325,15 +363,20 @@ public class UpdateCollectionFromNetworkUseCase {
 
             sink.accept(0.82);
             if (catalogMutated) {
+                phaseStarted = System.nanoTime();
                 currentStage.set(OperationStage.UPDATING_SEARCH_INDEX);
                 if (!indexChanges.complete()) {
-                    searchIndexer.rebuildIndex(flag, p -> {
-                        checkCancelled(flag);
-                        emit(telemetry, OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
-                                .withProgress(p.processed(), p.total())
-                                .withCounts(indexChanges.insertedCount(), indexChanges.updatedCount(), indexChanges.deletedCount(),
-                                        indexSkipped, indexDuplicates, indexWarnings, indexErrors));
-                    });
+                    // A 500k+ full rebuild took ~3 minutes on the reference catalogue and made
+                    // an otherwise committed update look frozen. Mark the old index dirty and
+                    // queue a collection-bound rebuild that starts as soon as this UPDATE lease
+                    // is released. Incremental/small updates remain synchronous.
+                    lifecycle.markSearchIndexDirty();
+                    fullSearchRebuildRequired = true;
+                    log.info("Large catalog update committed; Lucene rebuild will run after deferred SQLite index maintenance");
+                    emit(telemetry, OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
+                            .withProgress(0, Math.max(0L, imported))
+                            .withCounts(indexChanges.insertedCount(), indexChanges.updatedCount(), indexChanges.deletedCount(),
+                                    indexSkipped, indexDuplicates, indexWarnings, indexErrors));
                 } else {
                     applyIncrementalIndex(indexChanges, flag, p -> emit(telemetry,
                             OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
@@ -341,10 +384,12 @@ public class UpdateCollectionFromNetworkUseCase {
                                     .withCounts(indexChanges.insertedCount(), indexChanges.updatedCount(), indexChanges.deletedCount(),
                                             indexSkipped, indexDuplicates, indexWarnings, indexErrors)));
                 }
+                searchMs += elapsedMillis(phaseStarted);
                 sink.accept(0.93);
                 checkCancelled(flag);
 
                 if (contentIndexScheduling != null) {
+                    phaseStarted = System.nanoTime();
                     try {
                         var scheduled = contentIndexScheduling.schedule(collection.getId(), indexChanges);
                         if (scheduled.rebuildRequired()) {
@@ -355,20 +400,25 @@ public class UpdateCollectionFromNetworkUseCase {
                     } catch (RuntimeException failure) {
                         contentIndexScheduling.markStale(collection.getId());
                         log.error("Failed to schedule full-text content indexing after committed network update", failure);
+                    } finally {
+                        contentIndexScheduleMs += elapsedMillis(phaseStarted);
                     }
                 }
 
                 if (statisticsRepository != null) {
+                    phaseStarted = System.nanoTime();
                     currentStage.set(OperationStage.REFRESHING_STATISTICS);
                     emit(telemetry, OperationProgress.stage(operationId, OperationStage.REFRESHING_STATISTICS, false)
                             .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                                     skipped, duplicates, issues.size(), errors));
                     statisticsRepository.invalidate();
                     statisticsRepository.refreshStatistics();
+                    statisticsMs += elapsedMillis(phaseStarted);
                 }
             }
             sink.accept(0.98);
 
+            phaseStarted = System.nanoTime();
             currentStage.set(OperationStage.FINALIZING);
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.FINALIZING, false)
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
@@ -384,7 +434,33 @@ public class UpdateCollectionFromNetworkUseCase {
                 checkpoint = null;
             }
 
+            // SQLite secondary indexes dropped for a huge initial baseline are intentionally
+            // restored only after this UPDATE lease is released. Their exact CREATE statements
+            // are durably queued in the collection DB, so startup can recover them after a crash.
+            final boolean shouldRebuildSearchInBackground = fullSearchRebuildRequired;
+            if (deferredImportIndexMaintenance != null) {
+                var sqliteIndexMaintenance = deferredImportIndexMaintenance.scheduleAfterCurrentOperation(active.getId());
+                if (shouldRebuildSearchInBackground) {
+                    sqliteIndexMaintenance.whenComplete((ignored, maintenanceFailure) -> {
+                        if (maintenanceFailure != null) {
+                            log.warn("SQLite index maintenance failed; Lucene rebuild will still be attempted", maintenanceFailure);
+                        }
+                        lifecycle.rebuildSearchIndexAfterCurrentOperation();
+                    });
+                }
+            } else if (shouldRebuildSearchInBackground) {
+                lifecycle.rebuildSearchIndexAfterCurrentOperation();
+            }
+
+            finalizationMs += elapsedMillis(phaseStarted);
             sink.accept(1.0);
+            long totalMs = elapsedMillis(operationStartedNanos);
+            log.info("catalog_update_timing total_ms={} recovery_ms={} download_ms={} checkpoint_ms={} import_ms={} "
+                            + "search_sync_ms={} content_index_schedule_ms={} statistics_ms={} finalization_ms={} "
+                            + "packages={} imported={} background_lucene={} source={}",
+                    totalMs, recoveryMs, downloadMs, checkpointMs, importMs, searchMs, contentIndexScheduleMs,
+                    statisticsMs, finalizationMs, plan.packages().size(), imported,
+                    fullSearchRebuildRequired, safeSource);
             ImportStatus status = errors > 0 || !issues.isEmpty() ? ImportStatus.SUCCESS_WITH_WARNINGS : ImportStatus.SUCCESS;
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.COMPLETED, false)
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
@@ -454,7 +530,12 @@ public class UpdateCollectionFromNetworkUseCase {
                 }
             }
             if (checkpoint != null && !keepCheckpoint) {
-                try { CatalogUpdateRecoveryFiles.clear(active.getId()); } catch (Exception ignored) { }
+                try {
+                    CatalogUpdateRecoveryFiles.clear(active.getId());
+                } catch (Exception cleanupFailure) {
+                    log.warn("Не вдалося очистити recovery-файли online update для колекції {}: {}",
+                            active.getId(), cleanupFailure.toString());
+                }
             }
         }
     }
@@ -478,7 +559,12 @@ public class UpdateCollectionFromNetworkUseCase {
         // cleanup: once the marker is gone the checkpoint is no longer authoritative and a leftover
         // file cannot trigger rollback on the next start.
         CatalogUpdateRecoveryFiles.deleteMarkerOnly(collection.getId());
-        try { Files.deleteIfExists(checkpoint); } catch (java.io.IOException ignored) { }
+        try {
+            Files.deleteIfExists(checkpoint);
+        } catch (java.io.IOException cleanupFailure) {
+            log.warn("Recovery marker уже committed, але checkpoint не вдалося видалити {}: {}",
+                    checkpoint, cleanupFailure.toString());
+        }
     }
 
     private Path updateCheckpointPath(Collection collection, String operationId) {

@@ -1,0 +1,241 @@
+{
+  "schema": 1,
+  "date": "2026-10-03",
+  "sourceInpx": {
+    "records": 707154,
+    "sizeBytes": 39184820,
+    "sha256": "75bebb7a7ccf203bd934ef2af986f17d737ba4c4abfc277956f60bb84a6c7655"
+  },
+  "database": {
+    "description": "same generated real-inpx.db / same Linux + JDK 21 environment",
+    "dbBytes": 1577959424
+  },
+  "profiles": {
+    "A_releasedR4": {
+      "poolSize": 4,
+      "cacheSizeKiB": -16384,
+      "mmapSizeBytes": 67108864,
+      "runs": [
+        {
+          "pool": 4,
+          "cacheKiB": -16384,
+          "mmapBytes": 67108864,
+          "rounds": 5,
+          "pageMedianMs": 933.137,
+          "authorMedianMs": 1449.801,
+          "statisticsMedianMs": 1047.306,
+          "parallel4MedianMs": 14.764,
+          "heapBeforeBytes": 7872936,
+          "heapAfterBytes": 9606992,
+          "heapDeltaBytes": 1734056,
+          "rssBeforeBytes": 92725248,
+          "rssAfterBytes": 235405312,
+          "rssDeltaBytes": 142680064,
+          "wallMs": 17619,
+          "dbBytes": 1577959424
+        },
+        {
+          "pool": 4,
+          "cacheKiB": -16384,
+          "mmapBytes": 67108864,
+          "rounds": 5,
+          "pageMedianMs": 957.672,
+          "authorMedianMs": 1414.6,
+          "statisticsMedianMs": 941.15,
+          "parallel4MedianMs": 14.375,
+          "heapBeforeBytes": 7919928,
+          "heapAfterBytes": 9578600,
+          "heapDeltaBytes": 1658672,
+          "rssBeforeBytes": 75984896,
+          "rssAfterBytes": 229597184,
+          "rssDeltaBytes": 153612288,
+          "wallMs": 17267,
+          "dbBytes": 1577959424
+        }
+      ]
+    },
+    "B_poolOnly": {
+      "poolSize": 2,
+      "cacheSizeKiB": -16384,
+      "mmapSizeBytes": 67108864,
+      "runs": [
+        {
+          "pool": 2,
+          "cacheKiB": -16384,
+          "mmapBytes": 67108864,
+          "rounds": 5,
+          "pageMedianMs": 945.28,
+          "authorMedianMs": 1389.52,
+          "statisticsMedianMs": 1001.9,
+          "parallel4MedianMs": 12.999,
+          "heapBeforeBytes": 7893032,
+          "heapAfterBytes": 9547616,
+          "heapDeltaBytes": 1654584,
+          "rssBeforeBytes": 95543296,
+          "rssAfterBytes": 196435968,
+          "rssDeltaBytes": 100892672,
+          "wallMs": 17093,
+          "dbBytes": 1577959424
+        },
+        {
+          "pool": 2,
+          "cacheKiB": -16384,
+          "mmapBytes": 67108864,
+          "rounds": 5,
+          "pageMedianMs": 956.2,
+          "authorMedianMs": 1544.677,
+          "statisticsMedianMs": 1017.53,
+          "parallel4MedianMs": 14.265,
+          "heapBeforeBytes": 7846992,
+          "heapAfterBytes": 9575408,
+          "heapDeltaBytes": 1728416,
+          "rssBeforeBytes": 93958144,
+          "rssAfterBytes": 188071936,
+          "rssDeltaBytes": 94113792,
+          "wallMs": 18014,
+          "dbBytes": 1577959424
+        }
+      ]
+    },
+    "C_sqliteReduced": {
+      "poolSize": 4,
+      "cacheSizeKiB": -8192,
+      "mmapSizeBytes": 33554432,
+      "runs": [
+        {
+          "pool": 4,
+          "cacheKiB": -8192,
+          "mmapBytes": 33554432,
+          "rounds": 5,
+          "pageMedianMs": 927.429,
+          "authorMedianMs": 1692.656,
+          "statisticsMedianMs": 939.556,
+          "parallel4MedianMs": 12.758,
+          "heapBeforeBytes": 7965376,
+          "heapAfterBytes": 9588560,
+          "heapDeltaBytes": 1623184,
+          "rssBeforeBytes": 93626368,
+          "rssAfterBytes": 176312320,
+          "rssDeltaBytes": 82685952,
+          "wallMs": 18431,
+          "dbBytes": 1577959424
+        }
+      ]
+    },
+    "D_combined": {
+      "poolSize": 2,
+      "cacheSizeKiB": -8192,
+      "mmapSizeBytes": 33554432,
+      "runs": [
+        {
+          "pool": 2,
+          "cacheKiB": -8192,
+          "mmapBytes": 33554432,
+          "rounds": 5,
+          "pageMedianMs": 888.591,
+          "authorMedianMs": 1848.528,
+          "statisticsMedianMs": 984.112,
+          "parallel4MedianMs": 14.725,
+          "heapBeforeBytes": 7804424,
+          "heapAfterBytes": 9515720,
+          "heapDeltaBytes": 1711296,
+          "rssBeforeBytes": 112955392,
+          "rssAfterBytes": 158892032,
+          "rssDeltaBytes": 45936640,
+          "wallMs": 19176,
+          "dbBytes": 1577959424
+        }
+      ]
+    }
+  },
+  "aggregateA_vs_B": {
+    "pageMedianMs": {
+      "baselineAvg": 945.4045,
+      "pool2Avg": 950.74,
+      "deltaPercent": 0.5643616039483654
+    },
+    "authorMedianMs": {
+      "baselineAvg": 1432.2005,
+      "pool2Avg": 1467.0985,
+      "deltaPercent": 2.4366700053519144
+    },
+    "statisticsMedianMs": {
+      "baselineAvg": 994.2280000000001,
+      "pool2Avg": 1009.7149999999999,
+      "deltaPercent": 1.5576909924081652
+    },
+    "parallel4MedianMs": {
+      "baselineAvg": 14.5695,
+      "pool2Avg": 13.632000000000001,
+      "deltaPercent": -6.434675177597023
+    },
+    "rssAfterBytes": {
+      "baselineAvg": 232501248,
+      "pool2Avg": 192253952,
+      "deltaPercent": -17.31057202755316
+    }
+  },
+  "freshImport": {
+    "baselinePool4": {
+      "imported": 707154,
+      "processed": 707154,
+      "errors": 0,
+      "durationMs": 57238,
+      "booksPerSec": 12354.62,
+      "inserted": 571947,
+      "updated": 0,
+      "changedDeleted": 0,
+      "books": 707154,
+      "authors": 166231,
+      "bookAuthors": 856591,
+      "genres": 272,
+      "bookGenres": 1102219,
+      "catalogState": 707154,
+      "deleted": 135207,
+      "dbBytes": 1073360896
+    },
+    "pool2": {
+      "imported": 707154,
+      "processed": 707154,
+      "errors": 0,
+      "durationMs": 54683,
+      "booksPerSec": 12931.88,
+      "inserted": 571947,
+      "updated": 0,
+      "changedDeleted": 0,
+      "books": 707154,
+      "authors": 166231,
+      "bookAuthors": 856591,
+      "genres": 272,
+      "bookGenres": 1102219,
+      "catalogState": 707154,
+      "deleted": 135207,
+      "dbBytes": 1078407168
+    },
+    "durationDeltaPercent": -4.4638177434571435
+  },
+  "reimportPool2": {
+    "imported": 0,
+    "processed": 707154,
+    "errors": 0,
+    "durationMs": 590,
+    "booksPerSec": 0.0,
+    "inserted": 0,
+    "updated": 0,
+    "changedDeleted": 0,
+    "books": 707154,
+    "authors": 166231,
+    "bookAuthors": 856591,
+    "genres": 272,
+    "bookGenres": 1102219,
+    "catalogState": 707154,
+    "deleted": 135207,
+    "dbBytes": 1587261440
+  },
+  "decision": {
+    "poolSize": "accept 4 -> 2 for production default",
+    "sqliteCacheMmap": "keep 16 MiB / 64 MiB released values; reduced profile showed material author-query regression",
+    "bookCoverCaches": "unchanged; no representative A/B evidence",
+    "xmx": "unchanged; no evidence to lower"
+  }
+}

@@ -67,7 +67,8 @@ req('searchPage(SearchRequest request, int limit, int offset, long knownTotal)' 
     'interactive search continuation API with known total missing')
 req('request.trackTotalHits() ? searcher.count(query) : -1' in lucene_exec,
     'Lucene continuation still repeats exact count(query)')
-req('searchPage(requestSnapshot, BOOK_PAGE_SIZE, offset, activeBookTotal)' in search_ui,
+req(('searchPage(requestSnapshot, BOOK_PAGE_SIZE, offset, bookPaging.total())' in search_ui
+     or 'searchPage(requestSnapshot, BOOK_PAGE_SIZE, offset, activeBookTotal)' in search_ui),
     'Search Workspace continuation does not reuse the first-page total')
 
 req('findListItemsByIds' in book_port and 'findListItemsByIds' in book_sql,

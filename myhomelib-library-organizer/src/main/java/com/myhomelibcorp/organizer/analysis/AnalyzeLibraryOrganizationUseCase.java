@@ -18,6 +18,7 @@ import com.myhomelibcorp.organizer.policy.CanonicalFormatPolicy;
 import com.myhomelibcorp.organizer.policy.OrganizerProfile;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.shared.archive.SafeZipSupport;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
@@ -43,9 +44,15 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletionService;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -56,6 +63,11 @@ import org.apache.commons.compress.archivers.zip.ZipFile;
 @Service
 public final class AnalyzeLibraryOrganizationUseCase {
     private static final long MAX_ANALYZE_FILE_BYTES = 4L * 1024L * 1024L * 1024L;
+    private static final long DEFAULT_ANALYZE_FILE_TIMEOUT_SECONDS = 120L;
+    // Full fuzzy pair comparison is O(n^2). Keep the exact/hash/ISBN rules
+    // for arbitrary library sizes; limit optional suggestions to a size that
+    // can be completed responsively without retaining extra Book projections.
+    static final int DEFAULT_FULL_FUZZY_ITEM_LIMIT = 2_000;
     private final SignatureBookFormatDetector detector;
     private final OrganizerMetadataExtractor metadataExtractor;
     private final MetadataNormalizationService normalizer;
@@ -63,7 +75,19 @@ public final class AnalyzeLibraryOrganizationUseCase {
     private final CanonicalFormatPolicy formatPolicy;
     private final CanonicalBookPathService paths;
     private final DuplicateDecisionService duplicates;
+    private final long analysisFileTimeoutSeconds;
+    private final PathAnalyzer pathAnalyzer;
 
+    @FunctionalInterface
+    interface PathAnalyzer {
+        List<OrganizerAnalysisItem> analyze(Path file, OrganizerProfile profile, BooleanSupplier cancelled) throws Exception;
+    }
+
+    private static final class AnalysisCapacityExhaustedException extends java.io.IOException {
+        private AnalysisCapacityExhaustedException(String message) { super(message); }
+    }
+
+    @Autowired
     public AnalyzeLibraryOrganizationUseCase(SignatureBookFormatDetector detector,
                                               OrganizerMetadataExtractor metadataExtractor,
                                               MetadataNormalizationService normalizer,
@@ -71,6 +95,31 @@ public final class AnalyzeLibraryOrganizationUseCase {
                                               CanonicalFormatPolicy formatPolicy,
                                               CanonicalBookPathService paths,
                                               DuplicateDecisionService duplicates) {
+        this(detector, metadataExtractor, normalizer, fingerprints, formatPolicy, paths, duplicates,
+                Long.getLong("myhomelib.organizer.analysis.fileTimeoutSeconds", DEFAULT_ANALYZE_FILE_TIMEOUT_SECONDS));
+    }
+
+    AnalyzeLibraryOrganizationUseCase(SignatureBookFormatDetector detector,
+                                      OrganizerMetadataExtractor metadataExtractor,
+                                      MetadataNormalizationService normalizer,
+                                      BookFingerprintService fingerprints,
+                                      CanonicalFormatPolicy formatPolicy,
+                                      CanonicalBookPathService paths,
+                                      DuplicateDecisionService duplicates,
+                                      long analysisFileTimeoutSeconds) {
+        this(detector, metadataExtractor, normalizer, fingerprints, formatPolicy, paths, duplicates,
+                analysisFileTimeoutSeconds, null);
+    }
+
+    AnalyzeLibraryOrganizationUseCase(SignatureBookFormatDetector detector,
+                                      OrganizerMetadataExtractor metadataExtractor,
+                                      MetadataNormalizationService normalizer,
+                                      BookFingerprintService fingerprints,
+                                      CanonicalFormatPolicy formatPolicy,
+                                      CanonicalBookPathService paths,
+                                      DuplicateDecisionService duplicates,
+                                      long analysisFileTimeoutSeconds,
+                                      PathAnalyzer pathAnalyzer) {
         this.detector = detector;
         this.metadataExtractor = metadataExtractor;
         this.normalizer = normalizer;
@@ -78,6 +127,8 @@ public final class AnalyzeLibraryOrganizationUseCase {
         this.formatPolicy = formatPolicy;
         this.paths = paths;
         this.duplicates = duplicates;
+        this.analysisFileTimeoutSeconds = Math.max(1L, Math.min(900L, analysisFileTimeoutSeconds));
+        this.pathAnalyzer = pathAnalyzer == null ? this::analyzePath : pathAnalyzer;
     }
 
     public OrganizationAnalysis analyze(Path sourceRoot, Path destinationRoot, OrganizerProfile profile) throws Exception {
@@ -98,65 +149,147 @@ public final class AnalyzeLibraryOrganizationUseCase {
         Path source = OrganizerPathSafety.canonicalExistingDirectory(sourceRoot, "Organizer source root");
         Path destination = OrganizerPathSafety.canonicalForCreation(destinationRoot, "Organizer destination root");
 
-        List<Path> files = scan(source, destination, cancellation, progressSink);
+        // Count paths first, then process them during a second walk. Avoid retaining a
+        // separate Path object for every physical file in a large library.
+        long discoveredFiles = scan(source, destination, cancellation, progressSink, null);
         checkCancelled(cancellation);
         List<String> warnings = new ArrayList<>();
         AtomicLong processed = new AtomicLong();
         AtomicLong analyzed = new AtomicLong();
         AtomicLong failed = new AtomicLong();
         int analysisThreads = activeProfile.maxParallelAnalysis();
+        int queueCapacity = Math.max(analysisThreads, analysisThreads * 4);
         ThreadPoolExecutor executor = new ThreadPoolExecutor(
                 analysisThreads, analysisThreads, 30L, TimeUnit.SECONDS,
-                new ArrayBlockingQueue<>(Math.max(analysisThreads, analysisThreads * 4)),
+                new ArrayBlockingQueue<>(queueCapacity),
                 runnable -> {
                     Thread thread = new Thread(runnable, "myhomelib-organizer-analyze");
                     thread.setDaemon(true);
                     return thread;
                 },
-                new ThreadPoolExecutor.CallerRunsPolicy());
+                new ThreadPoolExecutor.AbortPolicy());
         executor.allowCoreThreadTimeOut(true);
+        ExecutorService isolatedAnalysis = Executors.newThreadPerTaskExecutor(
+                Thread.ofVirtual().name("myhomelib-organizer-file-", 0).factory());
+        // A Future cancellation is cooperative: a broken parser can ignore interruption and keep
+        // running after its per-file timeout. Bound such lingering isolated tasks so a library with
+        // many pathological files cannot accumulate an unbounded number of virtual threads/resources.
+        Semaphore isolatedSlots = new Semaphore(Math.max(analysisThreads, Math.min(64, analysisThreads * 4)));
         try {
             CompletionService<List<OrganizerAnalysisItem>> completion = new ExecutorCompletionService<>(executor);
             List<OrganizerAnalysisItem> items = new ArrayList<>();
-            int submitted = 0;
-            int completed = 0;
-            int maxInFlight = Math.max(analysisThreads, analysisThreads * 8);
-            for (Path file : files) {
+            int[] submitted = {0};
+            int[] completed = {0};
+            // Keep submitted work within worker + queue capacity so rejection never
+            // falls back to executing expensive analysis on the submitting/UI-facing thread.
+            // Queue capacity is an absolute upper bound for all submitted but uncollected
+            // tasks. Worker creation/shutdown can lag and cannot be counted as queue room.
+            int maxInFlight = queueCapacity;
+            scan(source, destination, cancellation, null, file -> {
                 checkCancelled(cancellation);
+                // Ensure capacity BEFORE enqueueing: rejecting one task before draining
+                // completed work would abort large scans under unlucky timing.
+                while (submitted[0] - completed[0] >= maxInFlight) {
+                    completed[0] += collectOne(completion, items, warnings, failed, cancellation);
+                }
                 completion.submit(() -> {
                     checkCancelled(cancellation);
                     try {
-                        List<OrganizerAnalysisItem> logicalItems = analyzePath(file, activeProfile, cancellation);
+                        List<OrganizerAnalysisItem> logicalItems = analyzePathWithTimeout(
+                                file, activeProfile, cancellation, isolatedAnalysis, isolatedSlots);
                         analyzed.addAndGet(logicalItems.size());
                         return logicalItems;
                     } catch (CancellationException cancelledFailure) {
                         throw cancelledFailure;
+                    } catch (AnalysisCapacityExhaustedException exhausted) {
+                        throw exhausted;
                     } catch (Exception failure) {
                         failed.incrementAndGet();
                         return List.of(failedItem(file, activeProfile, "ANALYZE_FAILED: " + rootMessage(failure)));
                     } finally {
                         long done = processed.incrementAndGet();
                         emit(progressSink, new OrganizationAnalysisProgress(
-                                files.size(), done, analyzed.get(), failed.get(), file, false));
+                                discoveredFiles, done, analyzed.get(), failed.get(), file, false));
                     }
                 });
-                submitted++;
-                while (submitted - completed >= maxInFlight) {
-                    completed += collectOne(completion, items, warnings, failed, cancellation);
-                }
-            }
+                submitted[0]++;
+            });
 
-            while (completed < submitted) {
-                completed += collectOne(completion, items, warnings, failed, cancellation);
+            while (completed[0] < submitted[0]) {
+                completed[0] += collectOne(completion, items, warnings, failed, cancellation);
             }
             items.sort(Comparator
                     .comparing((OrganizerAnalysisItem item) -> item.sourcePath().toString(), String.CASE_INSENSITIVE_ORDER)
                     .thenComparing(OrganizerAnalysisItem::sourceEntry, String.CASE_INSENSITIVE_ORDER));
             emit(progressSink, new OrganizationAnalysisProgress(
-                    files.size(), processed.get(), analyzed.get(), failed.get(), null, false));
-            return new OrganizationAnalysis(source, destination, Instant.now(), duplicates.classify(items), warnings);
+                    discoveredFiles, processed.get(), analyzed.get(), failed.get(), null, false));
+            int fuzzyLimit = Math.max(0, Math.min(10_000,
+                    Integer.getInteger("myhomelib.organizer.fuzzy.maxExhaustiveItems",
+                            DEFAULT_FULL_FUZZY_ITEM_LIMIT)));
+            boolean evaluateFuzzy = items.size() <= fuzzyLimit;
+            if (!evaluateFuzzy) {
+                warnings.add("FUZZY_ANALYSIS_SKIPPED: " + items.size()
+                        + " books exceed the exhaustive fuzzy comparison limit " + fuzzyLimit
+                        + "; exact content/hash/ISBN duplicate checks remain active. "
+                        + "Analyze smaller batches for fuzzy suggestions.");
+            }
+            return new OrganizationAnalysis(source, destination, Instant.now(),
+                    duplicates.classify(items, evaluateFuzzy), warnings);
         } finally {
             executor.shutdownNow();
+            isolatedAnalysis.shutdownNow();
+        }
+    }
+
+    private List<OrganizerAnalysisItem> analyzePathWithTimeout(Path file, OrganizerProfile profile,
+                                                                BooleanSupplier cancellation,
+                                                                ExecutorService isolatedAnalysis,
+                                                                Semaphore isolatedSlots) throws Exception {
+        checkCancelled(cancellation);
+        if (!isolatedSlots.tryAcquire()) {
+            throw new AnalysisCapacityExhaustedException(
+                    "Organizer analysis stopped: too many timed-out file analyzers are still running");
+        }
+        // 0 = reserved but not started, 1 = running, 2 = permit released. This prevents a
+        // cancellation-before-start race from leaking (or double-releasing) an isolation slot.
+        AtomicInteger permitState = new AtomicInteger(0);
+        Future<List<OrganizerAnalysisItem>> future;
+        try {
+            future = isolatedAnalysis.submit(() -> {
+                if (!permitState.compareAndSet(0, 1)) {
+                    throw new CancellationException("Organizer isolated analysis cancelled before start");
+                }
+                try {
+                    return pathAnalyzer.analyze(file, profile, cancellation);
+                } finally {
+                    if (permitState.getAndSet(2) != 2) isolatedSlots.release();
+                }
+            });
+        } catch (RuntimeException submitFailure) {
+            if (permitState.getAndSet(2) != 2) isolatedSlots.release();
+            throw submitFailure;
+        }
+        try {
+            return future.get(analysisFileTimeoutSeconds, TimeUnit.SECONDS);
+        } catch (TimeoutException timeout) {
+            future.cancel(true);
+            if (permitState.compareAndSet(0, 2)) isolatedSlots.release();
+            throw new java.io.IOException("ANALYZE_TIMEOUT: файл не завершив аналіз за "
+                    + analysisFileTimeoutSeconds + " с: " + file.getFileName());
+        } catch (InterruptedException interrupted) {
+            future.cancel(true);
+            if (permitState.compareAndSet(0, 2)) isolatedSlots.release();
+            Thread.currentThread().interrupt();
+            throw new CancellationException("Organizer analysis interrupted");
+        } catch (java.util.concurrent.CancellationException cancelled) {
+            if (permitState.compareAndSet(0, 2)) isolatedSlots.release();
+            throw cancelled;
+        } catch (ExecutionException failure) {
+            Throwable cause = failure.getCause();
+            if (cause instanceof CancellationException cancellationException) throw cancellationException;
+            if (cause instanceof Exception exception) throw exception;
+            if (cause instanceof Error error) throw error;
+            throw new IllegalStateException(cause);
         }
     }
 
@@ -169,6 +302,7 @@ public final class AnalyzeLibraryOrganizationUseCase {
         } catch (ExecutionException failure) {
             Throwable cause = failure.getCause();
             if (cause instanceof CancellationException cancellationException) throw cancellationException;
+            if (cause instanceof AnalysisCapacityExhaustedException exhausted) throw exhausted;
             failed.incrementAndGet();
             warnings.add("Analyzer item failed: " + rootMessage(cause));
         }
@@ -291,6 +425,10 @@ public final class AnalyzeLibraryOrganizationUseCase {
         if (!mismatch.isBlank()) warnings.add(mismatch);
         ExtractedBookMetadata raw = metadataExtractor.extract(materialized, detected);
         warnings.addAll(raw.warnings());
+        if (metadataExtractor.coverage(detected.format()) == com.myhomelibcorp.organizer.metadata.MetadataExtractionLevel.FILENAME_ONLY) {
+            warnings.add("METADATA_LIMITED: для формату " + detected.format()
+                    + " доступне лише ім’я файла; Author/Series не вигадуються");
+        }
         NormalizedBookIdentity identity = normalizer.normalize(raw, profile.normalizeMetadata());
         BookFingerprint fingerprint = fingerprints.fingerprint(materialized, detected);
         if (sourceEntry != null && !sourceEntry.isBlank()) {
@@ -419,7 +557,14 @@ public final class AnalyzeLibraryOrganizationUseCase {
         String leaf = slash >= 0 ? normalized.substring(slash + 1) : normalized;
         leaf = leaf.replaceAll("[\\/:*?\"<>|\\p{Cntrl}]", "_").strip();
         if (leaf.isBlank()) leaf = "book.bin";
-        return leaf.length() > 180 ? leaf.substring(leaf.length() - 180) : leaf;
+        if (leaf.length() <= 180) return leaf;
+        int start = leaf.length() - 180;
+        if (Character.isLowSurrogate(leaf.charAt(start))
+                && start > 0
+                && Character.isHighSurrogate(leaf.charAt(start - 1))) {
+            start++;
+        }
+        return leaf.substring(start);
     }
 
     private String filenameTitle(Path file) {
@@ -436,11 +581,21 @@ public final class AnalyzeLibraryOrganizationUseCase {
         return dot < 0 ? "" : name.substring(dot + 1).toLowerCase(Locale.ROOT);
     }
 
-    private List<Path> scan(Path source,
-                            Path destination,
-                            BooleanSupplier cancelled,
-                            Consumer<OrganizationAnalysisProgress> progress) throws Exception {
-        List<Path> files = new ArrayList<>();
+    @FunctionalInterface
+    private interface CheckedPathConsumer {
+        void accept(Path file) throws Exception;
+    }
+
+    /**
+     * File-tree walk that stores no list of discovered paths. A null consumer
+     * performs the count/progress pass; a non-null consumer submits bounded work.
+     * Directory symlinks and organizer-owned state are never traversed.
+     */
+    private long scan(Path source,
+                      Path destination,
+                      BooleanSupplier cancelled,
+                      Consumer<OrganizationAnalysisProgress> progress,
+                      CheckedPathConsumer consumer) throws Exception {
         AtomicLong discovered = new AtomicLong();
         Files.walkFileTree(source, EnumSet.noneOf(FileVisitOption.class), Integer.MAX_VALUE, new SimpleFileVisitor<>() {
             @Override
@@ -462,18 +617,28 @@ public final class AnalyzeLibraryOrganizationUseCase {
             }
 
             @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws java.io.IOException {
                 checkCancelled(cancelled);
                 if (attrs.isRegularFile() && !Files.isSymbolicLink(file)) {
                     Path normalized = file.toAbsolutePath().normalize();
-                    files.add(normalized);
                     long count = discovered.incrementAndGet();
-                    emit(progress, new OrganizationAnalysisProgress(count, 0, 0, 0, normalized, true));
+                    if (progress != null) {
+                        emit(progress, new OrganizationAnalysisProgress(count, 0, 0, 0, normalized, true));
+                    }
+                    if (consumer != null) {
+                        try {
+                            consumer.accept(normalized);
+                        } catch (java.io.IOException failure) {
+                            throw failure;
+                        } catch (Exception failure) {
+                            throw new java.io.IOException("Organizer file processing interrupted: " + normalized, failure);
+                        }
+                    }
                 }
                 return FileVisitResult.CONTINUE;
             }
         });
-        return files;
+        return discovered.get();
     }
 
     private static void deleteTree(Path root) {

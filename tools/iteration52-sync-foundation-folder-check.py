@@ -22,7 +22,7 @@ check('schema versioned', 'SyncSchema.requireSupported' in record and 'SyncSchem
 check('typed user-data mapping', all(x in factory for x in ('readingProgress(','bookmark(','annotation(','rating(','group(','favorite(','setting(')))
 check('transport is change-set only', 'ChangeSet' in transport and '.db' not in transport and 'DataSource' not in transport)
 check('folder final/partial split', 'FINAL_SUFFIX' in folder and 'PART_SUFFIX' in folder and 'newDirectoryStream(folder, "*" + FINAL_SUFFIX)' in folder)
-check('atomic publish', 'StandardCopyOption.ATOMIC_MOVE' in folder and 'AtomicMoveNotSupportedException' in folder)
+check('atomic/guarded publish', 'SafeFilePublication.publishReplacingIfUnchanged' in folder and 'partHash' in folder)
 check('folder locking', 'tryLock()' in folder and 'OverlappingFileLockException' in folder)
 check('cursor conflict detection', 'Conflicting sync bundles for cursor' in folder)
 check('bounded bundle', 'MAX_BUNDLE_BYTES' in codec and 'MAX_RECORDS' in codec and 'MAX_PAYLOAD_FIELDS' in codec)

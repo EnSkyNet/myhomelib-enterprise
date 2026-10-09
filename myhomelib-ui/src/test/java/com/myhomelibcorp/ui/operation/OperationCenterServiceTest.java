@@ -119,6 +119,24 @@ class OperationCenterServiceTest {
     }
 
     @Test
+    void cancellationActionIsOneShotAndClearedOnTerminalTransition() {
+        OperationCenterService service = new OperationCenterService();
+        AtomicInteger cancellations = new AtomicInteger();
+        String id = service.start("Конвертація", "c1", OperationKind.BOOK_CONVERSION,
+                OperationStage.CONVERTING, true, cancellations::incrementAndGet);
+
+        assertThat(service.canRequestCancellation(id)).isTrue();
+        assertThat(service.requestCancellation(id)).isTrue();
+        assertThat(cancellations.get()).isEqualTo(1);
+        assertThat(service.canRequestCancellation(id)).isFalse();
+        assertThat(service.requestCancellation(id)).isFalse();
+
+        service.cancel(id, "Скасовано");
+        assertThat(service.snapshot().getFirst().stage()).isEqualTo(OperationStage.CANCELLED);
+        assertThat(service.canRequestCancellation(id)).isFalse();
+    }
+
+    @Test
     void clearCompletedNeverRemovesActiveOperations() {
         OperationCenterService service = new OperationCenterService();
         String active = service.start("Синхронізація", "c1", OperationStage.SYNCHRONIZING_FILES, false);

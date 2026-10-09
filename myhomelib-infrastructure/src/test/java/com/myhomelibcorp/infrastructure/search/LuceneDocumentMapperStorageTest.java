@@ -63,4 +63,6 @@ class LuceneDocumentMapperStorageTest {
             assertThat(doc.getField("format").stringValue()).isEqualTo(sample[1]);
         }
     }
+
+
 }

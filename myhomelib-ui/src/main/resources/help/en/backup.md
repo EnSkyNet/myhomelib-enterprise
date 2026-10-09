@@ -2,7 +2,7 @@
 
 MyHomeLib creates a consistent SQLite snapshot with the SQLite Online Backup API, so a live WAL database is not copied as an ordinary file and no full `VACUUM INTO` rewrite is required. A normal backup contains the database snapshot and, when user-data export is enabled, the portable `user-data.json` file. Derived search indexes and caches are rebuilt separately when needed.
 
-`user-data.json` is a portable versioned manifest containing ratings, progress and reviews, bookmarks, highlights/notes with text anchors, reading history/statistics, groups/favorites, saved searches, unified filters, global Reader settings and per-book Reader overrides. Book-scoped records are matched by stable `LibID` first; the internal book ID is only a fallback within the same collection.
+`user-data.json` is a portable versioned manifest containing ratings, progress and reviews, bookmarks, highlights/notes with text anchors, reading history/statistics, groups/favorites, **Reading Lists with membership and manual order**, saved searches, unified filters, global Reader settings and per-book Reader overrides. Book-scoped records are matched by stable `LibID` first; the internal book ID is only a fallback within the same collection.
 
 Restore has two modes:
 

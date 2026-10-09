@@ -98,6 +98,30 @@ class ContentIndexingQueueServiceTest {
     }
 
     @Test
+    void nestedStaleHoldsCannotBeClearedByAnotherRebuildCompletion() {
+        MemoryCheckpoint checkpoint = new MemoryCheckpoint();
+        MemoryContentIndex contentIndex = new MemoryContentIndex(ContentIndexHealth.State.READY);
+        MemorySettings settings = new MemorySettings();
+        IndexingPerformanceSettingsService settingsService = new IndexingPerformanceSettingsService(settings);
+        settingsService.save(new IndexingPerformanceSettings(IndexingResourceProfile.ECO, true));
+        ContentIndexingQueueService queue = new ContentIndexingQueueService(
+                (task, control) -> ContentIndexingOutcome.completed(), checkpoint, settingsService,
+                () -> false, contentIndex, 2);
+        services.add(queue);
+
+        queue.holdStale("c1");          // authoritative full rebuild
+        queue.holdStale("c1");          // concurrent committed download scheduling
+        queue.acknowledgeFresh("c1");   // rebuild completed, but download scheduling still owns a hold
+
+        assertThat(contentIndex.health("c1").state()).isEqualTo(ContentIndexHealth.State.STALE);
+        queue.releaseStaleHold("c1");
+        assertThat(contentIndex.health("c1").state()).isEqualTo(ContentIndexHealth.State.STALE);
+
+        queue.releaseStaleHold("c1");
+        assertThat(contentIndex.health("c1").state()).isEqualTo(ContentIndexHealth.State.READY);
+    }
+
+    @Test
     void cancelSignalsActiveProcessorAndRemovesTask() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch observedCancel = new CountDownLatch(1);
@@ -150,6 +174,21 @@ class ContentIndexingQueueServiceTest {
         assertThat(discarded.get(2, TimeUnit.SECONDS)).isTrue();
         assertThat(checkpoint.load("c1")).isEmpty();
         assertThat(queue.hasOutstandingForCollection("c1")).isFalse();
+    }
+
+    @Test
+    void idleQueueDoesNotProbePowerStateOrStartWorkScheduler() {
+        AtomicInteger probes = new AtomicInteger();
+        ContentIndexingQueueService queue = queue((task, control) -> ContentIndexingOutcome.completed(),
+                new MemoryCheckpoint(), () -> { probes.incrementAndGet(); return false; },
+                IndexingResourceProfile.BALANCED, 4);
+
+        ContentIndexingQueueSnapshot snapshot = queue.snapshot();
+
+        assertThat(snapshot.pending()).isZero();
+        assertThat(snapshot.active()).isZero();
+        assertThat(snapshot.pausedForBattery()).isFalse();
+        assertThat(probes.get()).isZero();
     }
 
     @Test

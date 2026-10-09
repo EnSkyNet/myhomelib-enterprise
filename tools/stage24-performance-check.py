@@ -46,7 +46,7 @@ for marker in ['workflow_dispatch','schedule:','-Pperformance','stage24-performa
 runner=text('tools/stage24-performance-baseline.py')
 for marker in ['100_000, 500_000, 1_000_000','EXPLAIN QUERY PLAN','import_probe','navigation_authors_A','catalog_filtered_page','resource.getrusage']:
     need(marker in runner,f'offline runner missing {marker}')
-dev_doc=ROOT/'MYHOMELIB-DEVELOPMENT.md'
+dev_doc=ROOT/'docs/current/DEVELOPMENT.md'
 need(dev_doc.exists(),'canonical development/performance documentation missing')
 if dev_doc.exists():
     dev=dev_doc.read_text(encoding='utf-8')

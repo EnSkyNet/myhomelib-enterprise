@@ -9,8 +9,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
@@ -67,7 +69,7 @@ def check_migrations() -> None:
     apply_migrations(conn, files)
     for table in ("books", "authors", "author_identities", "catalog_sources", "catalog_manifests",
                   "book_identities", "book_artifacts", "catalog_dataset_metadata",
-                  "catalog_record_provenance", "book_source_relations", "artifact_occurrences", "reader_book_preferences"):
+                  "catalog_record_provenance", "book_source_relations", "artifact_occurrences", "reader_book_preferences", "reader_preference_overrides"):
         row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
         assert row, f"missing table {table} after V{versions[-1]}"
     manifest_cols = table_columns(conn, "catalog_manifests")
@@ -164,6 +166,24 @@ def check_v42_reader_book_preferences() -> None:
         "V42 reader preference row did not cascade with book deletion"
     conn.close()
 
+
+
+def check_v65_reader_scoped_preferences() -> None:
+    files = migration_files(MIGRATIONS)
+    conn = sqlite3.connect(":memory:")
+    apply_migrations(conn, [p for p in files if version(p) <= 64])
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("INSERT INTO books(id,title,file_name) VALUES ('reader-v65','Reader V65','reader-v65.fb2')")
+    payload = '{"fontFamily":"Mono"}'
+    conn.execute("INSERT INTO reader_book_preferences(book_id,preferences_json) VALUES (?,?)", ('reader-v65', payload))
+    apply_migrations(conn, [p for p in files if version(p) == 65])
+    assert conn.execute("SELECT preferences_json FROM reader_preference_overrides WHERE scope_type='BOOK' AND scope_key='reader-v65'").fetchone()[0] == payload
+    conn.execute("INSERT INTO reader_preference_overrides(scope_type,scope_key,preferences_json) VALUES ('FORMAT','epub','{}')")
+    conn.execute("INSERT INTO reader_preference_overrides(scope_type,scope_key,preferences_json) VALUES ('SERIES','series a','{}')")
+    conn.execute("DELETE FROM books WHERE id='reader-v65'")
+    assert conn.execute("SELECT count(*) FROM reader_preference_overrides WHERE scope_type='BOOK' AND scope_key='reader-v65'").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM reader_preference_overrides WHERE scope_type IN ('FORMAT','SERIES')").fetchone()[0] == 2
+    conn.close()
 
 def check_v43_group_membership_index() -> None:
     files = migration_files(MIGRATIONS)
@@ -361,11 +381,18 @@ def check_source_invariants() -> None:
 
     for required_doc in (
             "ARCHITECTURE.md",
-            "MYHOMELIB-FEATURES.md",
-            "MYHOMELIB-OPERATIONS.md",
-            "MYHOMELIB-DEVELOPMENT.md",
-            "MYHOMELIB-RELEASE.md",
-            "docs/history/HISTORY.md",
+            "docs/current/FEATURES.md",
+            "docs/current/OPERATIONS.md",
+            "docs/current/DEVELOPMENT.md",
+            "docs/current/RELEASE.md",
+            "docs/current/USER-FUNCTIONS-UA.md",
+            "docs/current/FUNCTIONAL-AUDIT-UA.md",
+            "docs/current/FUNCTIONAL-COVERAGE.json",
+            "docs/current/UI-ACTION-COVERAGE.json",
+            "docs/current/UI-ACTION-COVERAGE-UA.md",
+            "docs/current/TASK-CLOSURE-AUDIT-UA.md",
+            "docs/current/ARCHITECTURE-AUDIT-UA.md",
+            "docs/history/HISTORY-UA.md",
             "docs/README.md",
             "docs/release/CURRENT-VALIDATION.md",
             "docs/release/EXTERNAL-TEST-PLAN.md",
@@ -378,7 +405,7 @@ def check_source_invariants() -> None:
     require(readme, "MyHomeLib Enterprise 8.0.0", "README release identity")
     forbid(readme, "# MyHomeLib Enterprise 1.0.0", "stale README release identity")
     root_md = sorted(p.name for p in ROOT.glob("*.md"))
-    expected_root_md = {"README.md", "ARCHITECTURE.md", "MYHOMELIB-FEATURES.md", "MYHOMELIB-OPERATIONS.md", "MYHOMELIB-DEVELOPMENT.md", "MYHOMELIB-RELEASE.md"}
+    expected_root_md = {"README.md", "ARCHITECTURE.md"}
     missing_root_md = sorted(expected_root_md - set(root_md))
     unexpected_root_md = sorted(name for name in root_md if name not in expected_root_md)
     assert not missing_root_md and not unexpected_root_md, \
@@ -386,8 +413,26 @@ def check_source_invariants() -> None:
     historical_root_globs = ("ITERATION-*", "CONTINUATION-*", "TASKS-*", "AUDIT-*", "REFACTORING-*")
     historical_root_files = sorted({path.name for pattern in historical_root_globs for path in ROOT.glob(pattern) if path.is_file()})
     assert not historical_root_files, f"historical files must live under docs/history, not repository root: {historical_root_files}"
+
+    docs_root = ROOT / "docs"
+    allowed_docs_root_files = {"README.md", "performance-baseline.json"}
+    unexpected_docs_root_files = sorted(
+        path.name for path in docs_root.iterdir()
+        if path.is_file() and path.name not in allowed_docs_root_files
+    )
+    assert not unexpected_docs_root_files, \
+        "descriptive/evidence files must be classified under docs/current, docs/release or docs/history: " \
+        + ", ".join(unexpected_docs_root_files)
+    allowed_docs_root_dirs = {"current", "history", "plugin-sdk", "release"}
+    unexpected_docs_root_dirs = sorted(
+        path.name for path in docs_root.iterdir()
+        if path.is_dir() and path.name not in allowed_docs_root_dirs
+    )
+    assert not unexpected_docs_root_dirs, \
+        "documentation directories must be classified as current/release/history/plugin-sdk: " \
+        + ", ".join(unexpected_docs_root_dirs)
     for active_doc in (
-            "MYHOMELIB-RELEASE.md",
+            "docs/current/RELEASE.md",
             "myhomelib-ui/src/main/resources/help/index.md",
             "myhomelib-ui/src/main/resources/help/index.txt",
             "myhomelib-ui/src/main/resources/help/mcp.md",
@@ -411,6 +456,44 @@ def check_source_invariants() -> None:
     # Code-only handoff checkpoints intentionally omit Maven Wrapper/.mvn; pom.xml remains authoritative.
     assert (ROOT / "myhomelib-infrastructure/src/main/resources/db/migration/V35__catalog_source_sync_state.sql").exists()
     assert (ROOT / "myhomelib-infrastructure/src/main/resources/db/migration/V36__catalog_manifest_and_artifacts.sql").exists()
+
+
+def _nonmutating_python_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
+def check_ui_action_coverage() -> None:
+    result = subprocess.run([sys.executable, str(ROOT / "tools/ui-action-coverage-check.py")],
+                            cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            env=_nonmutating_python_env())
+    if result.returncode != 0:
+        raise AssertionError(result.stdout.strip())
+
+
+def check_user_function_documentation() -> None:
+    result = subprocess.run([sys.executable, str(ROOT / "tools/user-functions-documentation-check.py")],
+                            cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            env=_nonmutating_python_env())
+    if result.returncode != 0:
+        raise AssertionError(result.stdout.strip())
+
+
+def check_ui_action_behavior() -> None:
+    result = subprocess.run([sys.executable, str(ROOT / "tools/ui-action-behavior-check.py")],
+                            cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            env=_nonmutating_python_env())
+    if result.returncode != 0:
+        raise AssertionError(result.stdout.strip())
+
+
+def check_native_file_chooser_boundary() -> None:
+    result = subprocess.run([sys.executable, str(ROOT / "tools/native-file-chooser-boundary-test.py")],
+                            cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            env=_nonmutating_python_env())
+    if result.returncode != 0:
+        raise AssertionError(result.stdout.strip())
 
 
 def check_no_generated_or_secrets() -> None:
@@ -451,11 +534,16 @@ def main() -> int:
         ("Flyway sequential baseline + immutable V1-V36", check_migrations),
         ("V41 reading statistics singleton", check_v41_reading_stats_singleton),
         ("V42 reader book preferences", check_v42_reader_book_preferences),
+        ("V65 reader scoped preferences", check_v65_reader_scoped_preferences),
         ("V43 group membership lookup", check_v43_group_membership_index),
         ("existing v7 DB -> v7.1 user-data upgrade", check_upgrade_preserves_data),
         ("metadata migrations", check_metadata_migrations),
         ("XML/FXML", check_xml),
         ("v7.1 source invariants", check_source_invariants),
+        ("user-facing UI action coverage", check_ui_action_coverage),
+        ("user-facing UI action behavior", check_ui_action_behavior),
+        ("native file chooser boundary", check_native_file_chooser_boundary),
+        ("user-function documentation coverage", check_user_function_documentation),
     ]
     if not args.skip_tree_cleanliness:
         checks.append(("release tree cleanliness", check_no_generated_or_secrets))

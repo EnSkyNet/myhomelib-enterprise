@@ -12,6 +12,10 @@
 
     <artifactId>myhomelib-e2e-tests</artifactId>
 
+    <properties>
+        <mhl.test.jvmArgs>${mhl.mockito.agentArg}</mhl.test.jvmArgs>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.myhomelibcorp</groupId>

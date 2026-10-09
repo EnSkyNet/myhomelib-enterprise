@@ -3,6 +3,7 @@ package com.myhomelibcorp.converter.toolchain.metadata;
 import com.myhomelibcorp.converter.toolchain.ConversionFailureKind;
 import com.myhomelibcorp.converter.toolchain.ConversionToolchainException;
 import com.myhomelibcorp.converter.toolchain.fs.ConversionPathSafety;
+import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import org.springframework.stereotype.Component;
 
 import javax.xml.stream.XMLInputFactory;
@@ -172,7 +173,7 @@ public final class Fb2MetadataPatcher {
     }
 
     private Scan scan(Path source, BooleanSupplier cancelled) throws Exception {
-        XMLInputFactory factory = secureInputFactory();
+        XMLInputFactory factory = SecureXmlInputFactory.create(false, false);
         boolean description = false;
         boolean titleInfo = false;
         boolean publishInfo = false;
@@ -331,7 +332,7 @@ public final class Fb2MetadataPatcher {
 
     private void rewrite(Path source, Path target, Scan scan, CanonicalBookMetadata metadata, CoverPlan cover,
                          BooleanSupplier cancelled) throws Exception {
-        XMLInputFactory inputFactory = secureInputFactory();
+        XMLInputFactory inputFactory = SecureXmlInputFactory.create(false, false);
         XMLOutputFactory outputFactory = XMLOutputFactory.newFactory();
         trySetOutputProperty(outputFactory, XMLOutputFactory.IS_REPAIRING_NAMESPACES, false);
 
@@ -827,27 +828,6 @@ public final class Fb2MetadataPatcher {
             index++;
         } while (existingIds.contains(id));
         return new CoverPlan(true, id, mime, cover);
-    }
-
-    private static XMLInputFactory secureInputFactory() {
-        XMLInputFactory factory = XMLInputFactory.newFactory();
-        requireInputProperty(factory, XMLInputFactory.SUPPORT_DTD, false);
-        requireInputProperty(factory, "javax.xml.stream.isSupportingExternalEntities", false);
-        requireInputProperty(factory, XMLInputFactory.IS_REPLACING_ENTITY_REFERENCES, false);
-        return factory;
-    }
-
-    private static void requireInputProperty(XMLInputFactory factory, String key, Object value) {
-        try {
-            factory.setProperty(key, value);
-            Object actual = factory.getProperty(key);
-            if (actual instanceof Boolean actualBoolean && value instanceof Boolean requestedBoolean
-                    && actualBoolean.booleanValue() != requestedBoolean.booleanValue()) {
-                throw new IllegalStateException("XML parser ignored required security property " + key);
-            }
-        } catch (IllegalArgumentException failure) {
-            throw new IllegalStateException("XML parser does not support required security property " + key, failure);
-        }
     }
 
     private static void trySetOutputProperty(XMLOutputFactory factory, String key, Object value) {

@@ -44,6 +44,9 @@ def schema(c: sqlite3.Connection) -> None:
     CREATE TABLE reader_book_preferences(
       book_id TEXT PRIMARY KEY,preferences_json TEXT NOT NULL,updated_at TEXT NOT NULL,
       FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE);
+    CREATE TABLE reader_preference_overrides(
+      scope_type TEXT NOT NULL,scope_key TEXT NOT NULL,preferences_json TEXT NOT NULL,updated_at TEXT NOT NULL,
+      PRIMARY KEY(scope_type,scope_key));
     ''')
 
 
@@ -79,6 +82,11 @@ def transfer_state(source: sqlite3.Connection, target: sqlite3.Connection, book_
     if pref:
         target.execute('''INSERT INTO reader_book_preferences VALUES(?,?,?) ON CONFLICT(book_id) DO UPDATE SET
           preferences_json=excluded.preferences_json,updated_at=excluded.updated_at''', pref)
+    scoped = source.execute("SELECT scope_key,preferences_json,updated_at FROM reader_preference_overrides WHERE scope_type='BOOK' AND scope_key=?", (book_id,)).fetchone()
+    if scoped:
+        target.execute('''INSERT INTO reader_preference_overrides(scope_type,scope_key,preferences_json,updated_at)
+          VALUES('BOOK',?,?,?) ON CONFLICT(scope_type,scope_key) DO UPDATE SET
+          preferences_json=excluded.preferences_json,updated_at=excluded.updated_at''', scoped)
 
 
 def main() -> None:
@@ -94,13 +102,13 @@ def main() -> None:
     require(usecase, 'PostCommitDerivedIndexSyncException', 'post-commit derived-index failure must be distinguished from transaction failure')
     require(usecase, 'copied files are retained', 'post-commit Lucene failure must retain physical files')
     require(usecase, 'reusableTargetIndex' , 'copy use case must inspect target index reuse state before selective updates')
-    require(usecase, 'lifecycle.rebuildSearchIndex()', 'dirty/absent target index must be rebuilt before selective copy updates')
+    require(usecase, 'searchIndexSynchronizer.rebuildSafelyNow()', 'dirty/absent target index must be rebuilt before selective copy updates')
     require(lifecycle, 'public boolean initializeCollection(Collection collection, boolean rebuildIndex)', 'collection lifecycle must report index reuse state to mutation orchestrators')
     require(usecase, 'flushBatch(', 'copy use case must isolate/clean failed batches')
     require(saver, 'Consumer<List<Book>> afterDatabaseSave', 'BookSaver must expose same-transaction post-save hook')
     require(saver, 'if (afterDatabaseSave != null) afterDatabaseSave.accept(stableSaved);', 'state hook must execute inside DB transaction')
     require(port, 'must participate', 'user-state port must document transaction contract')
-    for table in ('reading_progress', 'reading_history', 'reading_stats', 'bookmarks', 'reader_book_preferences'):
+    for table in ('reading_progress', 'reading_history', 'reading_stats', 'bookmarks', 'reader_book_preferences', 'reader_preference_overrides'):
         require(adapter, table, f'adapter must cover {table}')
     require(adapter, 'WHERE bookmarks.book_id=excluded.book_id', 'bookmark collision must not hijack unrelated bookmark')
     require(adapter, 'SqliteInClauseSupport.MAX_ITEMS', 'source lookups must be bind-bounded')
@@ -122,6 +130,8 @@ def main() -> None:
         source.execute("INSERT INTO reading_stats(book_id,first_read_at,last_read_at,total_reading_seconds,reading_sessions,start_percent,end_percent,current_percent,completed_at) VALUES('b1','2026-08-01','2026-08-30',999,8,10,80,75,NULL)")
         source.execute("INSERT INTO bookmarks VALUES('bm1','b1','p1',40,0.55,'Ch','ctx','2026-08-30T10:02:00')")
         source.execute("INSERT INTO reader_book_preferences VALUES('b1','{\"fontFamily\":\"Mono\"}','2026-08-30T10:03:00')")
+        source.execute("INSERT INTO reader_preference_overrides VALUES('BOOK','b1','{\"fontFamily\":\"Mono\"}','2026-08-30T10:03:00')")
+        source.execute("INSERT INTO reader_preference_overrides VALUES('SERIES','series-only-source','{\"theme\":\"dark\"}','2026-08-30T10:03:00')")
         source.commit()
 
         target.execute("INSERT INTO books VALUES('b1')")
@@ -131,6 +141,8 @@ def main() -> None:
         assert target.execute("SELECT total_reading_seconds FROM reading_stats WHERE book_id='b1'").fetchone()[0] == 999
         assert target.execute("SELECT context FROM bookmarks WHERE id='bm1'").fetchone()[0] == 'ctx'
         assert 'Mono' in target.execute("SELECT preferences_json FROM reader_book_preferences WHERE book_id='b1'").fetchone()[0]
+        assert 'Mono' in target.execute("SELECT preferences_json FROM reader_preference_overrides WHERE scope_type='BOOK' AND scope_key='b1'").fetchone()[0]
+        assert target.execute("SELECT COUNT(*) FROM reader_preference_overrides WHERE scope_type='SERIES'").fetchone()[0] == 0
 
         # A bookmark UUID already owned by another target book must fail rather than re-parent it.
         source.execute("INSERT INTO books VALUES('b2')")
@@ -152,7 +164,7 @@ def main() -> None:
 
     print('COPY BETWEEN COLLECTIONS CHECK: PASS')
     print(' - book row + collection-local user state share one target transaction contract')
-    print(' - progress/history/statistics/bookmarks/reader overrides are preserved')
+    print(' - progress/history/statistics/bookmarks + BOOK Reader scope are preserved; SERIES/FORMAT stay collection-local')
     print(' - bookmark ID collisions do not re-parent unrelated target data')
     print(' - failed state transfer rolls back the target book transaction')
     print(' - post-commit Lucene failure retains committed physical files')

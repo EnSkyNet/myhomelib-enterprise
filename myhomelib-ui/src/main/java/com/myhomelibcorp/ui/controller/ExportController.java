@@ -27,6 +27,7 @@ import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
+import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -39,7 +40,6 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.layout.BorderPane;
-import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
@@ -58,6 +58,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
@@ -81,6 +83,7 @@ public class ExportController {
     private final UiBackgroundExecutor executor;
     private final DialogService dialogService;
     private final FxmlLoaderFactory fxmlLoaderFactory;
+    private final FileChooserService fileChooserService;
     private final LocalizationService i18n;
 
     @FXML private ComboBox<ExportProfile> profileComboBox;
@@ -103,6 +106,7 @@ public class ExportController {
     private Stage stage;
     private final AtomicBoolean exportCancelFlag = new AtomicBoolean(false);
     private volatile boolean exportRunning;
+    private volatile Alert activeCollisionAlert;
     private boolean applyingProfile;
     private Runnable successfulExportCallback = () -> { };
 
@@ -234,7 +238,7 @@ public class ExportController {
         if (stage != null) {
             stage.setOnCloseRequest(event -> {
                 if (exportRunning) {
-                    exportCancelFlag.set(true);
+                    requestExportCancellation();
                     event.consume();
                 }
             });
@@ -336,10 +340,9 @@ public class ExportController {
             bookIds = null;
         }
 
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle(UiText.text("ui.java.export_controller.6f276c407f"));
-        fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(UiText.text("ui.import.filter.inpx_files"), "*.inpx"));
-        File file = fileChooser.showSaveDialog(mainPane.getScene().getWindow());
+        File file = fileChooserService.chooseFileToSave(mainPane.getScene().getWindow(),
+                UiText.text("ui.java.export_controller.6f276c407f"), null,
+                List.of(new FileChooser.ExtensionFilter(UiText.text("ui.import.filter.inpx_files"), "*.inpx")));
         if (file == null) return;
 
         var currentCollection = appState.getCurrentLibraryCollection();
@@ -560,9 +563,7 @@ public class ExportController {
     // ==================== FXML ACTIONS ====================
 
     @FXML private void onChooseDestination() {
-        DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle(UiText.text("ui.java.export_controller.2b65ac60f3"));
-        File dir = chooser.showDialog(stage);
+        File dir = fileChooserService.chooseDirectory(stage, UiText.text("ui.java.export_controller.2b65ac60f3"));
         if (dir != null) {
             destinationField.setText(dir.getAbsolutePath());
             DeviceTargetProfile current = deviceProfileComboBox.getValue();
@@ -680,36 +681,69 @@ public class ExportController {
     }
 
     private ExportCollisionDecision resolveCollision(ExportCollisionContext context) {
+        if (exportCancelFlag.get()) return ExportCollisionDecision.CANCEL;
         if (Platform.isFxApplicationThread()) return showCollisionDialog(context);
+
         CompletableFuture<ExportCollisionDecision> answer = new CompletableFuture<>();
-        Platform.runLater(() -> {
-            try { answer.complete(showCollisionDialog(context)); }
-            catch (RuntimeException e) { answer.complete(ExportCollisionDecision.SKIP); }
-        });
-        try { return answer.get(); }
-        catch (InterruptedException e) { Thread.currentThread().interrupt(); return ExportCollisionDecision.CANCEL; }
-        catch (Exception e) { return ExportCollisionDecision.SKIP; }
+        try {
+            Platform.runLater(() -> {
+                if (exportCancelFlag.get()) {
+                    answer.complete(ExportCollisionDecision.CANCEL);
+                    return;
+                }
+                try {
+                    answer.complete(showCollisionDialog(context));
+                } catch (RuntimeException dialogFailure) {
+                    log.warn("Не вдалося показати діалог конфлікту експорту", dialogFailure);
+                    answer.complete(ExportCollisionDecision.SKIP);
+                }
+            });
+        } catch (IllegalStateException toolkitStopped) {
+            log.debug("JavaFX toolkit already stopped while resolving export collision", toolkitStopped);
+            return ExportCollisionDecision.CANCEL;
+        }
+
+        while (true) {
+            if (exportCancelFlag.get()) return ExportCollisionDecision.CANCEL;
+            try {
+                return answer.get(250, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException waitingForUser) {
+                // Keep the worker responsive to Cancel while the modal prompt is open.
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return ExportCollisionDecision.CANCEL;
+            } catch (Exception failure) {
+                log.warn("Помилка отримання рішення для конфлікту експорту", failure);
+                return ExportCollisionDecision.SKIP;
+            }
+        }
     }
 
     private ExportCollisionDecision showCollisionDialog(ExportCollisionContext context) {
+        if (exportCancelFlag.get()) return ExportCollisionDecision.CANCEL;
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-        DialogLocalization.prepare(alert);
-        alert.setTitle(UiText.text("ui.java.export_controller.b905ec44f2"));
-        alert.setHeaderText(context.title());
-        alert.setContentText(context.existingFile() + UiText.text("ui.java.export_controller.dde3c2d474"));
+        activeCollisionAlert = alert;
+        try {
+            DialogLocalization.prepare(alert);
+            alert.setTitle(UiText.text("ui.java.export_controller.b905ec44f2"));
+            alert.setHeaderText(context.title());
+            alert.setContentText(context.existingFile() + UiText.text("ui.java.export_controller.dde3c2d474"));
 
-        ButtonType rename = new ButtonType(UiText.text("ui.java.export_controller.7f902971a1"));
-        ButtonType overwrite = new ButtonType(UiText.text("ui.java.export_controller.6a722c8d68"));
-        ButtonType skip = new ButtonType(UiText.text("ui.java.export_controller.eaa2b8afb9"));
-        ButtonType cancel = new ButtonType(UiText.text("ui.java.export_controller.50488da6fc"), ButtonBar.ButtonData.CANCEL_CLOSE);
+            ButtonType rename = new ButtonType(UiText.text("ui.java.export_controller.7f902971a1"));
+            ButtonType overwrite = new ButtonType(UiText.text("ui.java.export_controller.6a722c8d68"));
+            ButtonType skip = new ButtonType(UiText.text("ui.java.export_controller.eaa2b8afb9"));
+            ButtonType cancel = new ButtonType(UiText.text("ui.java.export_controller.50488da6fc"), ButtonBar.ButtonData.CANCEL_CLOSE);
 
-        alert.getButtonTypes().setAll(rename, overwrite, skip, cancel);
+            alert.getButtonTypes().setAll(rename, overwrite, skip, cancel);
 
-        ButtonType result = alert.showAndWait().orElse(cancel);
-        if (result == rename) return ExportCollisionDecision.RENAME;
-        if (result == overwrite) return ExportCollisionDecision.OVERWRITE;
-        if (result == skip) return ExportCollisionDecision.SKIP;
-        return ExportCollisionDecision.CANCEL;
+            ButtonType result = alert.showAndWait().orElse(cancel);
+            if (result == rename) return ExportCollisionDecision.RENAME;
+            if (result == overwrite) return ExportCollisionDecision.OVERWRITE;
+            if (result == skip) return ExportCollisionDecision.SKIP;
+            return ExportCollisionDecision.CANCEL;
+        } finally {
+            if (activeCollisionAlert == alert) activeCollisionAlert = null;
+        }
     }
 
     private void finishExport(ExportToDeviceUseCase.ExportResult result, ExportRequest request) {
@@ -770,9 +804,18 @@ public class ExportController {
 
     @FXML private void onCancel() {
         if (exportRunning) {
-            exportCancelFlag.set(true); cancelButton.setDisable(true); cancelButton.setText(UiText.text("ui.java.export_controller.4f50e46aac")); return;
+            requestExportCancellation();
+            cancelButton.setDisable(true);
+            cancelButton.setText(UiText.text("ui.java.export_controller.4f50e46aac"));
+            return;
         }
         closeDialog();
+    }
+
+    private void requestExportCancellation() {
+        exportCancelFlag.set(true);
+        Alert collision = activeCollisionAlert;
+        if (collision != null) collision.close();
     }
 
     private void closeDialog() { if (stage != null) stage.close(); }

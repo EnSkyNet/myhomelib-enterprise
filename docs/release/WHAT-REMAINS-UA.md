@@ -1,94 +1,116 @@
-# MyHomeLib 8.0.0 — що ще треба зробити перед публічним релізом
+# MyHomeLib 8.0.0 — що реально залишилося після V34 real-data acceptance
 
-**Дата стану:** 18.09.2026  
-**Статус локального релізного аудиту:** **PASS**. У доступному Linux/offline-середовищі відомих незакритих дефектів коду, локалізації або Spring wiring після фінального аудиту не залишено. Один повний фінальний Maven-прогін після всіх виправлень завершився `BUILD SUCCESS`. Нижче залишені тільки перевірки, які чесно потребують Windows, реальних зовнішніх програм/endpoint-ів, облікових даних, GitHub або production-soak.
+**Дата стану:** 2026-10-05
+**Локальний статус:** R6–R17 guarantees збережені. R18 завершив post-live-test hardening failure transparency/persistence/integration paths: Reader settings, Kobo repository errors, stale Reader session state, Spring wiring/proxyability, TTS fallback, cover/archive decode recovery, WebDAV secret/config consistency та cleanup diagnostics. Exact R18 root `clean verify`: **2123/0/0/23, 635 Surefire reports, 21/21 SUCCESS, BUILD SUCCESS, 02:43**. UI coverage **486/486**. Нижче залишилися саме Windows/device/provider/connected acceptance gates, а не відомі локальні P0 code regressions.
 
-## 1. Windows release acceptance — обов'язково перед Windows-релізом
+## 0. Post-R1 R2–R5 — локально закрито
 
-Запустити на реальній Windows 10/11 x64 машині під звичайним користувачем:
+- conversion: secondary artifact не промотується без explicit action **включно з SQLite write→read hydration path**; V68 ремонтує historical missing-preference drift; повторна conversion в той самий format не створює duplicate artifact rows;
+- повторний клік по тому самому автору після Operations/Reader знову відкриває author workspace;
+- remote-only Book Details показує `Книгу не завантажено`, не запускає parser і дає `Завантажити`, якщо remote collection підтримує materialization;
+- synchronous `LibraryOperationConflictException` у cancellable UI flows локалізовано й не випускається як uncaught JavaFX handler exception;
+- старий download completion status більше не відновлюється після пізнішої background operation;
+- Mockito test modules використовують explicit `-javaagent`; static release check контролює цей контракт;
+- root offline `clean verify` R5 завершився `BUILD SUCCESS` (**2087/0/0**, 23 skipped);
+- R14 full root regression завершився `BUILD SUCCESS` (**2097/0/0**, 23 skipped); full-text INDEX не блокує same-collection DOWNLOAD на coordinator/application/UI boundaries; derived-index repair відкладений із caller thread;
+- на тій самій 707 154-book DB виконано Hikari/SQLite A/B: production Hikari interactive pool зменшено **4 → 2** після виміряного ~**17.31%** зниження warm-probe RSS без суттєвої latency/import regression;
+- SQLite cache/mmap reduction відхилено через material author-query regression; BookCache/CoverCache/`-Xmx1024m` лишено без змін.
 
-- зібрати фінальний Windows app-image / MSI / EXE через наявні `package-desktop.ps1` / release-скрипти;
-- виконати `windows-acceptance-harness-check.py` та Windows acceptance scripts з каталогу `tools/`;
-- перевірити чисту інсталяцію, запуск, видалення та повторну інсталяцію;
-- перевірити оновлення з **реальної попередньої версії**, а не зі штучно створеного пакета;
-- перевірити збереження/міграцію користувацьких даних, колекцій, налаштувань, Reader state та резервних копій;
-- виконати UI smoke при масштабуванні Windows **100%, 125%, 150%, 200%**;
-- перевірити темну/світлу тему, системні шрифти, файлові діалоги, шляхи з кирилицею та довгі шляхи;
-- виконати backup/restore на великій робочій БД під Windows і перевірити вплив Defender/антивірусу на I/O;
-- окремо виконати Windows DPAPI integration test, який у фінальному Linux `verify` коректно пропущений за OS-condition.
+Деталі: `docs/release/POST-R1-R2-VALIDATION-2026-10-03-UA.md`, `docs/release/POST-R2-R3-VALIDATION-2026-10-03-UA.md`, `docs/release/POST-R3-R4-VALIDATION-2026-10-03-UA.md`, `docs/release/POST-R4-R5-VALIDATION-2026-10-03-UA.md`.
 
-Причина: поточна сесія працює на Linux, тому Windows MSI/EXE, DPAPI та Windows UI acceptance тут неможливо підтвердити фактично.
+R6–R11 live-evidence tooling/readiness та runtime-binary binding: `docs/release/POST-R5-R6-VALIDATION-2026-10-04-UA.md`, `docs/release/POST-R6-R7-VALIDATION-2026-10-04-UA.md`, `docs/release/POST-R7-R8-VALIDATION-2026-10-04-UA.md`, `docs/release/POST-R8-R9-VALIDATION-2026-10-04-UA.md`, `docs/release/POST-R9-R10-VALIDATION-2026-10-04-UA.md`, `docs/release/POST-R10-R11-VALIDATION-2026-10-04-UA.md` та `docs/release/POST-R5-LIVE-ACCEPTANCE-RUNBOOK-UA.md`. R12 performance evidence: `docs/release/POST-R11-R12-VALIDATION-2026-10-04-UA.md`. R13 regression evidence: `docs/release/POST-R12-R13-VALIDATION-2026-10-04-UA.md`. R14 index/download + release-audit evidence: `docs/release/POST-R13-R14-VALIDATION-2026-10-04-UA.md`. R15 real-Windows-log/18-book-corpus evidence: `docs/release/POST-R14-R15-VALIDATION-2026-10-04-UA.md`. R16 second-Windows-pass evidence: `docs/release/POST-R15-R16-VALIDATION-2026-10-04-UA.md`. R18 full hardening evidence: `docs/release/POST-R17-R18-VALIDATION-2026-10-05-UA.md`; exact next live tasks: `docs/release/NEXT-TASKS-AFTER-R18-2026-10-05-UA.md`. Harness/readiness готові, але **не змінюють OPEN_EXTERNAL на PASS** без реального evidence.
 
-## 2. Реальний Calibre `ebook-convert`
+Окремо ще треба повторити R1/R2 Windows live scenario: repeated selection/background Book Details не блокує Operations/Statistics/Reader/Conversion/navigation/download.
 
-Код Calibre-конвертації, capability matrix, source-aware export і запуск через `ProcessBuilder` перевірені тестами; fake `ebook-convert` підтвердив наскрізний шлях і доступність підтримуваної матриці форматів. Але в поточному середовищі **реального `ebook-convert` немає**.
+## 1. Реальна бібліотека / V33–V34 — основний large-data pass закрито
 
-Перед публічним релізом функції конвертації варто один раз перевірити з реально встановленим актуальним Calibre:
+Завершено на `flibusta_online_fb2.inpx` (707 154 records): fresh/re-import, V65→V67 upgrade, navigation/search/Lucene, V33 performance tuning, restart/reopen та DB integrity. Деталі: `docs/release/REAL-DATA-ACCEPTANCE-V34-2026-10-02.md`.
 
-- FB2 → EPUB;
-- FB2/EPUB → AZW3;
-- FB2/EPUB → PDF;
-- FB2/EPUB → DOCX або RTF;
-- конвертацію книги з альтернативного локального artifact;
-- коректне повідомлення при помилці Calibre та при неправильному шляху до `ebook-convert`.
+З real-data блоку залишаються лише:
 
-## 3. GitHub / CI / CodeQL acceptance
+- великий **реальний CBR/CB7** corpus для V34 (у сесії був доступний лише generated 1000-page CBZ stress);
+- 1–2 h production soak на цільовій робочій машині.
 
-Поточна копія не є Git checkout і не має `GITHUB_REPOSITORY`, токена або доступу до GitHub Actions, тому connected acceptance не виконувався.
+## 2. V30 physical Kobo — P0 для Kobo scope
 
-Після заливання фінального коду в репозиторій треба:
+First sync, library appearance, open/read, progress Kobo → MyHomeLib і MyHomeLib → Kobo, cover/metadata, reconnect, credential revoke/rotation. Локальні protocol fixtures не замінюють цей gate.
 
-- прогнати штатний CI на фінальному commit SHA;
-- перевірити required checks;
-- запустити CodeQL/security workflow;
-- виконати `github-connected-acceptance.py` для фактичного репозиторію;
-- за потреби виконати фінальний evidence ingest із digest-перевіркою.
+## 3. V31 packaged updater — P0 для auto-update scope
 
-## 4. Release evidence / `CURRENT-VALIDATION.md`
+На Windows installer/portable/upgrade candidate: download/stage/restart, file locks, helper replacement, health-marker success, forced failed-start rollback, downgrade/platform/signature rejection, signing/distribution.
 
-`external-acceptance-readiness.py` не слід закривати штучно: він очікує фактичну зовнішню acceptance-доказову базу в `docs/release/CURRENT-VALIDATION.md`.
+## 4. V32 real Readwise — P1
 
-Після Windows/GitHub acceptance треба:
+Real account auth, create/update dedup, rate-limit response, timeout/partial failure та повторний idempotent export. Remote delete не входить у V32.
 
-1. зібрати фактичні логи/скриншоти/manifest-и;
-2. оновити `docs/release/CURRENT-VALIDATION.md` реальними результатами;
-3. повторно запустити `external-acceptance-readiness.py` та `v71-final-external-acceptance-check.py`.
+## 5. V29 real browser — P1
 
-## 5. Реальні зовнішні інтеграції
+Supported browser PWA install, app shell offline, explicitly saved book offline, reconnect progress replay та auth/token revocation behavior.
 
-Без реальних endpoint/credentials неможливо повністю підтвердити production-взаємодію. Якщо ці функції входять у релізний сценарій, виконати smoke-test для:
+## 6. Windows x64 Calibre — inherited P0
 
-- WebDAV sync на реальному сервері, включно з конфліктом і його розв'язанням;
-- налаштованого AI provider;
-- стороннього плагіна через Plugin SPI;
-- OPDS-клієнта з іншого пристрою в локальній мережі;
-- реального Kindle/Kobo/PocketBook або іншої цільової папки/пристрою експорту.
+На supplied Windows Calibre bundle і точному великому FB2 необхідно:
 
-Секрети не додавати в репозиторій, release archive або тестові артефакти.
+- записати фактичні версії Calibre/libmobi;
+- підтвердити effective timeout 1800 s для default/legacy-300;
+- виконати FB2 → EPUB понад 5 хвилин без старого 300 s timeout;
+- відкрити/валідувати опублікований EPUB;
+- перевірити видалення `mhl-calibre-*` workspace після success;
+- Cancel під час активного Calibre: `CANCELLED`, повний process-tree exit, без locked `input.fb2`, workspace одразу removable;
+- закрити MyHomeLib під час conversion і підтвердити відсутність orphan process/lock;
+- batch ≥3 books: максимум 2 external conversions, queued work не стартує після Cancel, partial failure не видаляє успішні outputs;
+- під час conversion відкрити unrelated local/remote book і навігувати UI.
 
-## 6. Підписування та публічний дистрибутив
+Це головний незакритий функціональний Windows gate.
 
-Якщо застосунок розповсюджується зовнішнім користувачам:
+## 7. Windows installer / portable / DPI — MHL-011/012
 
-- підписати Windows installer/App executable сертифікатом Authenticode;
-- сформувати `SHA256SUMS` для публічних binary artifacts;
-- перевірити SmartScreen/Defender поведінку підписаного пакета;
-- для macOS, якщо вона входить у підтримувані платформи, виконати окремий build, codesign та notarization.
+На bound Windows 10/11 x64 host/user/session:
 
-## 7. Рекомендований production soak — не блокує source archive
+- clean install/start/uninstall/reinstall;
+- real previous-version upgrade;
+- MSI/EXE/portable paths, ASCII та non-ASCII location;
+- packaged `--release-smoke` і runtime tools;
+- DPI **100/125/150/200%** з screenshot-backed acceptance;
+- real Windows DPAPI integration;
+- plugin install/enable/disable/restart lifecycle у packaged app;
+- EPUB/FB2/PDF Reader smoke;
+- backup/restore і user-data migration на реальній Windows filesystem/Defender boundary.
 
-На реальній робочій машині бажано виконати 1–2-годинний smoke/soak з великою бібліотекою:
+## 8. Candidate-bound GitHub / supply-chain — MHL-010/017/018/019
 
-- каталог Flibusta приблизно 707 тис. записів;
-- багаторазовий пошук авторів/серій/книг;
-- перемикання тем і мов UK/EN/BG;
-- відкривання/закривання Reader для різних форматів;
-- серію завантажень та конвертацій;
-- повторний запуск програми після аварійного завершення;
-- контроль RAM/handles/temp-файлів.
+Для exact frozen candidate:
 
-Реальні performance-probe тести у Maven навмисно gated системними властивостями (`mhl.real.*`, `mhl.performance`, `myhomelib.*Benchmark`) і без production dataset у фінальному `verify` не запускалися.
+- required checks / connected acceptance;
+- CycloneDX SBOM artifact + digest;
+- Dependency-Check/SCA under documented blocking policy;
+- CodeQL release analysis;
+- immutable reviewer evidence bundle.
 
-## 8. Низькопріоритетне технічне обслуговування
+Локальні regression/readiness tools перевірені, але вони навмисно не можуть самі закрити connected gate.
 
-Maven-тести на Java 21 показують попередження Mockito про майбутню заборону dynamic self-attach Byte Buddy agent. На поточному JDK це не є помилкою, тести проходять. До переходу на JDK, де dynamic agent loading буде заборонено за замовчуванням, варто налаштувати Mockito як явний `-javaagent` у тестовому профілі.
+## 9. Інші live platform/provider integrations
+
+Перевіряти тільки якщо входять у релізний сценарій:
+
+- physical device export + OS safe eject;
+- configured external reader executable;
+- system TTS voices та FFmpeg runtime;
+- WebDAV server з реальним conflict flow;
+- metadata/translation/AI providers з реальними credentials/consent;
+- сторонній plugin через Plugin SPI;
+- external OPDS/MCP clients.
+
+Секрети не зберігати у source/release archive або evidence.
+
+## 10. Підписування і публічна доставка
+
+Для публічного Windows-дистрибутива: Authenticode signing, SHA256SUMS binary artifacts, SmartScreen/Defender acceptance. Для macOS — лише якщо платформа входить у release scope: окремий build/codesign/notarization.
+
+## 11. Production soak / target-machine memory confirmation
+
+1–2 години на реальній Windows робочій машині з великою бібліотекою: пошук, navigation, Reader, downloads/conversions, themes/languages, crash/restart, RAM/handles/temp-files. R7 harness фіксує working set, heap used/committed, handles/threads, cumulative GC count/time та для MEM-10 — peak і first→last drift цих показників. R5 уже має same-environment Linux/707k A/B для Hikari **4 → 2**, але target Windows idle/working-set/GC behavior все ще треба підтвердити цим soak. Це не замінює конкретні P0/P1 acceptance gates вище.
+
+## 12. Низькопріоритетне maintenance
+
+Mockito/Byte Buddy dynamic self-attach maintenance **закрито в R4**: усі модулі з Mockito-тестами мають explicit test `-javaagent`, а `static_release_check.py` контролює цей контракт.

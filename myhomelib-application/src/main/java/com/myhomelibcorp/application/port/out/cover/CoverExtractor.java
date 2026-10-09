@@ -8,4 +8,10 @@ import com.myhomelibcorp.application.dto.BookDto;
  */
 public interface CoverExtractor {
     byte[] extractCover(BookDto book);
+
+    /**
+     * Invalidates any cached cover material associated with the supplied book.
+     * Implementations without a cache may keep the default no-op behavior.
+     */
+    default void invalidateCover(BookDto book) { }
 }

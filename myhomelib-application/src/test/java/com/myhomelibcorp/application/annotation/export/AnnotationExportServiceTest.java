@@ -104,6 +104,15 @@ class AnnotationExportServiceTest {
     }
 
     @Test
+    void htmlTemplateInsertionPreservesOriginalUnicodeCoordinates() {
+        AnnotationExportTemplates templates = new AnnotationExportTemplates(
+                "${items}", "${id}", "<html><body>AİB</BODY></html>", "<p>${id}</p>");
+
+        assertThat(templates.normalized().htmlDocument())
+                .isEqualTo("<html><body>AİB${items}</BODY></html>");
+    }
+
+    @Test
     void pagesThroughLargeExportInsteadOfRequestingAllRowsAtOnce() throws Exception {
         List<AnnotationExportRow> rows = new ArrayList<>();
         for (int i = 0; i < 520; i++) rows.add(row("a-" + i, "book-1", "Book", "q" + i, "n" + i, List.of()));

@@ -16,6 +16,7 @@ import com.myhomelibcorp.application.opds.OpdsTlsSettings;
 import com.myhomelibcorp.application.opds.OpdsTokenScope;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.service.LocalizationService;
+import com.myhomelibcorp.ui.service.FileChooserService;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
@@ -37,6 +38,7 @@ import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
@@ -59,6 +61,7 @@ public class OpdsUiService {
     private final OpdsAccessTokenService accessTokens;
     private final UiBackgroundExecutor backgroundExecutor;
     private final LocalizationService i18n;
+    private final FileChooserService fileChooserService;
 
     public void show(Window owner) {
         OpdsServerSettings saved = settingsService.load();
@@ -430,11 +433,8 @@ public class OpdsUiService {
         }));
     }
 
-    private static Path chooseFile(Window owner, String title, FileChooser.ExtensionFilter filter) {
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle(title);
-        chooser.getExtensionFilters().add(filter);
-        var file = chooser.showOpenDialog(owner);
+    private Path chooseFile(Window owner, String title, FileChooser.ExtensionFilter filter) {
+        var file = fileChooserService.chooseFile(owner, title, List.of(filter));
         return file == null ? null : file.toPath();
     }
 

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.application.dto.ReadingProgressDto;
 import com.myhomelibcorp.application.sync.ReadingProgressSyncProjector;
 import com.myhomelibcorp.domain.model.sync.SyncEntityType;
 import com.myhomelibcorp.domain.model.sync.SyncRecord;
@@ -14,6 +15,7 @@ import org.sqlite.SQLiteDataSource;
 
 import java.sql.Connection;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,7 +33,7 @@ class SqliteContinueReadingRepositoryTest {
         sqlite.setUrl("jdbc:sqlite::memory:");
         connection = sqlite.getConnection();
         jdbc = new JdbcTemplate(new SingleConnectionDataSource(connection, true));
-        jdbc.execute("CREATE TABLE books(id TEXT PRIMARY KEY,title TEXT,deleted INTEGER NOT NULL DEFAULT 0)");
+        jdbc.execute("CREATE TABLE books(id TEXT PRIMARY KEY,title TEXT,deleted INTEGER NOT NULL DEFAULT 0, progress INTEGER NOT NULL DEFAULT 0)");
         jdbc.execute("CREATE TABLE authors(id TEXT PRIMARY KEY,last_name TEXT,first_name TEXT,middle_name TEXT)");
         jdbc.execute("CREATE TABLE book_authors(book_id TEXT,author_id TEXT)");
         jdbc.execute("""
@@ -42,7 +44,7 @@ class SqliteContinueReadingRepositoryTest {
                     chapter_id TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL,
                     reading_time_seconds INTEGER NOT NULL DEFAULT 0, last_device TEXT NOT NULL DEFAULT 'desktop')
                 """);
-        jdbc.update("INSERT INTO books VALUES('a','Alpha',0),('b','Beta',0),('c','Complete',0),('d','Deleted',1)");
+        jdbc.update("INSERT INTO books(id,title,deleted,progress) VALUES('a','Alpha',0,0),('b','Beta',0,0),('c','Complete',0,0),('d','Deleted',1,0)");
         jdbc.update("INSERT INTO authors VALUES('au','Doe','Jane','')");
         jdbc.update("INSERT INTO book_authors VALUES('b','au')");
         insertProgress("a", 25, "One", "2026-09-12 10:00:00.000", "desktop");
@@ -67,6 +69,31 @@ class SqliteContinueReadingRepositoryTest {
     }
 
     @Test
+    void progressRepositorySanitizesMalformedNumericStateAtPersistenceBoundary() {
+        var progressRepo = new SqliteReadingProgressRepository(manager, new SqliteBusyRetryExecutor());
+        progressRepo.save(ReadingProgressDto.builder()
+                .bookId("a")
+                .paragraphIndex(-7)
+                .paragraphId("")
+                .charOffset(-42)
+                .percent(Double.NaN)
+                .updatedAt(LocalDateTime.of(2026, 9, 12, 18, 0))
+                .readingTimeSeconds(-99)
+                .lastDevice("test")
+                .build());
+
+        Map<String, Object> stored = jdbc.queryForMap("""
+                SELECT paragraph_index,char_offset,percent,reading_time_seconds
+                FROM reading_progress WHERE book_id='a'
+                """);
+        assertThat(stored).containsEntry("paragraph_index", 0)
+                .containsEntry("char_offset", 0)
+                .containsEntry("percent", 0.0)
+                .containsEntry("reading_time_seconds", 0);
+        assertThat(jdbc.queryForObject("SELECT progress FROM books WHERE id='a'", Integer.class)).isZero();
+    }
+
+    @Test
     void remoteResolvedProgressImmediatelyDrivesTheSameShelfAndCompletionRemovesIt() {
         var progressRepo = new SqliteReadingProgressRepository(manager, new SqliteBusyRetryExecutor());
         var projector = new ReadingProgressSyncProjector(progressRepo);
@@ -76,8 +103,10 @@ class SqliteContinueReadingRepositoryTest {
         assertThat(synced.getFirst().bookId()).isEqualTo("a");
         assertThat(synced.getFirst().percent()).isEqualTo(82.0);
         assertThat(synced.getFirst().lastDevice()).isEqualTo("phone-2");
+        assertThat(jdbc.queryForObject("SELECT progress FROM books WHERE id='a'", Integer.class)).isEqualTo(82);
 
         projector.apply(progressRecord(100.0, "phone-2", 4));
+        assertThat(jdbc.queryForObject("SELECT progress FROM books WHERE id='a'", Integer.class)).isEqualTo(100);
         assertThat(repository.findActive(10)).extracting("bookId").doesNotContain("a", "c", "d");
     }
 

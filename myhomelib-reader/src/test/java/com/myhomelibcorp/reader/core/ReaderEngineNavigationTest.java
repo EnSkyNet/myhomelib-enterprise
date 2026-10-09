@@ -71,6 +71,68 @@ class ReaderEngineNavigationTest {
         assertThat(previousEnd).isLessThanOrEqualTo(jump);
     }
 
+
+    @Test
+    void documentWithoutChapterMetadataCanOpenAndNavigateSafely() throws Exception {
+        TextStorageImpl text = new TextStorageImpl();
+        text.startParagraph(TextStyle.NORMAL);
+        text.append("Текст книги без метаданих розділів.", TextStyle.NORMAL);
+
+        ReaderDocument document = CompactReaderDocument.builder()
+                .metadata(new BookMetadata("no-chapters", "No chapters", List.of("Author"), "uk", null, null,
+                        List.of(), "", "", "", null, text.length()))
+                .chapters(null)
+                .resources(new SimpleResourceRepository())
+                .text(text)
+                .toc(new DefaultTableOfContents())
+                .totalTextLength(text.length())
+                .build();
+
+        ReaderSettings settings = ReaderSettings.defaultSettings();
+        ReaderEngine engine = new ReaderEngine(
+                registryFor(document),
+                new TextLayoutEngine(new FontMetricsProviderImpl(settings), settings),
+                new NoopRenderer(),
+                new PageCache(8),
+                new ImageCache(2 * 1024 * 1024),
+                new ReaderPositionManager(),
+                settings
+        );
+
+        engine.open(new MemorySource());
+        assertThat(engine.getCurrentPosition().chapterIndex()).isZero();
+
+        engine.nextChapter();
+        engine.previousChapter();
+
+        assertThat(engine.getCurrentPosition().chapterIndex()).isZero();
+        assertThat(engine.getCurrentPosition().textOffset()).isZero();
+        engine.close();
+    }
+
+
+    @Test
+    void nonFinitePercentNavigationFallsBackToStart() throws Exception {
+        TextStorageImpl text = new TextStorageImpl();
+        text.startParagraph(TextStyle.NORMAL);
+        text.append("0123456789".repeat(50), TextStyle.NORMAL);
+        ReaderDocument document = CompactReaderDocument.builder()
+                .metadata(new BookMetadata("percent", "Percent", List.of("Author"), "uk", null, null,
+                        List.of(), "", "", "", null, text.length()))
+                .chapters(List.of(new ChapterIndex("c1", "Chapter", 0, text.length(), text.getParagraphCount())))
+                .resources(new SimpleResourceRepository()).text(text).toc(new DefaultTableOfContents())
+                .totalTextLength(text.length()).build();
+        ReaderSettings settings = ReaderSettings.defaultSettings();
+        ReaderEngine engine = new ReaderEngine(registryFor(document),
+                new TextLayoutEngine(new FontMetricsProviderImpl(settings), settings), new NoopRenderer(),
+                new PageCache(8), new ImageCache(2 * 1024 * 1024), new ReaderPositionManager(), settings);
+
+        engine.open(new MemorySource());
+        engine.goToPercent(Double.NaN);
+
+        assertThat(engine.getCurrentPosition().textOffset()).isZero();
+    }
+
     private BookFormatRegistry registryFor(ReaderDocument document) {
         BookParser parser = new BookParser() {
             @Override

@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.adapter;
 
 import com.myhomelibcorp.application.port.out.backup.CollectionBackupPort;
 import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.application.util.SqliteSidecarSupport;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
@@ -225,7 +226,7 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
             if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                 previousHash = SafeFilePublication.sha256(target, "SQLite rollback current database");
             }
-            deleteSqliteSidecars(target);
+            SqliteSidecarSupport.delete(target);
             if (previousHash != null) {
                 detachedPrevious = SafeFilePublication.detachIfOwned(
                         target, previousHash, "SQLite rollback current database");
@@ -259,7 +260,7 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
                 if (installed && Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                     SafeFilePublication.removeIfOwned(
                             target, stagedHash, "SQLite rollback failed candidate cleanup");
-                    deleteSqliteSidecars(target);
+                    SqliteSidecarSupport.delete(target);
                 }
                 if (detachedPrevious != null) {
                     String detachedHash = SafeFilePublication.sha256(
@@ -288,11 +289,5 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
         }
     }
 
-    private static void deleteSqliteSidecars(Path database) throws IOException {
-        if (database == null) return;
-        SafeFilePublication.deleteSafeRegularFileIfExists(
-                Path.of(database.toString() + "-wal"), "SQLite WAL sidecar cleanup");
-        SafeFilePublication.deleteSafeRegularFileIfExists(
-                Path.of(database.toString() + "-shm"), "SQLite SHM sidecar cleanup");
-    }
+
 }

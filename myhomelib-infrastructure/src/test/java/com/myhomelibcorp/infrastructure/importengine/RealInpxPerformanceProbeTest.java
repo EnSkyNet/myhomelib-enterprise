@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
+import com.myhomelibcorp.infrastructure.config.InteractiveDataSourceTestProfiles;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.infrastructure.catalog.SqliteCatalogUpdateTrackingAdapter;
 import com.myhomelibcorp.application.catalog.CatalogBookSnapshot;
@@ -10,7 +11,6 @@ import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteBusyRetryExecutor;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteBulkImportOptimizer;
 import com.myhomelibcorp.shared.util.Sha256Support;
-import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
@@ -59,15 +59,7 @@ class RealInpxPerformanceProbeTest {
         System.out.printf("REAL_INPX_PRECHECK records=%d countMs=%d shaMs=%d sha256=%s size=%d%n",
                 records, countMs, shaMs, sha, Files.size(inpx));
 
-        HikariConfig hc = new HikariConfig();
-        hc.setJdbcUrl("jdbc:sqlite:" + db);
-        hc.setDriverClassName("org.sqlite.JDBC");
-        hc.setMaximumPoolSize(2);
-        hc.setMinimumIdle(1);
-        hc.setConnectionTimeout(30_000);
-        hc.setConnectionInitSql("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=15000; PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768; PRAGMA mmap_size=67108864;");
-        try (HikariDataSource ds = new HikariDataSource(hc)) {
-            try (var c = ds.getConnection(); var st = c.createStatement()) { st.execute("PRAGMA journal_mode=WAL"); }
+        try (HikariDataSource ds = InteractiveDataSourceTestProfiles.fromSystemProperties().createDataSourceForPath(db.toString())) {
             Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
             JdbcTemplate jdbc = new JdbcTemplate(ds);
             long booksBefore = jdbc.queryForObject("SELECT COUNT(*) FROM books", Long.class);
@@ -83,8 +75,9 @@ class RealInpxPerformanceProbeTest {
 
             TimingJdbcBatchWriter writer = new TimingJdbcBatchWriter(manager);
             TimingCatalogTrackingAdapter tracking = new TimingCatalogTrackingAdapter(manager, new SqliteBusyRetryExecutor());
+            ImportIndexLifecycle indexLifecycle = new ImportIndexLifecycle(manager);
             var pipeline = new InpxImportPipeline(reader, writer, new SqliteBulkImportOptimizer(manager), manager,
-                    tracking, new ImportIndexLifecycle(manager));
+                    tracking, indexLifecycle);
             setInt(pipeline, "changeTrackingLimit", 50_000);
             setInt(pipeline, "authorCacheSize", 250_000);
             setInt(pipeline, "onlineBatchSize", 5_000);
@@ -126,6 +119,23 @@ class RealInpxPerformanceProbeTest {
             System.out.printf("REAL_INPX_PHASES bookWriteMs=%d authorResolveMs=%d fastAuthorResolveMs=%d genreWriteMs=%d trackingMs=%d%n",
                     writer.bookWriteMs.get(), writer.authorResolveMs.get(), writer.fastAuthorResolveMs.get(),
                     writer.genreWriteMs.get(), tracking.recordMs.get());
+            if (Boolean.getBoolean("mhl.real.restore-indexes")) {
+                long restoreStarted = System.nanoTime();
+                boolean pendingBefore = indexLifecycle.hasPendingIndexes();
+                indexLifecycle.restorePendingIndexes();
+                long restoreMs = ms(restoreStarted);
+                boolean pendingAfter = indexLifecycle.hasPendingIndexes();
+                System.out.printf("REAL_INPX_INDEX_RESTORE pendingBefore=%s pendingAfter=%s durationMs=%d%n",
+                        pendingBefore, pendingAfter, restoreMs);
+                assertThat(pendingAfter).isFalse();
+            }
+            if (Boolean.getBoolean("mhl.real.quick-check")) {
+                long checkStarted = System.nanoTime();
+                String quickCheck = jdbc.queryForObject("PRAGMA quick_check", String.class);
+                long checkMs = ms(checkStarted);
+                System.out.printf("REAL_INPX_QUICK_CHECK result=%s durationMs=%d%n", quickCheck, checkMs);
+                assertThat(quickCheck).isEqualToIgnoringCase("ok");
+            }
             if (reuseExistingDb && result.imported() == 0) {
                 assertThat(result.skipped()).isEqualTo(records);
             } else {

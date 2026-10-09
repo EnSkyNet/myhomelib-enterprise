@@ -38,6 +38,27 @@ class ReaderSelectionControllerTest {
     }
 
     @Test
+    void keyboardSelectionDoesNotSplitSurrogatePairsOrCombiningSequences() {
+        String value = "A😀e\u0301B";
+
+        Fixture emoji = fixture(value, 1);
+        assertThat(emoji.controller().extendByCharacters(1)).isTrue();
+        assertThat(emoji.controller().snapshot().orElseThrow().text()).isEqualTo("😀");
+
+        Fixture combining = fixture(value, 3);
+        assertThat(combining.controller().extendByCharacters(1)).isTrue();
+        assertThat(combining.controller().snapshot().orElseThrow().text()).isEqualTo("e\u0301");
+
+        Fixture emojiReverse = fixture(value, 3);
+        assertThat(emojiReverse.controller().extendByCharacters(-1)).isTrue();
+        assertThat(emojiReverse.controller().snapshot().orElseThrow().text()).isEqualTo("😀");
+
+        Fixture combiningReverse = fixture(value, 5);
+        assertThat(combiningReverse.controller().extendByCharacters(-1)).isTrue();
+        assertThat(combiningReverse.controller().snapshot().orElseThrow().text()).isEqualTo("e\u0301");
+    }
+
+    @Test
     void visibleStartHandleCanBeDraggedWhileOppositeEndpointStaysFixed() {
         Fixture fixture = fixture(6);
         fixture.controller().extendByCharacters(4); // beta = [6,10]
@@ -105,7 +126,10 @@ class ReaderSelectionControllerTest {
     }
 
     private static Fixture fixture(long currentOffset) {
-        String value = "Alpha beta gamma delta";
+        return fixture("Alpha beta gamma delta", currentOffset);
+    }
+
+    private static Fixture fixture(String value, long currentOffset) {
         TextStorageImpl text = new TextStorageImpl();
         text.appendParagraph(value, TextStyle.NORMAL);
         var document = CompactReaderDocument.builder()

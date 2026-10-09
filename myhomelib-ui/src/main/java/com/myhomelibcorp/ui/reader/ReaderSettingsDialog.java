@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.reader;
 
 import com.myhomelibcorp.ui.service.DialogLocalization;
+import com.myhomelibcorp.application.reader.ReaderSettingsState;
 import com.myhomelibcorp.reader.api.ReaderElementStyle;
 import com.myhomelibcorp.reader.api.ReaderSemanticElement;
 import com.myhomelibcorp.reader.api.ReaderSettings;
@@ -31,10 +32,19 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
-/** Stage 19: categorized Reader settings with presets, live preview and per-book scope. */
+/** Categorized Reader settings with live preview and V28 scoped profile actions. */
 final class ReaderSettingsDialog {
 
-    record Result(ReaderSettings settings, boolean bookOverride) {}
+    enum SaveTarget { GLOBAL, FORMAT, SERIES, BOOK, CLEAR_OVERRIDE }
+
+    record ScopeContext(boolean bookAvailable, boolean seriesAvailable, boolean formatAvailable,
+                        ReaderSettingsState.Source effectiveSource) {
+        ScopeContext {
+            effectiveSource = effectiveSource == null ? ReaderSettingsState.Source.GLOBAL : effectiveSource;
+        }
+    }
+
+    record Result(ReaderSettings settings, SaveTarget target) {}
 
     private static final ReaderSemanticElement[] COLOR_ELEMENTS = {
             ReaderSemanticElement.BOOK_TITLE, ReaderSemanticElement.CHAPTER_TITLE,
@@ -48,10 +58,20 @@ final class ReaderSettingsDialog {
 
     private ReaderSettingsDialog() {}
 
+    /** V27 compatibility overload retained for programmatic dialog contracts. */
     static Optional<Result> show(Window owner, ReaderSettings current, boolean currentBookOverride,
                                  Consumer<ReaderSettings> livePreview, LocalizationService i18n) {
+        return show(owner, current, new ScopeContext(true, false, false,
+                currentBookOverride ? ReaderSettingsState.Source.BOOK : ReaderSettingsState.Source.GLOBAL),
+                livePreview, i18n);
+    }
+
+    static Optional<Result> show(Window owner, ReaderSettings current, ScopeContext scope,
+                                 Consumer<ReaderSettings> livePreview, LocalizationService i18n) {
         ReaderSettings original = current != null ? current : ReaderSettings.defaultSettings();
-        Controls c = new Controls(original, currentBookOverride, i18n);
+        ScopeContext effectiveScope = scope == null
+                ? new ScopeContext(false, false, false, ReaderSettingsState.Source.GLOBAL) : scope;
+        Controls c = new Controls(original, effectiveScope.effectiveSource() == ReaderSettingsState.Source.BOOK, i18n);
 
         Dialog<Result> dialog = new Dialog<>();
         DialogLocalization.prepare(dialog);
@@ -59,8 +79,12 @@ final class ReaderSettingsDialog {
         dialog.setHeaderText(i18n.text("ui.reader.settings.header"));
         if (owner != null) dialog.initOwner(owner);
 
-        ButtonType apply = new ButtonType(i18n.text("common.apply"), ButtonBar.ButtonData.OK_DONE);
-        dialog.getDialogPane().getButtonTypes().addAll(apply, ButtonType.CANCEL);
+        ButtonType saveGlobal = new ButtonType(i18n.text("ui.reader.settings.scope.save_global"), ButtonBar.ButtonData.OK_DONE);
+        ButtonType saveFormat = new ButtonType(i18n.text("ui.reader.settings.scope.save_format"), ButtonBar.ButtonData.OTHER);
+        ButtonType saveSeries = new ButtonType(i18n.text("ui.reader.settings.scope.save_series"), ButtonBar.ButtonData.OTHER);
+        ButtonType saveBook = new ButtonType(i18n.text("ui.reader.settings.scope.save_book"), ButtonBar.ButtonData.OTHER);
+        ButtonType clearOverride = new ButtonType(i18n.text("ui.reader.settings.scope.clear"), ButtonBar.ButtonData.LEFT);
+        dialog.getDialogPane().getButtonTypes().addAll(saveGlobal, saveFormat, saveSeries, saveBook, clearOverride, ButtonType.CANCEL);
 
         ComboBox<ReaderSettingsPreset> preset = new ComboBox<>(FXCollections.observableArrayList(ReaderSettingsPresets.builtIns()));
         preset.setCellFactory(v -> presetCell(i18n));
@@ -75,12 +99,15 @@ final class ReaderSettingsDialog {
             }
         });
 
-        CheckBox perBook = c.perBook;
+        Label source = new Label(i18n.format("ui.reader.settings.scope.current",
+                i18n.text("ui.reader.settings.scope.source." + effectiveScope.effectiveSource().name().toLowerCase(java.util.Locale.ROOT))));
+        source.getStyleClass().add("section-title");
         Label scopeHelp = new Label(i18n.text("ui.reader.settings.scope.help"));
+        scopeHelp.setWrapText(true);
         scopeHelp.getStyleClass().addAll("muted-text", "small-text");
 
         HBox presetRow = new HBox(8, new Label(i18n.text("ui.reader.settings.preset.label")), preset, applyPreset);
-        VBox header = new VBox(6, presetRow, perBook, scopeHelp);
+        VBox header = new VBox(6, presetRow, source, scopeHelp);
         header.setPadding(new Insets(0, 0, 8, 0));
 
         TabPane tabs = new TabPane(
@@ -102,17 +129,34 @@ final class ReaderSettingsDialog {
         InvalidationListener previewListener = obs -> preview(livePreview, c.snapshot(original.customCss()));
         c.installPreview(previewListener);
 
+        Button saveGlobalButton = (Button) dialog.getDialogPane().lookupButton(saveGlobal);
+        Button saveFormatButton = (Button) dialog.getDialogPane().lookupButton(saveFormat);
+        Button saveSeriesButton = (Button) dialog.getDialogPane().lookupButton(saveSeries);
+        Button saveBookButton = (Button) dialog.getDialogPane().lookupButton(saveBook);
+        Button clearOverrideButton = (Button) dialog.getDialogPane().lookupButton(clearOverride);
+        saveFormatButton.setDisable(!effectiveScope.formatAvailable());
+        saveSeriesButton.setDisable(!effectiveScope.seriesAvailable());
+        saveBookButton.setDisable(!effectiveScope.bookAvailable());
+        clearOverrideButton.setDisable(effectiveScope.effectiveSource() == ReaderSettingsState.Source.GLOBAL);
+
         AtomicBoolean accepted = new AtomicBoolean(false);
-        dialog.setResultConverter(button -> {
-            if (button != apply) return null;
-            accepted.set(true);
-            return new Result(c.snapshot(original.customCss()), perBook.isSelected());
-        });
+        saveGlobalButton.setOnAction(e -> complete(dialog, accepted, c, original, SaveTarget.GLOBAL));
+        saveFormatButton.setOnAction(e -> complete(dialog, accepted, c, original, SaveTarget.FORMAT));
+        saveSeriesButton.setOnAction(e -> complete(dialog, accepted, c, original, SaveTarget.SERIES));
+        saveBookButton.setOnAction(e -> complete(dialog, accepted, c, original, SaveTarget.BOOK));
+        clearOverrideButton.setOnAction(e -> complete(dialog, accepted, c, original, SaveTarget.CLEAR_OVERRIDE));
         dialog.setOnHidden(e -> {
             if (!accepted.get()) preview(livePreview, original);
         });
 
         return dialog.showAndWait();
+    }
+
+    private static void complete(Dialog<Result> dialog, AtomicBoolean accepted, Controls controls,
+                                 ReaderSettings original, SaveTarget target) {
+        accepted.set(true);
+        dialog.setResult(new Result(controls.snapshot(original.customCss()), target));
+        dialog.close();
     }
 
     private static ListCell<ReaderSettingsPreset> presetCell(LocalizationService i18n) {

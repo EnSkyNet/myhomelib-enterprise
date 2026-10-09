@@ -3,9 +3,9 @@ package com.myhomelibcorp.converter.toolchain.engine.libmobi;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.converter.toolchain.*;
 import com.myhomelibcorp.converter.toolchain.discovery.ConverterToolRegistry;
+import com.myhomelibcorp.converter.toolchain.engine.ExternalConversionEngineSupport;
 import com.myhomelibcorp.converter.toolchain.fs.ConversionPathSafety;
 import com.myhomelibcorp.converter.toolchain.discovery.ToolInstallation;
-import com.myhomelibcorp.converter.toolchain.process.ExternalToolRequest;
 import com.myhomelibcorp.converter.toolchain.process.ExternalToolResult;
 import com.myhomelibcorp.converter.toolchain.process.ExternalToolRunner;
 import org.slf4j.Logger;
@@ -15,8 +15,8 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.BooleanSupplier;
 
 @Component
@@ -58,15 +58,14 @@ public class LibMobiEngine implements ConversionEngine {
             if (Files.mismatch(source, stagedSource) != -1L)
                 throw new ConversionToolchainException(ConversionFailureKind.IO_FAILURE, "libmobi staging copy verification failed");
             Path generated = work.resolve("source.epub");
-            int timeout = Math.max(10, Math.min(3600, settings.getInt("converter.toolchain.libmobi.timeoutSeconds", 300)));
-            ExternalToolResult result = runner.run(new ExternalToolRequest(
+            int timeout = ExternalConversionEngineSupport.timeoutSeconds(
+                    settings, "converter.toolchain.libmobi.timeoutSeconds", 300);
+            ExternalToolResult result = ExternalConversionEngineSupport.run(
+                    runner,
                     commands.build(installation.executable(), stagedSource, work),
-                    work, Duration.ofSeconds(timeout), 256 * 1024, cancelled, generated, maxOutputBytes));
+                    work, timeout, cancelled, generated, maxOutputBytes);
             log.debug("libmobi conversion {} -> epub exited {}: {}", step.sourceFormat(), result.exitCode(), result.mergedOutput());
-            if (result.exitCode() != 0) {
-                throw new ConversionToolchainException(classify(result.mergedOutput()),
-                        "libmobi conversion failed with exit code " + result.exitCode());
-            }
+            ExternalConversionEngineSupport.requireSuccessful(result, "libmobi", this::classify);
             try {
                 ConversionPathSafety.requireSafeRegularFile(generated, "libmobi generated EPUB");
             } catch (Exception missingOrUnsafe) {
@@ -87,7 +86,7 @@ public class LibMobiEngine implements ConversionEngine {
     }
 
     private ConversionFailureKind classify(String output) {
-        String lower = output == null ? "" : output.toLowerCase();
+        String lower = output == null ? "" : output.toLowerCase(Locale.ROOT);
         // MyHomeLib intentionally has no DRM/PID/serial workflow.  An encrypted
         // input is therefore a security-policy rejection, not a format fallback:
         // do not silently hand it to Calibre or another provider.

@@ -7,7 +7,6 @@ import com.myhomelibcorp.application.util.SafeFilePublication;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Set;

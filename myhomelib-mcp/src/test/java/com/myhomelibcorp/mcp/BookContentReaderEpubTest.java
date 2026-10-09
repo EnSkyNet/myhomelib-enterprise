@@ -30,6 +30,21 @@ class BookContentReaderEpubTest {
     }
 
 
+
+    @Test
+    void preservesLiteralPlusInEpubSpinePath() throws Exception {
+        Path epub = temp.resolve("plus-spine.epub");
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(epub))) {
+            put(out, "mimetype", "application/epub+zip");
+            put(out, "META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OPS/package.opf\"/></rootfiles></container>");
+            put(out, "OPS/package.opf", "<package><manifest><item id=\"one\" href=\"chapter+one.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"one\"/></spine></package>");
+            put(out, "OPS/chapter+one.xhtml", "<html><body><p>PLUS-SPINE</p></body></html>");
+        }
+        BookContentReader reader = new BookContentReader();
+        LibraryDb.BookLocation location = new LibraryDb.BookLocation("test", epub.getFileName().toString(), "", "", temp.toString());
+        assertTrue(reader.text(location).contains("PLUS-SPINE"));
+    }
+
     @Test
     void rejectsBookThroughSymlinkedParentDirectory() throws Exception {
         Path outside = Files.createDirectories(temp.resolve("outside"));

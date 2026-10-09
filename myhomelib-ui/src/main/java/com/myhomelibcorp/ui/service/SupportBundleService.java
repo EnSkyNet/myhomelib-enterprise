@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.ui.util.Utf16BoundarySupport;
+
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.shared.util.AppPaths;
@@ -36,7 +38,7 @@ public class SupportBundleService {
     private static final Set<String> SECRET_WORDS = Set.of(
             "password", "passwd", "secret", "token", "apikey", "api_key", "credential", "auth", "encryption.key");
     private static final List<String> RELEASE_FILES = List.of(
-            "docs/release/CURRENT-VALIDATION.md", "MYHOMELIB-RELEASE.md", "ARCHITECTURE.md", "MYHOMELIB-OPERATIONS.md");
+            "docs/release/CURRENT-VALIDATION.md", "docs/current/RELEASE.md", "ARCHITECTURE.md", "docs/current/OPERATIONS.md");
 
     private final ApplicationSettingsPort settings;
 
@@ -178,7 +180,9 @@ public class SupportBundleService {
 
     private String safeValue(String value) {
         if (value == null) return "";
-        return value.length() <= 4096 ? value : value.substring(0, 4096) + "…<truncated>";
+        if (value.length() <= 4096) return value;
+        int end = Utf16BoundarySupport.safeCut(value, 4096);
+        return value.substring(0, end) + "…<truncated>";
     }
 
     private boolean isSecret(String key) {

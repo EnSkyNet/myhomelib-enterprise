@@ -2,6 +2,8 @@ package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.application.update.ReleaseManifest;
+import com.myhomelibcorp.application.update.UpdateChannel;
 import com.myhomelibcorp.application.conversion.diagnostics.ConverterDiagnosticsPort;
 import com.myhomelibcorp.application.conversion.diagnostics.ConverterDiagnosticsRequest;
 import com.myhomelibcorp.application.conversion.diagnostics.ConverterToolStatus;
@@ -17,6 +19,7 @@ import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 import com.myhomelibcorp.shared.format.SupportedFormat;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
@@ -48,6 +51,8 @@ public class ApplicationSettingsDialog {
     private final UiBackgroundExecutor backgroundExecutor;
     private final ConverterDiagnosticsPort converterDiagnostics;
     private final EpubCheckDiagnosticsPort epubCheckDiagnostics;
+    private final FileChooserService fileChooserService;
+    private final ApplicationUpdateUiService applicationUpdateUiService;
 
     public ApplicationSettingsDialog(ApplicationSettingsPort settings,
                                      SupportBundleService supportBundleService,
@@ -56,7 +61,9 @@ public class ApplicationSettingsDialog {
                                      IndexingPerformanceSettingsService indexingPerformanceSettingsService,
                                      UiBackgroundExecutor backgroundExecutor,
                                      ConverterDiagnosticsPort converterDiagnostics,
-                                     EpubCheckDiagnosticsPort epubCheckDiagnostics) {
+                                     EpubCheckDiagnosticsPort epubCheckDiagnostics,
+                                     FileChooserService fileChooserService,
+                                     ApplicationUpdateUiService applicationUpdateUiService) {
         this.settings = settings;
         this.supportBundleService = supportBundleService;
         this.localizationService = localizationService;
@@ -65,6 +72,8 @@ public class ApplicationSettingsDialog {
         this.backgroundExecutor = backgroundExecutor;
         this.converterDiagnostics = converterDiagnostics;
         this.epubCheckDiagnostics = epubCheckDiagnostics;
+        this.fileChooserService = fileChooserService;
+        this.applicationUpdateUiService = applicationUpdateUiService;
     }
 
     public void show(Window owner) {
@@ -84,6 +93,7 @@ public class ApplicationSettingsDialog {
         ThemeEditor themeEditor = new ThemeEditor(originalTheme);
         IndexingSettingsEditor indexingEditor = new IndexingSettingsEditor(indexingPerformanceSettingsService.load());
         ConverterSettingsEditor converterEditor = new ConverterSettingsEditor(text);
+        UpdateSettingsEditor updateEditor = new UpdateSettingsEditor(text, bool);
 
         TabPane tabs = new TabPane();
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
@@ -93,6 +103,7 @@ public class ApplicationSettingsDialog {
         tabs.getTabs().add(tab(localizationService.text("ui.settings.tab.external_reading"), externalReadersPane(text)));
         tabs.getTabs().add(tab(localizationService.text("ui.settings.tab.converters"), converterEditor.pane()));
         tabs.getTabs().add(tab(localizationService.text("ui.settings.tab.device_export"), devicePane(text)));
+        tabs.getTabs().add(tab(localizationService.text("ui.settings.tab.updates"), updateEditor.pane()));
         tabs.getTabs().add(tab(localizationService.text("ui.settings.tab.online"), onlinePane(text, secrets, unreadableSecrets, bool)));
         tabs.setPrefSize(790, 590);
         dialog.getDialogPane().setContent(tabs);
@@ -132,14 +143,15 @@ public class ApplicationSettingsDialog {
         themeService.save(themeEditor.config());
         indexingPerformanceSettingsService.save(indexingEditor.value());
         converterEditor.save();
+        updateEditor.save();
     }
 
     private void synchronizeCalibreRuntimeProperties() {
         String executable = settings.get("converter.calibre.executable", "").trim();
-        String timeout = settings.get("converter.calibre.timeoutSeconds", "300").trim();
+        String timeout = settings.get("converter.calibre.timeoutSeconds", "1800").trim();
         if (executable.isBlank()) System.clearProperty("myhomelib.calibre.executable");
         else System.setProperty("myhomelib.calibre.executable", executable);
-        System.setProperty("myhomelib.calibre.timeoutSeconds", timeout.isBlank() ? "300" : timeout);
+        System.setProperty("myhomelib.calibre.timeoutSeconds", timeout.isBlank() ? "1800" : timeout);
     }
 
     private Tab tab(String title, Node content) { return new Tab(title, content); }
@@ -249,7 +261,7 @@ public class ApplicationSettingsDialog {
                     row(localizationService.text("ui.settings.converters.libmobi.executable"), executableField(libmobiExecutable)),
                     row(localizationService.text("ui.settings.converters.calibre.executable"), executableField(calibreExecutable)),
                     row(localizationService.text("ui.settings.converters.calibre.timeout"),
-                            field(text, "converter.calibre.timeoutSeconds", "300")),
+                            field(text, "converter.calibre.timeoutSeconds", "1800")),
                     calibreInfo,
                     row(localizationService.text("ui.settings.converters.epubcheck.executable"), executableField(epubcheckExecutable)));
 
@@ -311,33 +323,30 @@ public class ApplicationSettingsDialog {
         private Node executableField(TextField executable) {
             Button browse = new Button(localizationService.text("ui.settings.converters.browse"));
             browse.setOnAction(event -> {
-                FileChooser chooser = new FileChooser();
-                chooser.setTitle(localizationService.text("ui.settings.converters.choose_executable"));
                 boolean windows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
-                if (windows) {
-                    // Windows: launchers first, then JAR, then "all files" so the EPUBCheck
-                    // field can also point at the official epubcheck.jar distribution.
-                    chooser.getExtensionFilters().addAll(
-                            new FileChooser.ExtensionFilter(
-                                    localizationService.text("ui.settings.converters.executable_files"),
-                                    "*.exe", "*.bat", "*.cmd"),
-                            new FileChooser.ExtensionFilter("EPUBCheck JAR (*.jar)", "*.jar"),
-                            new FileChooser.ExtensionFilter("All files (*.*)", "*.*"));
-                } else {
-                    chooser.getExtensionFilters().addAll(
-                            new FileChooser.ExtensionFilter(
-                                    localizationService.text("ui.settings.converters.executable_files"), "*"),
-                            new FileChooser.ExtensionFilter("EPUBCheck JAR (*.jar)", "*.jar"));
-                }
+                java.util.List<FileChooser.ExtensionFilter> filters = windows
+                        ? java.util.List.of(
+                                new FileChooser.ExtensionFilter(
+                                        localizationService.text("ui.settings.converters.executable_files"),
+                                        "*.exe", "*.bat", "*.cmd"),
+                                new FileChooser.ExtensionFilter("EPUBCheck JAR (*.jar)", "*.jar"),
+                                new FileChooser.ExtensionFilter("All files (*.*)", "*.*"))
+                        : java.util.List.of(
+                                new FileChooser.ExtensionFilter(
+                                        localizationService.text("ui.settings.converters.executable_files"), "*"),
+                                new FileChooser.ExtensionFilter("EPUBCheck JAR (*.jar)", "*.jar"));
+                java.io.File initialDirectory = null;
                 try {
                     String value = executable.getText() == null ? "" : executable.getText().trim().replace("\"", "");
                     if (!value.isBlank()) {
                         java.nio.file.Path path = java.nio.file.Path.of(value).toAbsolutePath().normalize();
                         java.nio.file.Path parent = java.nio.file.Files.isDirectory(path) ? path : path.getParent();
-                        if (parent != null && java.nio.file.Files.isDirectory(parent)) chooser.setInitialDirectory(parent.toFile());
+                        if (parent != null && java.nio.file.Files.isDirectory(parent)) initialDirectory = parent.toFile();
                     }
                 } catch (RuntimeException ignored) { }
-                java.io.File selected = chooser.showOpenDialog(pane.getScene() == null ? null : pane.getScene().getWindow());
+                java.io.File selected = fileChooserService.chooseFile(
+                        pane.getScene() == null ? null : pane.getScene().getWindow(),
+                        localizationService.text("ui.settings.converters.choose_executable"), filters, initialDirectory);
                 if (selected != null) executable.setText(selected.toPath().toAbsolutePath().normalize().toString());
             });
             HBox box = new HBox(8, executable, browse);
@@ -407,7 +416,7 @@ public class ApplicationSettingsDialog {
         intro.setWrapText(true);
         box.getChildren().add(intro);
         box.getChildren().add(row(UiText.text("ui.java.application_settings_dialog.50a2b299e6"), field(text, "online.connectTimeoutSeconds", "20")));
-        box.getChildren().add(row(UiText.text("ui.java.application_settings_dialog.def88711a5"), field(text, "online.readTimeoutSeconds", "120")));
+        box.getChildren().add(row(UiText.text("ui.java.application_settings_dialog.def88711a5"), field(text, "online.readTimeoutSeconds", "30")));
         box.getChildren().add(checkbox(bool, "online.autoUpdateOnStartup",
                 localizationService.text("ui.settings.online.auto_update_on_startup"), false));
         box.getChildren().add(row(localizationService.text("ui.settings.online.user_agent"),
@@ -435,6 +444,119 @@ public class ApplicationSettingsDialog {
         box.getChildren().add(row(UiText.text("ui.java.application_settings_dialog.8acb7145c6"), field(text, "online.tls.trustStoreType", "PKCS12")));
         box.getChildren().add(row(UiText.text("ui.java.application_settings_dialog.b73fe076d8"), secretField(secrets, unreadableSecrets, "online.tls.trustStorePassword")));
         return scroll(box);
+    }
+
+
+    private final class UpdateSettingsEditor {
+        private final ComboBox<SettingOption> channel = new ComboBox<>();
+        private final ComboBox<SettingOption> installPolicy = new ComboBox<>();
+        private final TextArea status = new TextArea();
+        private final VBox pane = section();
+        private volatile ReleaseManifest available;
+
+        UpdateSettingsEditor(Map<String, TextField> text, Map<String, CheckBox> bool) {
+            channel.getItems().setAll(
+                    new SettingOption("STABLE", localizationService.text("ui.settings.updates.channel.stable")),
+                    new SettingOption("BETA", localizationService.text("ui.settings.updates.channel.beta")),
+                    new SettingOption("MANUAL", localizationService.text("ui.settings.updates.channel.manual")));
+            selectOption(channel, settings.get("update.channel", "STABLE"), "STABLE");
+            installPolicy.getItems().setAll(
+                    new SettingOption("ASK", localizationService.text("ui.settings.updates.policy.ask")),
+                    new SettingOption("DOWNLOAD", localizationService.text("ui.settings.updates.policy.download")),
+                    new SettingOption("INSTALL_ON_RESTART", localizationService.text("ui.settings.updates.policy.restart")));
+            selectOption(installPolicy, settings.get("update.installPolicy", "ASK"), "ASK");
+
+            Label intro = new Label(localizationService.text("ui.settings.updates.info"));
+            intro.setWrapText(true);
+            pane.getChildren().addAll(intro,
+                    row(localizationService.text("ui.settings.updates.channel"), channel),
+                    checkbox(bool, "update.autoCheck", localizationService.text("ui.settings.updates.auto_check"), true),
+                    row(localizationService.text("ui.settings.updates.policy"), installPolicy),
+                    row(localizationService.text("ui.settings.updates.manifest.stable"), field(text, "update.manifest.stable", "")),
+                    row(localizationService.text("ui.settings.updates.manifest.beta"), field(text, "update.manifest.beta", "")),
+                    row(localizationService.text("ui.settings.updates.manifest.manual"), field(text, "update.manifest.manual", "")),
+                    new Separator(),
+                    row(localizationService.text("ui.settings.updates.installation_path"), field(text, "update.installationPath", "")),
+                    row(localizationService.text("ui.settings.updates.helper_jar"), field(text, "update.helperJar", "")));
+
+            status.setEditable(false);
+            status.setWrapText(true);
+            status.setPrefRowCount(6);
+            status.setPromptText(localizationService.text("ui.settings.updates.release_notes"));
+
+            Button checkNow = new Button(localizationService.text("ui.settings.updates.check_now"));
+            checkNow.setId("application-update-check");
+            Button stage = new Button(localizationService.text("ui.settings.updates.download_verify"));
+            stage.setId("application-update-stage");
+            stage.setDisable(true);
+            Button restart = new Button(localizationService.text("ui.settings.updates.restart_update"));
+            restart.setId("application-update-restart");
+            restart.setDisable(true);
+
+            checkNow.setOnAction(e -> {
+                checkNow.setDisable(true);
+                status.setText(localizationService.text("ui.settings.updates.checking"));
+                UpdateChannel selected = UpdateChannel.valueOf(selectedId(channel, "STABLE"));
+                backgroundExecutor.submit(() -> applicationUpdateUiService.checkNow(selected))
+                        .whenComplete((found, error) -> Platform.runLater(() -> {
+                            checkNow.setDisable(false);
+                            if (error != null) {
+                                available = null; stage.setDisable(true);
+                                status.setText(localizationService.text("ui.settings.updates.error") + ": " + UiExceptionSupport.message(error));
+                                return;
+                            }
+                            available = found.orElse(null);
+                            if (available == null) {
+                                stage.setDisable(true);
+                                status.setText(localizationService.text("ui.settings.updates.none"));
+                            } else {
+                                stage.setDisable(false);
+                                status.setText(available.version() + "\n\n" + available.releaseNotes());
+                            }
+                        }));
+            });
+            stage.setOnAction(e -> {
+                ReleaseManifest candidate = available;
+                if (candidate == null) return;
+                stage.setDisable(true);
+                status.setText(localizationService.text("ui.settings.updates.downloading"));
+                backgroundExecutor.submit(() -> applicationUpdateUiService.stage(candidate))
+                        .whenComplete((plan, error) -> Platform.runLater(() -> {
+                            if (error != null) {
+                                stage.setDisable(false);
+                                status.setText(localizationService.text("ui.settings.updates.error") + ": " + UiExceptionSupport.message(error));
+                                return;
+                            }
+                            restart.setDisable(!applicationUpdateUiService.canRestartAndApply());
+                            status.setText(localizationService.text("ui.settings.updates.staged") + "\n" + plan.manifest().version());
+                        }));
+            });
+            restart.setOnAction(e -> {
+                try { applicationUpdateUiService.restartAndApply(); }
+                catch (Exception failure) {
+                    status.setText(localizationService.text("ui.settings.updates.error") + ": " + UiExceptionSupport.message(failure));
+                }
+            });
+            try {
+                restart.setDisable(applicationUpdateUiService.pendingPlan().isEmpty() || !applicationUpdateUiService.canRestartAndApply());
+            } catch (Exception ignored) { restart.setDisable(true); }
+
+            pane.getChildren().addAll(new HBox(8, checkNow, stage, restart), status);
+        }
+
+        Node pane() { return scroll(pane); }
+        void save() {
+            settings.put("update.channel", selectedId(channel, "STABLE"));
+            settings.put("update.installPolicy", selectedId(installPolicy, "ASK"));
+        }
+        private void selectOption(ComboBox<SettingOption> combo, String id, String fallback) {
+            combo.getItems().stream().filter(v -> v.id().equalsIgnoreCase(id)).findFirst()
+                    .or(() -> combo.getItems().stream().filter(v -> v.id().equalsIgnoreCase(fallback)).findFirst())
+                    .ifPresent(combo::setValue);
+        }
+        private String selectedId(ComboBox<SettingOption> combo, String fallback) {
+            return combo.getValue() == null ? fallback : combo.getValue().id();
+        }
     }
 
     private final class ThemeEditor {
@@ -592,11 +714,10 @@ public class ApplicationSettingsDialog {
 
         SupportBundleOptions options = new SupportBundleOptions(
                 logs.isSelected(), threads.isSelected(), releaseDocs.isSelected());
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle(UiText.text("ui.java.application_settings_dialog.02a10cbb94"));
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(UiText.text("ui.java.application_settings_dialog.c6fd5ab5c0"), "*.zip"));
-        chooser.setInitialFileName("MyHomeLib-support-" + java.time.LocalDate.now() + ".zip");
-        var selected = chooser.showSaveDialog(owner);
+        var selected = fileChooserService.chooseFileToSave(owner,
+                UiText.text("ui.java.application_settings_dialog.02a10cbb94"),
+                "MyHomeLib-support-" + java.time.LocalDate.now() + ".zip",
+                java.util.List.of(new FileChooser.ExtensionFilter(UiText.text("ui.java.application_settings_dialog.c6fd5ab5c0"), "*.zip")));
         if (selected == null) return;
         backgroundExecutor.submit(() -> supportBundleService.create(selected.toPath(), options))
                 .whenComplete((output, error) -> UiExecutor.runOnUiThread(() -> {

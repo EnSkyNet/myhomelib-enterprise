@@ -1,5 +1,6 @@
 package com.myhomelibcorp.epub.optimizer.profile;
 
+import java.util.Locale;
 import java.util.Set;
 
 public enum StandardReadingSystemProfile implements ReadingSystemProfile {
@@ -22,7 +23,7 @@ public enum StandardReadingSystemProfile implements ReadingSystemProfile {
         this.woff2 = woff2;
     }
 
-    @Override public String id() { return name().toLowerCase(); }
+    @Override public String id() { return name().toLowerCase(Locale.ROOT); }
     @Override public EpubTargetStandard targetStandard() { return standard; }
     @Override public Set<ImageCodec> supportedImageCodecs() { return codecs; }
     @Override public boolean supportsWoff2() { return woff2; }

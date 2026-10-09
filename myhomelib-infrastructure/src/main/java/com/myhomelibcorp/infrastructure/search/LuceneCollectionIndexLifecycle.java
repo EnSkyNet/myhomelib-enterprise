@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.search;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexLifecycle;
 import com.myhomelibcorp.application.search.SearchIndexHealth;
+import com.myhomelibcorp.application.search.SearchIndexUnavailableException;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.shared.util.AppPaths;
@@ -73,6 +74,10 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
                     log.info("Per-collection Lucene {} is reusable: {} documents", indexPath, search.getDocumentCount());
                 }
                 return reusable;
+            } catch (SearchIndexUnavailableException e) {
+                clearActiveState();
+                search.setQueryAvailability(false, e.getMessage());
+                throw e;
             } catch (IOException e) {
                 clearActiveState();
                 throw new IllegalStateException("Cannot activate Lucene index for collection " + collection.getId(), e);

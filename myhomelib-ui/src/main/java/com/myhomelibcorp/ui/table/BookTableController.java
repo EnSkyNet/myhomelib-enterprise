@@ -108,35 +108,7 @@ public class BookTableController implements WorkspaceLifecycle {
         });
         selectCol.setGraphic(masterSelectionCheckBox);
         selectCol.setCellValueFactory(cellData -> cellData.getValue().selectedProperty());
-        selectCol.setCellFactory(col -> new TableCell<>() {
-            private final CheckBox checkBox = new CheckBox();
-            private BookViewModel boundRow;
-            private final javafx.beans.value.ChangeListener<Boolean> selectedListener =
-                    (obs, oldValue, newValue) -> checkBox.setSelected(Boolean.TRUE.equals(newValue));
-            {
-                checkBox.setOnAction(event -> {
-                    BookViewModel row = boundRow;
-                    if (row != null && !row.isGroupHeader()) row.setSelected(checkBox.isSelected());
-                });
-            }
-            @Override protected void updateItem(Boolean item, boolean empty) {
-                super.updateItem(item, empty);
-                if (boundRow != null) {
-                    boundRow.selectedProperty().removeListener(selectedListener);
-                    boundRow = null;
-                }
-                BookViewModel row = getTableRow() == null ? null : getTableRow().getItem();
-                if (empty || row == null || row.isGroupHeader()) {
-                    setGraphic(null);
-                    return;
-                }
-                boundRow = row;
-                checkBox.setSelected(row.isSelected());
-                row.selectedProperty().addListener(selectedListener);
-                setGraphic(checkBox);
-                setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
-            }
-        });
+        selectCol.setCellFactory(col -> createSelectionCell());
         selectCol.setEditable(true);
         selectCol.setPrefWidth(40);
         selectCol.setResizable(false);
@@ -269,6 +241,38 @@ public class BookTableController implements WorkspaceLifecycle {
         setupPagination();
         setupProfilePersistence();
         updateFilterIndicator();
+    }
+
+    private TableCell<BookViewModel, Boolean> createSelectionCell() {
+        return new TableCell<>() {
+            private final CheckBox checkBox = new CheckBox();
+            private BookViewModel boundRow;
+            private final javafx.beans.value.ChangeListener<Boolean> selectedListener =
+                    (obs, oldValue, newValue) -> checkBox.setSelected(Boolean.TRUE.equals(newValue));
+            {
+                checkBox.setOnAction(event -> {
+                    BookViewModel row = boundRow;
+                    if (row != null && !row.isGroupHeader()) row.setSelected(checkBox.isSelected());
+                });
+            }
+            @Override protected void updateItem(Boolean item, boolean empty) {
+                super.updateItem(item, empty);
+                if (boundRow != null) {
+                    boundRow.selectedProperty().removeListener(selectedListener);
+                    boundRow = null;
+                }
+                BookViewModel row = getTableRow() == null ? null : getTableRow().getItem();
+                if (empty || row == null || row.isGroupHeader()) {
+                    setGraphic(null);
+                    return;
+                }
+                boundRow = row;
+                checkBox.setSelected(row.isSelected());
+                row.selectedProperty().addListener(selectedListener);
+                setGraphic(checkBox);
+                setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+            }
+        };
     }
 
     private void installSelectionStatusTracking(BookTableViewModel vm) {

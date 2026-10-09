@@ -5,24 +5,26 @@ import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.myhomelibcorp.application.textprovider.TextProviderErrorKind;
 import com.myhomelibcorp.application.textprovider.TextProviderException;
+import com.myhomelibcorp.application.textprovider.TextProviderExecutionSupport;
 import com.myhomelibcorp.application.textprovider.TextProviderFailures;
 import com.myhomelibcorp.application.textprovider.TextProviderIssue;
 import com.myhomelibcorp.application.textprovider.TextProviderRequestContext;
+import com.myhomelibcorp.application.textprovider.TextProviderRegistrySupport;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 public class DictionaryLookupService {
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(5);
+    private static final Comparator<DictionaryProvider> DEFAULT_PROVIDER_ORDER =
+            Comparator.comparing(DictionaryProvider::isOffline).reversed()
+                    .thenComparing(DictionaryProvider::id);
 
     private final List<DictionaryProvider> providers;
     private final ExecutorPort executor;
@@ -42,8 +44,7 @@ public class DictionaryLookupService {
     public List<DictionaryProviderDescriptor> availableProviders() {
         return allProviders().stream()
                 .filter(DictionaryProvider::isEnabled)
-                .sorted(Comparator.comparing(DictionaryProvider::isOffline).reversed()
-                        .thenComparing(DictionaryProvider::id))
+                .sorted(DEFAULT_PROVIDER_ORDER)
                 .map(provider -> new DictionaryProviderDescriptor(
                         provider.id(), provider.displayName(), provider.isOffline()))
                 .toList();
@@ -59,36 +60,24 @@ public class DictionaryLookupService {
             Duration timeout,
             AtomicBoolean cancelFlag) {
         Objects.requireNonNull(query, "query");
-        validateTimeout(timeout);
+        TextProviderExecutionSupport.requirePositiveTimeout(timeout);
         AtomicBoolean cancellation = cancelFlag == null ? new AtomicBoolean(false) : cancelFlag;
         if (cancellation.get()) return CompletableFuture.completedFuture(DictionaryLookupResult.cancelled(null));
 
         DictionaryProvider provider = selectProvider(providerId);
         if (provider == null) {
             return CompletableFuture.completedFuture(DictionaryLookupResult.failed(new TextProviderIssue(
-                    clean(providerId), "", TextProviderErrorKind.UNAVAILABLE, "Dictionary provider is unavailable")));
+                    TextProviderRegistrySupport.normalizeId(providerId), "", TextProviderErrorKind.UNAVAILABLE, "Dictionary provider is unavailable")));
         }
 
         TextProviderRequestContext context = TextProviderRequestContext.create(timeout, cancellation);
-        com.myhomelibcorp.application.port.out.executor.ExecutorPort.CancellableTask<DictionaryLookupResult> submitted;
-        try {
-            submitted = executor.submitCancellable(() -> callProvider(provider, query, context));
-        } catch (RuntimeException rejected) {
-            return CompletableFuture.completedFuture(failed(provider, TextProviderErrorKind.UNAVAILABLE));
-        }
-        if (submitted == null || submitted.future() == null) {
-            return CompletableFuture.completedFuture(failed(provider, TextProviderErrorKind.UNAVAILABLE));
-        }
-
-        long timeoutMillis = safeTimeoutMillis(timeout);
-        return submitted.future().orTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
-                .handle((result, failure) -> {
-                    if (failure != null && TextProviderFailures.unwrap(failure) instanceof TimeoutException) {
-                        cancellation.set(true);
-                        submitted.cancel();
-                    }
-                    return failure == null ? result : mapFailure(provider, failure);
-                });
+        return TextProviderExecutionSupport.submitBounded(
+                executor,
+                timeout,
+                cancellation,
+                () -> callProvider(provider, query, context),
+                () -> failed(provider, TextProviderErrorKind.UNAVAILABLE),
+                failure -> mapFailure(provider, failure));
     }
 
     private DictionaryLookupResult callProvider(
@@ -111,18 +100,9 @@ public class DictionaryLookupService {
     }
 
     private DictionaryProvider selectProvider(String providerId) {
-        String requested = clean(providerId);
-        if (!requested.isBlank()) {
-            return allProviders().stream()
-                    .filter(DictionaryProvider::isEnabled)
-                    .filter(provider -> requested.equals(provider.id()))
-                    .findFirst().orElse(null);
-        }
-        return allProviders().stream()
-                .filter(DictionaryProvider::isEnabled)
-                .sorted(Comparator.comparing(DictionaryProvider::isOffline).reversed()
-                        .thenComparing(DictionaryProvider::id))
-                .findFirst().orElse(null);
+        return TextProviderRegistrySupport.select(
+                allProviders(), providerId, DictionaryProvider::isEnabled,
+                DEFAULT_PROVIDER_ORDER, DictionaryProvider::id);
     }
 
     private static DictionaryLookupResult mapFailure(DictionaryProvider provider, Throwable failure) {
@@ -130,15 +110,11 @@ public class DictionaryLookupService {
         if (root instanceof InvalidProviderAttribution) {
             return failed(provider, TextProviderErrorKind.INVALID_RESPONSE);
         }
-        if (root instanceof TextProviderException providerFailure) {
-            TextProviderIssue issue = issue(provider, providerFailure.kind());
-            return providerFailure.kind() == TextProviderErrorKind.CANCELLED
-                    ? DictionaryLookupResult.cancelled(issue)
-                    : DictionaryLookupResult.failed(issue);
-        }
-        if (root instanceof TimeoutException) return failed(provider, TextProviderErrorKind.TIMEOUT);
-        if (root instanceof CancellationException) return DictionaryLookupResult.cancelled(issue(provider, TextProviderErrorKind.CANCELLED));
-        return failed(provider, TextProviderErrorKind.FAILED);
+        TextProviderErrorKind kind = TextProviderFailures.classify(root);
+        TextProviderIssue issue = issue(provider, kind);
+        return kind == TextProviderErrorKind.CANCELLED
+                ? DictionaryLookupResult.cancelled(issue)
+                : DictionaryLookupResult.failed(issue);
     }
 
     private static DictionaryLookupResult failed(DictionaryProvider provider, TextProviderErrorKind kind) {
@@ -162,30 +138,12 @@ public class DictionaryLookupService {
         };
     }
 
-    private static void validateTimeout(Duration timeout) {
-        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
-            throw new IllegalArgumentException("timeout must be positive");
-        }
-    }
-
-    private static long safeTimeoutMillis(Duration timeout) {
-        try {
-            return Math.max(1L, timeout.toMillis());
-        } catch (ArithmeticException overflow) {
-            return Long.MAX_VALUE;
-        }
-    }
-
-    private static String clean(String value) {
-        return value == null ? "" : value.trim();
-    }
 
     private static final class InvalidProviderAttribution extends RuntimeException {}
+
     private List<DictionaryProvider> allProviders() {
-        java.util.LinkedHashMap<String, DictionaryProvider> result = new java.util.LinkedHashMap<>();
-        providers.forEach(provider -> result.putIfAbsent(provider.id(), provider));
-        runtimeExtensions.dictionaryProviders().forEach(provider -> result.putIfAbsent(provider.id(), provider));
-        return List.copyOf(result.values());
+        return TextProviderRegistrySupport.mergeUniqueById(
+                providers, runtimeExtensions.dictionaryProviders(), DictionaryProvider::id);
     }
 
 }

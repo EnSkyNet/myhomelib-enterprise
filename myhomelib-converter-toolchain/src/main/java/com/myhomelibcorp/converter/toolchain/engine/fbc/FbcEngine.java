@@ -3,9 +3,9 @@ package com.myhomelibcorp.converter.toolchain.engine.fbc;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.converter.toolchain.*;
 import com.myhomelibcorp.converter.toolchain.discovery.ConverterToolRegistry;
+import com.myhomelibcorp.converter.toolchain.engine.ExternalConversionEngineSupport;
 import com.myhomelibcorp.converter.toolchain.fs.ConversionPathSafety;
 import com.myhomelibcorp.converter.toolchain.discovery.ToolInstallation;
-import com.myhomelibcorp.converter.toolchain.process.ExternalToolRequest;
 import com.myhomelibcorp.converter.toolchain.process.ExternalToolResult;
 import com.myhomelibcorp.converter.toolchain.process.ExternalToolRunner;
 import org.slf4j.Logger;
@@ -14,8 +14,8 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.BooleanSupplier;
 
 @Component
@@ -59,19 +59,24 @@ public class FbcEngine implements ConversionEngine {
                 stagedFb2 = fb2ZipExtractor.extract(source, target.getParent(), cancelled);
                 actualSource = stagedFb2;
             }
-            int timeout = boundedTimeout(settings.getInt("converter.toolchain.fbc.timeoutSeconds", 300));
-            ExternalToolResult result = runner.run(new ExternalToolRequest(
+            int timeout = ExternalConversionEngineSupport.timeoutSeconds(
+                    settings, "converter.toolchain.fbc.timeoutSeconds", 300);
+            log.info("FBC_START executable='{}' source={} target={} timeoutSeconds={} inputBytes={}",
+                    installation.executable(), step.sourceFormat(), step.targetFormat(), timeout,
+                    ExternalConversionEngineSupport.sizeOrUnknown(actualSource));
+            ExternalToolResult result = ExternalConversionEngineSupport.run(
+                    runner,
                     commands.build(installation.executable(), actualSource, target, step.targetFormat()),
-                    target.getParent(), Duration.ofSeconds(timeout), 256 * 1024, cancelled, target, maxOutputBytes));
+                    target.getParent(), timeout, cancelled, target, maxOutputBytes);
+            log.info("FBC_DONE executable='{}' exitCode={} durationMs={} outputBytes={}",
+                    installation.executable(), result.exitCode(), result.durationMs(),
+                    ExternalConversionEngineSupport.sizeOrUnknown(target));
             log.debug("fb2cng conversion {} -> {} exited {}: {}", step.sourceFormat(), step.targetFormat(),
                     result.exitCode(), result.mergedOutput());
-            if (result.exitCode() != 0) {
-                throw new ConversionToolchainException(classify(result.mergedOutput()),
-                        "fb2cng conversion failed with exit code " + result.exitCode());
-            }
-            try { ConversionPathSafety.requireSafeRegularFile(target, "fb2cng output"); }
-            catch (Exception unsafe) { throw new ConversionToolchainException(ConversionFailureKind.OUTPUT_INVALID, "fb2cng produced an unsafe output", unsafe); }
-            return new ConversionStepResult(step, target, result.durationMs(), size(target));
+            ExternalConversionEngineSupport.requireSuccessful(result, "fb2cng", this::classify);
+            ExternalConversionEngineSupport.requireSafeOutput(target, "fb2cng output", "fb2cng");
+            return new ConversionStepResult(step, target, result.durationMs(),
+                    ExternalConversionEngineSupport.sizeOrUnknown(target));
         } finally {
             if (stagedFb2 != null) {
                 try { Files.deleteIfExists(stagedFb2); } catch (Exception cleanupFailure) {
@@ -82,7 +87,7 @@ public class FbcEngine implements ConversionEngine {
     }
 
     private ConversionFailureKind classify(String output) {
-        String lower = output == null ? "" : output.toLowerCase();
+        String lower = output == null ? "" : output.toLowerCase(Locale.ROOT);
         if (lower.contains("unsupported output format") || lower.contains("not supported")) {
             return ConversionFailureKind.UNSUPPORTED;
         }
@@ -92,6 +97,4 @@ public class FbcEngine implements ConversionEngine {
         return ConversionFailureKind.ENGINE_CRASH;
     }
 
-    private int boundedTimeout(int value) { return Math.max(10, Math.min(3600, value)); }
-    private long size(Path path) { try { return Files.size(path); } catch (Exception ignored) { return -1; } }
 }

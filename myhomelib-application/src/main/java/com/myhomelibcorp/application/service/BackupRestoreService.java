@@ -7,6 +7,7 @@ import com.myhomelibcorp.shared.util.Sha256Support;
 import com.myhomelibcorp.application.content.indexing.ContentIndexingQueueService;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.application.util.SqliteSidecarSupport;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 
 import com.myhomelibcorp.application.port.out.backup.CollectionBackupPort;
@@ -336,7 +337,7 @@ public class BackupRestoreService {
             if (previousExisted) {
                 previousHash = SafeFilePublication.sha256(safeTarget, "Restore previous live database");
             }
-            deleteSqliteSidecars(safeTarget);
+            SqliteSidecarSupport.delete(safeTarget);
             if (previousExisted) {
                 SafeFilePublication.moveNoReplace(safeTarget, previousDb, "Restore previous database detach");
                 String detachedHash = SafeFilePublication.sha256(previousDb, "Restore previous database");
@@ -383,7 +384,7 @@ public class BackupRestoreService {
                 SafeFilePublication.removeIfOwned(
                         swap.previousDb(), swap.previousHash(), "Restore previous database commit cleanup");
             }
-            deleteSqliteSidecars(swap.previousDb());
+            SqliteSidecarSupport.delete(swap.previousDb());
         } catch (IOException cleanupError) {
             // Pending is already gone, therefore a leftover .restore.previous is cleanup evidence
             // from a committed Restore. Never delete it unless ownership is still provable.
@@ -401,7 +402,7 @@ public class BackupRestoreService {
             if (swap.installedHash() != null && Files.exists(swap.targetDb(), LinkOption.NOFOLLOW_LINKS)) {
                 SafeFilePublication.removeIfOwned(
                         swap.targetDb(), swap.installedHash(), "Restore rollback installed database");
-                deleteSqliteSidecars(swap.targetDb());
+                SqliteSidecarSupport.delete(swap.targetDb());
             }
             if (swap.previousExisted()) {
                 if (!Files.exists(swap.previousDb(), LinkOption.NOFOLLOW_LINKS)) {
@@ -454,13 +455,7 @@ public class BackupRestoreService {
         }
     }
 
-    private static void deleteSqliteSidecars(Path database) throws IOException {
-        if (database == null) return;
-        SafeFilePublication.deleteSafeRegularFileIfExists(
-                Path.of(database.toString() + "-wal"), "SQLite WAL sidecar cleanup");
-        SafeFilePublication.deleteSafeRegularFileIfExists(
-                Path.of(database.toString() + "-shm"), "SQLite SHM sidecar cleanup");
-    }
+
 
     private record RestoreSwap(Path targetDb, Path previousDb, Path pendingMarker, boolean previousExisted,
                                String previousHash, String installedHash, String markerHash, String stagedHash) { }

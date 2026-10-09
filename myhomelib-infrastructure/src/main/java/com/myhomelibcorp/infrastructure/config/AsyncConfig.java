@@ -25,6 +25,8 @@ import java.util.Map;
 @Slf4j
 public class AsyncConfig {
 
+    static final int IDLE_THREAD_SECONDS = 30;
+
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
     private ThreadPoolTaskExecutor taskExecutor;
     private ThreadPoolTaskExecutor ioExecutor;
@@ -82,13 +84,15 @@ public class AsyncConfig {
         executor.setCorePoolSize(core);
         executor.setMaxPoolSize(max);
         executor.setQueueCapacity(queueCapacity);
+        executor.setKeepAliveSeconds(IDLE_THREAD_SECONDS);
+        executor.setAllowCoreThreadTimeOut(true);
         executor.setThreadNamePrefix(threadPrefix);
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(shutdownSeconds);
         executor.setRejectedExecutionHandler((task, pool) -> reject(role, pool));
         executor.initialize();
-        log.info("Executor role={} initialized: core={}, max={}, queueCapacity={}, prefix={}",
-                role, core, max, queueCapacity, threadPrefix);
+        log.info("Executor role={} initialized: core={}, max={}, queueCapacity={}, idleTimeout={}s, prefix={}",
+                role, core, max, queueCapacity, IDLE_THREAD_SECONDS, threadPrefix);
         return executor;
     }
 

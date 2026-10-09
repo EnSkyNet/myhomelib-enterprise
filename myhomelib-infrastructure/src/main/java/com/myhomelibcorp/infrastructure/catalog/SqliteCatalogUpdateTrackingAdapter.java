@@ -11,6 +11,7 @@ import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.infrastructure.persistence.CollectionTransactionExecutor;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteBusyRetryExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -98,7 +99,7 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
         if (session == null || books == null || books.isEmpty()) return;
         String detectedAt = now();
 
-        if (!session.initialBaseline()) {
+        if (!session.initialBaseline() && hasAnyLocalBooks()) {
             jdbc().batchUpdate("""
                     DELETE FROM catalog_update_events
                      WHERE book_id = ? AND update_type = 'UPDATED_DOWNLOADED_BOOK'
@@ -151,7 +152,7 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
 
         }
 
-        if (!session.initialBaseline()) {
+        if (!session.initialBaseline() && hasFollowedAuthors()) {
             jdbc().batchUpdate("""
                     INSERT INTO catalog_update_events(
                         book_id, update_type, source_id, detected_revision,
@@ -208,115 +209,85 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
     }
 
     private void upsertCatalogState(CatalogSyncSession session, List<CatalogBookSnapshot> books, String detectedAt) {
-        if (session.initialBaseline()) {
-            // Initial online catalogs can contain 700k+ rows. The previous INSERT ... SELECT
-            // executed a primary-key lookup in books for every catalog_book_state row. Resolve
-            // the tiny subset of local books in bounded set queries once, then use direct VALUES.
-            Set<String> localBookIds = findLocalBookIds(books);
-            jdbc().batchUpdate("""
-                    INSERT INTO catalog_book_state(
-                        book_id, source_id, source_book_key, catalog_revision, catalog_fingerprint,
-                        catalog_file_name, catalog_folder, catalog_archive_entry, catalog_file_size,
-                        downloaded_revision, downloaded_fingerprint, downloaded_baseline_at,
-                        first_seen_revision, last_seen_revision
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(book_id) DO UPDATE SET
-                        source_id = excluded.source_id,
-                        source_book_key = excluded.source_book_key,
-                        catalog_revision = excluded.catalog_revision,
-                        catalog_fingerprint = excluded.catalog_fingerprint,
-                        catalog_file_name = excluded.catalog_file_name,
-                        catalog_folder = excluded.catalog_folder,
-                        catalog_archive_entry = excluded.catalog_archive_entry,
-                        catalog_file_size = excluded.catalog_file_size,
-                        last_seen_revision = excluded.last_seen_revision
-                    """, books, 5000, (ps, book) -> {
-                boolean local = localBookIds.contains(book.bookId());
-                int i = 1;
-                ps.setString(i++, book.bookId());
-                ps.setString(i++, session.sourceId());
-                ps.setString(i++, book.sourceBookKey());
-                ps.setLong(i++, session.sourceRevision());
-                ps.setString(i++, book.catalogFingerprint());
-                ps.setString(i++, book.fileName());
-                ps.setString(i++, book.folder());
-                ps.setString(i++, book.archiveEntry());
-                ps.setLong(i++, book.fileSize());
-                if (local) {
-                    ps.setLong(i++, session.sourceRevision());
-                    ps.setString(i++, book.catalogFingerprint());
-                    ps.setString(i++, detectedAt);
-                } else {
-                    ps.setObject(i++, null);
-                    ps.setObject(i++, null);
-                    ps.setObject(i++, null);
-                }
-                ps.setLong(i++, session.sourceRevision());
-                ps.setLong(i, session.sourceRevision());
-            });
-        } else {
-            jdbc().batchUpdate("""
-                    INSERT INTO catalog_book_state(
-                        book_id, source_id, source_book_key, catalog_revision, catalog_fingerprint,
-                        catalog_file_name, catalog_folder, catalog_archive_entry, catalog_file_size,
-                        downloaded_revision, downloaded_fingerprint, downloaded_baseline_at,
-                        first_seen_revision, last_seen_revision
-                    )
-                    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                           CASE WHEN b.local = 1 THEN ? ELSE NULL END,
-                           CASE WHEN b.local = 1 THEN ? ELSE NULL END,
-                           CASE WHEN b.local = 1 THEN ? ELSE NULL END,
-                           ?, ?
-                      FROM books b WHERE b.id = ?
-                    ON CONFLICT(book_id) DO UPDATE SET
-                        source_id = excluded.source_id,
-                        source_book_key = excluded.source_book_key,
-                        catalog_revision = excluded.catalog_revision,
-                        catalog_fingerprint = excluded.catalog_fingerprint,
-                        catalog_file_name = excluded.catalog_file_name,
-                        catalog_folder = excluded.catalog_folder,
-                        catalog_archive_entry = excluded.catalog_archive_entry,
-                        catalog_file_size = excluded.catalog_file_size,
-                        last_seen_revision = excluded.last_seen_revision
-                    """, books, 1000, (ps, book) -> {
-                int i = 1;
-                ps.setString(i++, book.bookId());
-                ps.setString(i++, session.sourceId());
-                ps.setString(i++, book.sourceBookKey());
-                ps.setLong(i++, session.sourceRevision());
-                ps.setString(i++, book.catalogFingerprint());
-                ps.setString(i++, book.fileName());
-                ps.setString(i++, book.folder());
-                ps.setString(i++, book.archiveEntry());
-                ps.setLong(i++, book.fileSize());
+        // Avoid INSERT ... SELECT FROM books for every row. On 20k+ delta packages that
+        // correlated lookup dominated import time. Resolve the (normally tiny) local subset
+        // once per batch and use direct VALUES; ON CONFLICT deliberately leaves downloaded_*
+        // untouched for existing rows.
+        Set<String> localBookIds = findLocalBookIds(books);
+        jdbc().batchUpdate("""
+                INSERT INTO catalog_book_state(
+                    book_id, source_id, source_book_key, catalog_revision, catalog_fingerprint,
+                    catalog_file_name, catalog_folder, catalog_archive_entry, catalog_file_size,
+                    downloaded_revision, downloaded_fingerprint, downloaded_baseline_at,
+                    first_seen_revision, last_seen_revision
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(book_id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    source_book_key = excluded.source_book_key,
+                    catalog_revision = excluded.catalog_revision,
+                    catalog_fingerprint = excluded.catalog_fingerprint,
+                    catalog_file_name = excluded.catalog_file_name,
+                    catalog_folder = excluded.catalog_folder,
+                    catalog_archive_entry = excluded.catalog_archive_entry,
+                    catalog_file_size = excluded.catalog_file_size,
+                    last_seen_revision = excluded.last_seen_revision
+                """, books, 10000, (ps, book) -> {
+            boolean local = localBookIds.contains(book.bookId());
+            int i = 1;
+            ps.setString(i++, book.bookId());
+            ps.setString(i++, session.sourceId());
+            ps.setString(i++, book.sourceBookKey());
+            ps.setLong(i++, session.sourceRevision());
+            ps.setString(i++, book.catalogFingerprint());
+            ps.setString(i++, book.fileName());
+            ps.setString(i++, book.folder());
+            ps.setString(i++, book.archiveEntry());
+            ps.setLong(i++, book.fileSize());
+            if (local) {
                 ps.setLong(i++, session.sourceRevision());
                 ps.setString(i++, book.catalogFingerprint());
                 ps.setString(i++, detectedAt);
-                ps.setLong(i++, session.sourceRevision());
-                ps.setLong(i++, session.sourceRevision());
-                ps.setString(i, book.bookId());
-            });
-        }
+            } else {
+                ps.setObject(i++, null);
+                ps.setObject(i++, null);
+                ps.setObject(i++, null);
+            }
+            ps.setLong(i++, session.sourceRevision());
+            ps.setLong(i, session.sourceRevision());
+        });
+    }
+
+    private boolean hasAnyLocalBooks() {
+        Integer value = jdbc().queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM books WHERE local = 1 LIMIT 1)", Integer.class);
+        return value != null && value != 0;
+    }
+
+    private boolean hasFollowedAuthors() {
+        Integer value = jdbc().queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM followed_authors LIMIT 1)", Integer.class);
+        return value != null && value != 0;
     }
 
     @Override
     public void markDownloadedBaseline(BookId bookId) {
         if (bookId == null) return;
         String now = now();
-        busyRetry.run("download baseline update", () -> {
-            jdbc().update("""
-                    UPDATE catalog_book_state
-                       SET downloaded_revision = catalog_revision,
-                           downloaded_fingerprint = catalog_fingerprint,
-                           downloaded_baseline_at = ?
-                     WHERE book_id = ?
-                    """, now, bookId.asString());
-            jdbc().update("""
-                    UPDATE catalog_update_events
-                       SET acknowledged_at = ?
-                     WHERE book_id = ? AND acknowledged_at IS NULL
-                    """, now, bookId.asString());
-        });
+        busyRetry.run("download baseline update", () ->
+                CollectionTransactionExecutor.run(collectionManager, () -> {
+                    jdbc().update("""
+                            UPDATE catalog_book_state
+                               SET downloaded_revision = catalog_revision,
+                                   downloaded_fingerprint = catalog_fingerprint,
+                                   downloaded_baseline_at = ?
+                             WHERE book_id = ?
+                            """, now, bookId.asString());
+                    jdbc().update("""
+                            UPDATE catalog_update_events
+                               SET acknowledged_at = ?
+                             WHERE book_id = ? AND acknowledged_at IS NULL
+                            """, now, bookId.asString());
+                }));
     }
 
     @Override
@@ -335,18 +306,21 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
     public void clearDownloadedBaseline(BookId bookId) {
         if (bookId == null) return;
         String now = now();
-        jdbc().update("""
-                UPDATE catalog_book_state
-                   SET downloaded_revision = NULL,
-                       downloaded_fingerprint = NULL,
-                       downloaded_baseline_at = NULL
-                 WHERE book_id = ?
-                """, bookId.asString());
-        jdbc().update("""
-                UPDATE catalog_update_events
-                   SET acknowledged_at = ?
-                 WHERE book_id = ? AND acknowledged_at IS NULL
-                """, now, bookId.asString());
+        busyRetry.run("download baseline clear", () ->
+                CollectionTransactionExecutor.run(collectionManager, () -> {
+                    jdbc().update("""
+                            UPDATE catalog_book_state
+                               SET downloaded_revision = NULL,
+                                   downloaded_fingerprint = NULL,
+                                   downloaded_baseline_at = NULL
+                             WHERE book_id = ?
+                            """, bookId.asString());
+                    jdbc().update("""
+                            UPDATE catalog_update_events
+                               SET acknowledged_at = ?
+                             WHERE book_id = ? AND acknowledged_at IS NULL
+                            """, now, bookId.asString());
+                }));
     }
 
     @Override

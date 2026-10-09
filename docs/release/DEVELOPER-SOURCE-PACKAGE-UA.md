@@ -10,7 +10,7 @@ MyHomeLib 8.0.0 — архів розробника
 - JavaFX FXML/CSS/локалізації;
 - Plugin API, sample plugins і вихідний код Calibre Converter Plugin;
 - WebDAV/Conflict Review/ШІ/PDF Reader код;
-- Maven pom.xml, wrapper і bundled Maven 3.9.6;
+- Maven `pom.xml` і integrity-checked wrapper, зафіксований на Maven 3.9.16; сам Maven distribution не вбудовується;
 - build/package/release/smoke-скрипти;
 - tools, архітектурну та технічну документацію.
 

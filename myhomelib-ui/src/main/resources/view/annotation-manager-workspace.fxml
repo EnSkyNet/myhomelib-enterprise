@@ -61,6 +61,7 @@
                 <Button text="ui.annotations.export_csv" onAction="#exportFilteredCsv"/>
                 <Button text="ui.annotations.export_rich" onAction="#exportRich"/>
                 <Button text="ui.annotations.knowledge_export" onAction="#exportKnowledgeMarkdown"/>
+                <Button text="ui.annotations.readwise_export" onAction="#exportReadwise"/>
                 <Button text="ui.annotations.digest" onAction="#exportDigest"/>
                 <Region prefWidth="16"/>
                 <Button fx:id="previousButton" text="ui.annotations.previous" onAction="#previousPage" disable="true"/>

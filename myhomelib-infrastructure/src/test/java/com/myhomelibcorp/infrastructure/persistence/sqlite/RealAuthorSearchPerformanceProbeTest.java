@@ -1,8 +1,8 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
+import com.myhomelibcorp.infrastructure.config.DataSourceConfig;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;
-import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -24,16 +24,7 @@ class RealAuthorSearchPerformanceProbeTest {
     void realSidebarAuthorSearchStaysInteractive() {
         Path db = Path.of(System.getProperty("mhl.real.db")).toAbsolutePath().normalize();
         assertThat(db).isRegularFile();
-
-        HikariConfig hc = new HikariConfig();
-        hc.setJdbcUrl("jdbc:sqlite:" + db);
-        hc.setDriverClassName("org.sqlite.JDBC");
-        hc.setMaximumPoolSize(2);
-        hc.setMinimumIdle(1);
-        hc.setConnectionInitSql("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=15000; PRAGMA synchronous=NORMAL; "
-                + "PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768; PRAGMA mmap_size=67108864;");
-
-        try (HikariDataSource ds = new HikariDataSource(hc)) {
+        try (HikariDataSource ds = new DataSourceConfig().createDataSourceForPath(db.toString())) {
             JdbcTemplate jdbc = new JdbcTemplate(ds);
             CollectionManager manager = mock(CollectionManager.class);
             when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);

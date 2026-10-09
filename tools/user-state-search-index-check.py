@@ -19,13 +19,16 @@ need('beginAtomicUpdate()' in sync and 'rollbackAtomicUpdate()' in sync and 'com
 need('rebuildIndex()' in sync and 'synchronizeSafelyNow' in sync,
      'committed-state selective failure lacks full-rebuild fallback')
 
+batch_support=read('myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/book/BookBatchEditSupport.java')
+need('mutation.accept(repository)' in batch_support and 'searchIndexSynchronizer.synchronizeAfterCommit(bookIds)' in batch_support,
+     'shared batch edit support no longer couples committed DB mutations to Lucene refresh')
 for rel, mutation in [
  ('myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/book/UpdateRateBatchUseCase.java','updateRateBatch'),
  ('myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/book/UpdateProgressBatchUseCase.java','updateProgressBatch'),
  ('myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/book/MarkAsReadBatchUseCase.java','updateProgressBatch')]:
     t=read(rel)
     need(mutation in t, f'{rel} lost DB mutation')
-    need('synchronizeAfterCommit(bookIds)' in t, f'{rel} does not invalidate Lucene after committed user-state change')
+    need('batchEdit.execute(bookIds' in t, f'{rel} bypasses shared committed user-state/Lucene synchronization')
 
 download=read('myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/download/DownloadBookUseCase.java')
 need('updateStorage' in download, 'DownloadBookUseCase lost local-storage mutation')

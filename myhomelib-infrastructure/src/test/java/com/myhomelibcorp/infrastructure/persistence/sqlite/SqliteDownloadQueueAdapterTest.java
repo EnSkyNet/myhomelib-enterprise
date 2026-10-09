@@ -56,6 +56,21 @@ class SqliteDownloadQueueAdapterTest {
     }
 
     @Test
+    void transitionsAreSingleStatementUpsertsWhenEntryDoesNotExist() {
+        SqliteDownloadQueueAdapter queue = adapter();
+
+        queue.markInProgress("c1", "direct-progress");
+        var inProgress = queue.find("c1", "direct-progress").orElseThrow();
+        assertThat(inProgress.status()).isEqualTo(DownloadQueueStatus.IN_PROGRESS);
+        assertThat(inProgress.retryCount()).isEqualTo(1);
+
+        queue.markCompleted("c1", "direct-complete", temp.resolve("done.fb2"));
+        var completed = queue.find("c1", "direct-complete").orElseThrow();
+        assertThat(completed.status()).isEqualTo(DownloadQueueStatus.COMPLETED);
+        assertThat(completed.downloadDestination()).endsWith("done.fb2");
+    }
+
+    @Test
     void startupRecoveryConvertsInterruptedWorkToPending() {
         SqliteDownloadQueueAdapter first = adapter();
         first.markPending("c1", "b1", "book.fb2", "book.fb2.part");

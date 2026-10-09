@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 
 @Service
@@ -229,6 +230,7 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
             CompletableFuture<T> future = executorPort.submit(task);
             return future.whenComplete((value, failure) -> {
                 if (failure == null) lease.markCompleted("");
+                else if (isCancellation(failure)) lease.markCancelled(failure.getMessage());
                 else lease.markFailed(failure);
                 lease.close();
             });
@@ -237,6 +239,17 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
             lease.close();
             return CompletableFuture.failedFuture(schedulingFailure);
         }
+    }
+
+    private static boolean isCancellation(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof CancellationException) return true;
+            Throwable cause = current.getCause();
+            if (cause == current) break;
+            current = cause;
+        }
+        return false;
     }
 
     private List<NavigationNodeDto> loadDownloadedAuthors(BookFilterSpec filter) {

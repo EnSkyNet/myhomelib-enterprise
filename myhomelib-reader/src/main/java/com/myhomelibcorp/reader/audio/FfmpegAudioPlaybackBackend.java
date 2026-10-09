@@ -55,7 +55,7 @@ public final class FfmpegAudioPlaybackBackend implements AudioPlaybackBackend {
     @Override public Playback start(Path path, long startMillis, double rate) throws IOException {
         Path source = requireLocalAudio(path);
         String safeFfplay = ExecutablePathSafety.resolve(ffplay, "ffplay executable").toString();
-        double safeRate = Math.max(0.5, Math.min(2.0, rate));
+        double safeRate = Double.isFinite(rate) ? Math.max(0.5, Math.min(2.0, rate)) : 1.0;
         List<String> argv = new ArrayList<>(List.of(safeFfplay, "-nodisp", "-autoexit", "-loglevel", "error"));
         if (startMillis > 0) argv.addAll(List.of("-ss", String.format(Locale.ROOT, "%.3f", startMillis / 1000.0)));
         if (Math.abs(safeRate - 1.0) > 0.0001) argv.addAll(List.of("-af", String.format(Locale.ROOT, "atempo=%.3f", safeRate)));
@@ -123,13 +123,32 @@ public final class FfmpegAudioPlaybackBackend implements AudioPlaybackBackend {
     }
 
     private static double decimal(String value) {
-        try { return Double.parseDouble(value.trim()); }
-        catch (RuntimeException ignored) { return -1; }
+        try {
+            double parsed = Double.parseDouble(value.trim());
+            return Double.isFinite(parsed) ? parsed : -1;
+        } catch (RuntimeException ignored) {
+            return -1;
+        }
     }
     private static long secondsToMillis(double seconds) { return Math.max(0L, Math.round(seconds * 1000.0)); }
     private static String compact(String text) {
         String value = text == null ? "" : text.replaceAll("\\s+", " ").trim();
-        return value.length() <= 300 ? value : value.substring(0, 300);
+        if (value.length() <= 300) return value;
+        int end = 300;
+        if (Character.isHighSurrogate(value.charAt(end - 1)) && Character.isLowSurrogate(value.charAt(end))) {
+            end--;
+        }
+        while (end > 0 && end < value.length() && isCombiningMark(value.codePointAt(end))) {
+            end -= Character.charCount(value.codePointBefore(end));
+        }
+        return value.substring(0, end);
+    }
+
+    private static boolean isCombiningMark(int codePoint) {
+        int type = Character.getType(codePoint);
+        return type == Character.NON_SPACING_MARK
+                || type == Character.COMBINING_SPACING_MARK
+                || type == Character.ENCLOSING_MARK;
     }
     private static String requireCommand(String command) {
         if (command == null || command.isBlank()) throw new IllegalArgumentException("Command is required");

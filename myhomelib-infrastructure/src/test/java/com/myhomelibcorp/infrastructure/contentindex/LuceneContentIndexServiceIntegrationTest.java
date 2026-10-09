@@ -60,6 +60,25 @@ class LuceneContentIndexServiceIntegrationTest {
     }
 
     @Test
+    void previewMatchOffsetUsesOriginalChapterCoordinatesBeforeWhitespaceAndUnicodeNormalization() {
+        LuceneContentIndexService service = service();
+        String text = "Aİ   needle tail";
+        long chapterStart = 0L;
+        ContentAnchor anchor = new ContentAnchor("chapter-1:p1", "chapter-1", "p1", chapterStart, text.length());
+        ExtractedChapter chapter = new ExtractedChapter(
+                "chapter-1", "Unicode chapter", chapterStart, text.length(), text, List.of(anchor));
+        service.replaceArtifact("c1", new ContentIndexEntry(
+                "book-unicode", "artifact-unicode", new ExtractedContent("artifact-unicode", "txt", text, List.of(chapter))));
+
+        var page = service.search(ContentIndexQuery.allBooks("c1", "needle", 10));
+
+        assertThat(page.hits()).singleElement().satisfies(hit -> {
+            assertThat(hit.matchOffset()).isEqualTo(chapterStart + text.indexOf("needle"));
+            assertThat(hit.snippet()).contains("Aİ needle tail");
+        });
+    }
+
+    @Test
     void replaceDeleteArtifactAndDeleteBookAreIdempotent() {
         LuceneContentIndexService service = service();
         service.replaceArtifact("c1", entry("book-1", "artifact-1", "One", "oldterm only"));
@@ -99,6 +118,29 @@ class LuceneContentIndexServiceIntegrationTest {
 
         assertThat(Files.readString(sentinel)).isEqualTo("metadata-index-must-stay-unchanged");
         assertThat(Files.isDirectory(temp.resolve("content-index").resolve("c1"))).isTrue();
+    }
+
+    @Test
+    void rebuildDoesNotClearApplicationOwnedStaleMarker() {
+        LuceneContentIndexService service = service();
+        String collectionId = "rebuild-stale-owned-by-orchestration";
+        try {
+            service.markStale(collectionId);
+            service.rebuild(collectionId, List.of(entry("book-1", "artifact-1", "One", "needle")));
+
+            assertThat(service.health(collectionId).state()).isEqualTo(
+                    com.myhomelibcorp.application.content.index.ContentIndexHealth.State.STALE);
+            assertThatThrownBy(() -> service.search(ContentIndexQuery.allBooks(collectionId, "needle", 10)))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("stale");
+
+            service.markFresh(collectionId);
+            assertThat(service.health(collectionId).state()).isEqualTo(
+                    com.myhomelibcorp.application.content.index.ContentIndexHealth.State.READY);
+            assertThat(service.search(ContentIndexQuery.allBooks(collectionId, "needle", 10)).total()).isEqualTo(1);
+        } finally {
+            service.markFresh(collectionId);
+        }
     }
 
     @Test

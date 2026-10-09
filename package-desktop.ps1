@@ -12,26 +12,39 @@ if ([string]::IsNullOrWhiteSpace($BuildVersion)) { throw "Cannot determine appli
 $Version = if (-not [string]::IsNullOrWhiteSpace($PackageVersion)) { $PackageVersion } elseif ($env:MHL_PACKAGE_VERSION) { $env:MHL_PACKAGE_VERSION } else { $BuildVersion }
 
 if ($env:MHL_SKIP_BUILD -ne "1") {
-    & .\tools\invoke-maven.ps1 -pl myhomelib-bootstrap -am package -DskipTests -Pproduction
+    & .\tools\invoke-maven.ps1 -pl myhomelib-bootstrap,myhomelib-updater -am package -DskipTests -Pproduction
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 & .\tools\prepare-runtime-tools.ps1
 
 $jar = "myhomelib-bootstrap\target\myhomelib-bootstrap-$BuildVersion.jar"
+$updaterJar = "myhomelib-updater\target\myhomelib-updater-$BuildVersion.jar"
 if (-not (Test-Path $jar -PathType Leaf)) { throw "Missing $jar" }
+if (-not (Test-Path $updaterJar -PathType Leaf)) { throw "Missing $updaterJar" }
 $stage = "myhomelib-bootstrap\target\jpackage-input"
+$content = "myhomelib-bootstrap\target\jpackage-content"
+$appContent = Join-Path $content "app"
 $dest = "dist"
-Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force $stage, $dest | Out-Null
+Remove-Item -Recurse -Force $stage, $content -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $stage, $appContent, $dest | Out-Null
 Copy-Item $jar $stage
 
-$toolsStage = Join-Path $stage "tools"
+$toolsStage = Join-Path $appContent "tools"
 $converterStage = Join-Path $toolsStage "converters"
-New-Item -ItemType Directory -Force (Join-Path $toolsStage "validators"), (Join-Path $converterStage "libmobi") | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $toolsStage "validators"), (Join-Path $toolsStage "updater"), $converterStage | Out-Null
 Copy-Item -Recurse -Force "tools\validators\epubcheck" (Join-Path $toolsStage "validators\epubcheck")
-Copy-Item -Force "tools\converters\libmobi\mobitool.exe" (Join-Path $converterStage "libmobi\mobitool.exe")
-Copy-Item -Force "tools\converters\libmobi\build-src\COPYING" (Join-Path $converterStage "libmobi\COPYING")
+Copy-Item -Force $updaterJar (Join-Path $toolsStage "updater\$(Split-Path $updaterJar -Leaf)")
+$libmobiExe = "tools\converters\libmobi\mobitool.exe"
+$libmobiRuntimeLicense = "tools\converters\libmobi\COPYING"
+$libmobiSourceLicense = "tools\converters\libmobi\build-src\COPYING"
+$libmobiLicense = if (Test-Path $libmobiRuntimeLicense -PathType Leaf) { $libmobiRuntimeLicense } else { $libmobiSourceLicense }
+if ((Test-Path $libmobiExe -PathType Leaf) -and (Test-Path $libmobiLicense -PathType Leaf)) {
+    $libmobiStage = Join-Path $converterStage "libmobi"
+    New-Item -ItemType Directory -Force $libmobiStage | Out-Null
+    Copy-Item -Force $libmobiExe (Join-Path $libmobiStage "mobitool.exe")
+    Copy-Item -Force $libmobiLicense (Join-Path $libmobiStage "COPYING")
+}
 
 # Optional compatibility pack.  Keep upstream directory names so licenses/resources
 # stay next to the executable; runtime discovery understands these layouts.
@@ -54,6 +67,8 @@ if ($Type -eq "app-image") {
     Remove-Item -Recurse -Force "$dest\MyHomeLib" -ErrorAction SilentlyContinue
 }
 
+$runtimeModules = "java.base,java.desktop,java.instrument,java.management,java.net.http,jdk.management,java.prefs,java.scripting,java.sql.rowset,jdk.compiler,jdk.httpserver,jdk.incubator.vector,jdk.jfr,jdk.unsupported,jdk.charsets,jdk.crypto.ec,jdk.localedata,jdk.zipfs"
+
 $args = @(
     "--type", $Type,
     "--name", "MyHomeLib",
@@ -62,8 +77,15 @@ $args = @(
     "--description", "MyHomeLib Enterprise library manager",
     "--input", $stage,
     "--main-jar", (Split-Path $jar -Leaf),
+    "--app-content", $appContent,
     "--dest", $dest,
     "--java-options", "-Dfile.encoding=UTF-8",
+    "--java-options", "-Dspring.profiles.active=prod",
+    "--java-options", "-Xms32m",
+    "--java-options", "-Xmx1024m",
+    "--java-options", "-XX:MinHeapFreeRatio=10",
+    "--java-options", "-XX:MaxHeapFreeRatio=20",
+    "--add-modules", $runtimeModules,
     "--jlink-options", "--strip-debug --no-man-pages --no-header-files"
 )
 

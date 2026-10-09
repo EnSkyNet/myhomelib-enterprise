@@ -3,6 +3,7 @@ package com.myhomelibcorp.reader.format.zip;
 import com.myhomelibcorp.reader.api.*;
 import com.myhomelibcorp.reader.format.fb2.Fb2StreamingParser;
 import com.myhomelibcorp.reader.format.epub.EpubParser;
+import com.myhomelibcorp.reader.format.mobi.MobiParser;
 import com.myhomelibcorp.reader.format.txt.TxtParser;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +44,7 @@ public class ZipParser implements BookParser {
                     log.info("✅ ZIP розпарсено з кодуванням: {}", charset);
                     return result;
                 }
+                closeDocument(result);
             } catch (InterruptedIOException e) {
                 throw e;
             } catch (Exception e) {
@@ -95,12 +97,14 @@ public class ZipParser implements BookParser {
                         totalExpandedBytes += expanded;
 
                         BookSource innerSource = new FileBookSource(extractedBook, source.id() + "!" + entry.getName());
-                        BookParser parser = name.endsWith(".epub") ? new EpubParser() :
-                                (name.endsWith(".txt") || name.endsWith(".text") || name.endsWith(".md")) ? new TxtParser() :
-                                new Fb2StreamingParser();
+                        BookParser parser = parserForEntry(name);
                         try {
                             ReaderDocument document = parser.parse(innerSource, options);
-                            if (document != null && !document.isEmpty()) parsedBooks.add(document);
+                            if (document != null && !document.isEmpty()) {
+                                parsedBooks.add(document);
+                            } else {
+                                closeDocument(document);
+                            }
                         } catch (InterruptedIOException e) {
                             throw e;
                         } catch (Exception e) {
@@ -164,10 +168,12 @@ public class ZipParser implements BookParser {
 
     private static void closeDocuments(List<ReaderDocument> documents) {
         if (documents == null) return;
-        for (ReaderDocument document : documents) {
-            if (document != null && document.resources() instanceof AutoCloseable closeable) {
-                try { closeable.close(); } catch (Exception ignored) { }
-            }
+        for (ReaderDocument document : documents) closeDocument(document);
+    }
+
+    private static void closeDocument(ReaderDocument document) {
+        if (document != null && document.resources() instanceof AutoCloseable closeable) {
+            try { closeable.close(); } catch (Exception ignored) { }
         }
     }
 
@@ -182,6 +188,19 @@ public class ZipParser implements BookParser {
             if (maxBytes > 0 && total > maxBytes) throw new IOException("ZIP source exceeds Reader safety limit");
             out.write(buffer, 0, read);
         }
+    }
+
+
+    private static BookParser parserForEntry(String lowerCaseName) {
+        if (lowerCaseName.endsWith(".epub")) return new EpubParser();
+        if (lowerCaseName.endsWith(".txt") || lowerCaseName.endsWith(".text") || lowerCaseName.endsWith(".md")) {
+            return new TxtParser();
+        }
+        if (lowerCaseName.endsWith(".mobi") || lowerCaseName.endsWith(".prc")
+                || lowerCaseName.endsWith(".azw") || lowerCaseName.endsWith(".azw3")) {
+            return new MobiParser();
+        }
+        return new Fb2StreamingParser();
     }
 
     private boolean isReaderBook(String name) {

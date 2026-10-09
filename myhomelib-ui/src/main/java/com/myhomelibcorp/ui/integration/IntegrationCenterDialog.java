@@ -8,6 +8,7 @@ import com.myhomelibcorp.application.sync.conflict.SyncConflictReviewSelection;
 import com.myhomelibcorp.application.extension.LocalMetadataExtractionService;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.sync.SyncConflictReviewDialog;
@@ -44,17 +45,20 @@ public final class IntegrationCenterDialog {
     private final DialogService dialogs;
     private final LocalizationService i18n;
     private final LocalMetadataExtractionService localMetadata;
+    private final FileChooserService fileChooserService;
 
     public IntegrationCenterDialog(IntegrationBackend backend,
                                    UiBackgroundExecutor background,
                                    DialogService dialogs,
                                    LocalizationService i18n,
-                                   LocalMetadataExtractionService localMetadata) {
+                                   LocalMetadataExtractionService localMetadata,
+                                   FileChooserService fileChooserService) {
         this.backend = backend;
         this.background = background;
         this.dialogs = dialogs;
         this.i18n = i18n;
         this.localMetadata = localMetadata;
+        this.fileChooserService = fileChooserService;
     }
 
     public void show(Window owner) {
@@ -68,12 +72,119 @@ public final class IntegrationCenterDialog {
         TabPane tabs = new TabPane();
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabs.getTabs().add(new Tab(UiText.text("ui.java.integration_center_dialog.a08b1eb970"), webDavPane(owner)));
+        tabs.getTabs().add(new Tab(UiText.text("ui.integration.kobo.tab"), koboPane(owner)));
+        tabs.getTabs().add(new Tab(UiText.text("ui.integration.readwise.tab"), readwisePane(owner)));
         tabs.getTabs().add(new Tab(UiText.text("ui.java.integration_center_dialog.ccecfa5e49"), pluginsPane(owner)));
         tabs.getTabs().add(new Tab(UiText.text("ui.java.integration_center_dialog.fdc40cc5d5"), aiPane(owner)));
         tabs.setPrefSize(940, 650);
         dialog.getDialogPane().setContent(tabs);
         i18n.apply(tabs);
         dialog.showAndWait();
+    }
+
+    private Node readwisePane(Window owner) {
+        PasswordField token = new PasswordField();
+        token.setPromptText(UiText.text("ui.integration.readwise.token_hint"));
+        Label status = new Label();
+        status.setWrapText(true);
+        Button save = new Button(UiText.text("common.save"));
+        save.setId("readwise-save-token");
+        Button test = new Button(UiText.text("ui.integration.readwise.test"));
+        test.setId("readwise-test");
+        Button export = new Button(UiText.text("ui.integration.readwise.export_all"));
+        export.setId("readwise-export-all");
+        Button clear = new Button(UiText.text("ui.integration.readwise.clear"));
+        clear.setId("readwise-clear-token");
+
+        Runnable refresh = () -> {
+            IntegrationBackend.ReadwiseStatus current = backend.readwiseStatus();
+            status.setText(current.secureStoreAvailable()
+                    ? UiText.text(current.configured() ? "ui.integration.readwise.configured" : "ui.integration.readwise.not_configured")
+                    + " — " + current.secureStoreBackend()
+                    : UiText.text("ui.integration.readwise.secure_store_unavailable"));
+            save.setDisable(!current.secureStoreAvailable());
+            test.setDisable(!current.configured()); export.setDisable(!current.configured()); clear.setDisable(!current.configured());
+        };
+        refresh.run();
+        save.setOnAction(e -> {
+            IntegrationBackend.Result result = backend.saveReadwiseToken(token.getText());
+            token.clear(); showResult(UiText.text("ui.integration.readwise.tab"), result); refresh.run();
+        });
+        test.setOnAction(e -> showResult(UiText.text("ui.integration.readwise.tab"), backend.testReadwise()));
+        export.setOnAction(e -> showResult(UiText.text("ui.integration.readwise.tab"), backend.exportAnnotationsToReadwise()));
+        clear.setOnAction(e -> {
+            if (!dialogs.showConfirmation(UiText.text("ui.integration.readwise.clear"),
+                    UiText.text("ui.integration.readwise.clear_confirm"), UiText.text("ui.integration.readwise.clear_confirm_detail"))) return;
+            showResult(UiText.text("ui.integration.readwise.tab"), backend.clearReadwiseToken()); refresh.run();
+        });
+        Label help = new Label(UiText.text("ui.integration.readwise.help")); help.setWrapText(true);
+        return scroll(section(help, token, new HBox(8, save, test, export, clear), new Separator(), status));
+    }
+
+    private Node koboPane(Window owner) {
+        IntegrationBackend.KoboStatus current = backend.koboStatus();
+        Label enabled = new Label();
+        Label secure = new Label();
+        Label device = new Label();
+        Label lastSync = new Label();
+        Label lastError = new Label();
+        TextArea credential = new TextArea();
+        credential.setEditable(false);
+        credential.setWrapText(true);
+        credential.setPrefRowCount(3);
+        credential.setPromptText(UiText.text("ui.integration.kobo.credential_once"));
+
+        Button enableRotate = new Button(UiText.text(current.enabled() ? "ui.integration.kobo.rotate" : "ui.integration.kobo.enable"));
+        Button copy = new Button(UiText.text("ui.integration.kobo.copy_credential"));
+        Button syncNow = new Button(UiText.text("ui.integration.kobo.sync_now"));
+        Button revoke = new Button(UiText.text("ui.integration.kobo.revoke"));
+        copy.setDisable(true);
+
+        Runnable refresh = () -> {
+            IntegrationBackend.KoboStatus status = backend.koboStatus();
+            enabled.setText(UiText.text(status.enabled() ? "ui.integration.kobo.status_enabled" : "ui.integration.kobo.status_disabled"));
+            secure.setText(status.secureStoreAvailable()
+                    ? UiText.text("ui.integration.kobo.secure_store") + status.secureStoreBackend()
+                    : UiText.text("ui.integration.kobo.secure_store_unavailable"));
+            device.setText(UiText.text("ui.integration.kobo.device_id") + (status.deviceId().isBlank() ? "—" : status.deviceId()));
+            lastSync.setText(UiText.text("ui.integration.kobo.last_sync") + (status.lastSyncAt().isBlank() ? "—" : status.lastSyncAt()));
+            lastError.setText(UiText.text("ui.integration.kobo.last_error") + (status.lastError().isBlank() ? "—" : status.lastError()));
+            enableRotate.setText(UiText.text(status.enabled() ? "ui.integration.kobo.rotate" : "ui.integration.kobo.enable"));
+            enableRotate.setDisable(!status.secureStoreAvailable());
+            revoke.setDisable(!status.enabled());
+            syncNow.setDisable(!status.enabled());
+        };
+        refresh.run();
+
+        enableRotate.setOnAction(e -> {
+            IntegrationBackend.KoboCredential issued = backend.enableOrRotateKobo();
+            showResult(UiText.text("ui.integration.kobo.tab"), issued.result());
+            if (issued.result().success() && !issued.token().isBlank()) {
+                credential.setText(issued.token());
+                copy.setDisable(false);
+            }
+            refresh.run();
+        });
+        copy.setOnAction(e -> copyText(credential.getText(), UiText.text("ui.integration.kobo.copied")));
+        syncNow.setOnAction(e -> {
+            IntegrationBackend.Result result = backend.synchronizeKoboNow();
+            showResult(UiText.text("ui.integration.kobo.tab"), result);
+            refresh.run();
+        });
+        revoke.setOnAction(e -> {
+            if (!dialogs.showConfirmation(UiText.text("ui.integration.kobo.revoke"),
+                    UiText.text("ui.integration.kobo.revoke_confirm"), UiText.text("ui.integration.kobo.revoke_confirm_detail"))) return;
+            IntegrationBackend.Result result = backend.revokeKobo();
+            credential.clear();
+            copy.setDisable(true);
+            showResult(UiText.text("ui.integration.kobo.tab"), result);
+            refresh.run();
+        });
+
+        Label explanation = new Label(UiText.text("ui.integration.kobo.help"));
+        explanation.setWrapText(true);
+        return scroll(section(explanation, new HBox(8, enableRotate, syncNow, revoke), credential, copy,
+                new Separator(), enabled, secure, device, lastSync, lastError));
     }
 
     private Node webDavPane(Window owner) {
@@ -259,10 +370,9 @@ public final class IntegrationCenterDialog {
         reload.run();
 
         install.setOnAction(e -> {
-            FileChooser chooser = new FileChooser();
-            chooser.setTitle(UiText.text("ui.java.integration_center_dialog.88da6ef7dc"));
-            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(UiText.text("ui.java.integration_center_dialog.d018ebf033"), "*.jar"));
-            File file = chooser.showOpenDialog(owner);
+            File file = fileChooserService.chooseFile(owner,
+                    UiText.text("ui.java.integration_center_dialog.88da6ef7dc"),
+                    List.of(new FileChooser.ExtensionFilter(UiText.text("ui.java.integration_center_dialog.d018ebf033"), "*.jar")));
             if (file == null) return;
             IntegrationBackend.Result result = backend.installPlugin(file.toPath());
             showResult(UiText.text("ui.java.integration_center_dialog.ccecfa5e49"), result);
@@ -314,9 +424,8 @@ public final class IntegrationCenterDialog {
             dialogs.showInfo(UiText.text("ui.java.integration_center_dialog.5422977aa8"), UiText.text("ui.java.integration_center_dialog.37050aa944"));
             return;
         }
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle(UiText.text("ui.java.integration_center_dialog.aa26667fc9"));
-        File file = chooser.showOpenDialog(owner);
+        File file = fileChooserService.chooseFile(owner,
+                UiText.text("ui.java.integration_center_dialog.aa26667fc9"), List.of());
         if (file == null) return;
         background.submit(() -> localMetadata.extract(file.toPath())).whenComplete((results, error) -> Platform.runLater(() -> {
             if (error != null) {

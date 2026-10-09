@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.usecase.book;
 
+import static com.myhomelibcorp.application.operation.LibraryOperationLeaseSupport.withSharedLease;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
@@ -49,18 +50,7 @@ public class LoadBooksUseCase {
     }
 
     private <T> T query(java.util.function.Supplier<T> action) {
-        if (operationCoordinator == null) return action.get();
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
-        try {
-            T result = action.get();
-            lease.markCompleted("");
-            return result;
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        return withSharedLease(operationCoordinator, LibraryOperationType.QUERY, action);
     }
 
     private PageResult<BookDto> map(PageResult<Book> result) {

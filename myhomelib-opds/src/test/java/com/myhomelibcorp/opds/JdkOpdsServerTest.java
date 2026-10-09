@@ -283,10 +283,27 @@ class JdkOpdsServerTest {
         assertThat(denied.statusCode()).isEqualTo(401);
         assertThat(denied.headers().firstValue("WWW-Authenticate").orElse("")).contains("Bearer");
 
+        var manifest = get(client, base + "/web/app.webmanifest");
+        assertThat(manifest.statusCode()).isEqualTo(200);
+        assertThat(manifest.headers().firstValue("Content-Type").orElse("")).startsWith("application/manifest+json");
+        assertThat(manifest.headers().firstValue("Cache-Control").orElse("")).contains("public", "max-age=300");
+        assertThat(manifest.body()).contains("\"start_url\":\"/web/\"", "icon-192.png", "icon-512.png");
+        var worker = get(client, base + "/web/sw.js");
+        assertThat(worker.statusCode()).isEqualTo(200);
+        assertThat(worker.headers().firstValue("Content-Type").orElse("")).startsWith("application/javascript");
+        assertThat(worker.headers().firstValue("Service-Worker-Allowed")).contains("/web/");
+        assertThat(worker.headers().firstValue("Cache-Control")).contains("no-cache");
+        assertThat(worker.body()).contains("SAVE_BOOK", "CLEAR_OFFLINE_BOOKS", "MAX_OFFLINE_BOOKS=20");
+        var clientJs = get(client, base + "/web/assets/pwa-v29-1.js");
+        assertThat(clientJs.statusCode()).isEqualTo(200);
+        assertThat(clientJs.headers().firstValue("Cache-Control").orElse("")).contains("immutable");
+
         var library = get(client, base + "/web/?limit=1", bearer(readToken.token()));
         assertThat(library.statusCode()).isEqualTo(200);
         assertThat(library.headers().firstValue("Content-Type").orElse("")).startsWith("text/html");
-        assertThat(library.body()).contains("name=\"viewport\"", "Книга &quot;Один&quot;", "Далі →", "/web/continue");
+        assertThat(library.headers().firstValue("Cache-Control")).contains("private, no-store");
+        assertThat(library.body()).contains("name=\"viewport\"", "rel=\"manifest\" href=\"/web/app.webmanifest\"",
+                "/web/assets/pwa-v29-1.js", "Книга &quot;Один&quot;", "Далі →", "/web/continue");
 
         var search = get(client, base + "/web/search?q=needle", bearer(readToken.token()));
         assertThat(search.statusCode()).isEqualTo(200);
@@ -336,16 +353,28 @@ class JdkOpdsServerTest {
         assertThat(get(client, base + "/web/read/b1").statusCode()).isEqualTo(401);
         var page = get(client, base + "/web/read/b1", bearer(readToken.token()));
         assertThat(page.statusCode()).isEqualTo(200);
-        assertThat(page.body()).contains("Browser Book", "Зміст", "Two", "data-resume=\"15\"", "id=theme", "id=font");
+        assertThat(page.headers().firstValue("Cache-Control")).contains("private, no-store");
+        assertThat(page.body()).contains("Browser Book", "Зміст", "Two", "data-resume=\"15\"", "id=theme", "id=font",
+                "data-pwa-save-book=\"b1\"", "data-pwa-remove-book=\"b1\"", "data-pwa-clear-books");
+
+        assertThat(get(client, base + "/web/offline/books/b1/manifest.json").statusCode()).isEqualTo(401);
+        var offlineManifest = get(client, base + "/web/offline/books/b1/manifest.json", bearer(readToken.token()));
+        assertThat(offlineManifest.statusCode()).isEqualTo(200);
+        assertThat(offlineManifest.headers().firstValue("Content-Type").orElse("")).startsWith("application/json");
+        assertThat(offlineManifest.headers().firstValue("Cache-Control")).contains("no-store");
+        assertThat(offlineManifest.body()).contains("\"bookId\":\"b1\"", "\"revision\":",
+                        "\"detailUrl\":\"/web/books/b1\"", "/web/read/b1?chapter=0", "/web/read/b1?chapter=1")
+                .doesNotContain("alpha beta", "gamma delta", "/web/download/");
 
         var rejected = post(client, base + "/web/read/b1/progress", bearer(readToken.token()),
                 "{\"chapter\":1,\"offset\":18}", false);
         assertThat(rejected.statusCode()).isEqualTo(403);
 
         var progress = post(client, base + "/web/read/b1/progress", bearer(readToken.token()),
-                "{\"chapter\":1,\"offset\":18}", true);
+                "{\"chapter\":1,\"offset\":18,\"clientTimestamp\":" + System.currentTimeMillis() + ",\"clientSequence\":7}", true);
         assertThat(progress.statusCode()).isEqualTo(200);
-        assertThat(progress.body()).contains("80.0000");
+        assertThat(progress.headers().firstValue("Cache-Control")).contains("no-store");
+        assertThat(progress.body()).contains("\"accepted\":true", "80.0000", "\"clientSequence\":7");
         assertThat(saved.get().getAnchorId()).isEqualTo("1:18:0:0");
     }
 

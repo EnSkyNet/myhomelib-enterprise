@@ -125,8 +125,8 @@ class LanguageCatalogServiceTest {
             assertThat(map.get("ui.reader.error.archive_entry_read"))
                     .isEqualTo("Не вдалося прочитати запис архіву: %s");
         });
-        String upgraded = Files.readString(lang.resolve("uk.json"), StandardCharsets.UTF_8);
-        assertThat(upgraded).contains("\"schemaVersion\" : 3");
+        byte[] upgraded = Files.readAllBytes(lang.resolve("uk.json"));
+        assertThat(new tools.jackson.databind.ObjectMapper().readTree(upgraded).get("schemaVersion").asInt()).isEqualTo(3);
     }
 
 }

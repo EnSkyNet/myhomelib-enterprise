@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.catalog;
 
+import static com.myhomelibcorp.application.operation.LibraryOperationLeaseSupport.withSharedLease;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
@@ -122,30 +123,11 @@ public class CatalogUpdateService {
     }
 
     private <T> T withQueryLease(Supplier<T> action) {
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
-        try {
-            T result = action.get();
-            lease.markCompleted("");
-            return result;
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        return withSharedLease(operationCoordinator, LibraryOperationType.QUERY, action);
     }
 
     private void withEditLease(Runnable action) {
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EDIT);
-        try {
-            action.run();
-            lease.markCompleted("");
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        withSharedLease(operationCoordinator, LibraryOperationType.EDIT, action);
     }
 
     private record AuthorKey(String id, String name) {

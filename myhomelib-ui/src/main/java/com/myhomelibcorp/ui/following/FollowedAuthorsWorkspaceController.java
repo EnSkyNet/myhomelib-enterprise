@@ -205,7 +205,7 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
 
     private void requireCurrentCollection(String expectedCollectionId) {
         if (!expectedCollectionId.equals(currentCollectionId())) {
-            throw new IllegalStateException("Активна колекція змінилася до виконання операції з відстежуваними авторами");
+            throw new IllegalStateException(localizationService.text("ui.error.collection_changed.followed_authors"));
         }
     }
 

@@ -1,6 +1,6 @@
 package com.myhomelibcorp.integration;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.extension.LocalMetadataExtractionService;
 import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
@@ -86,6 +86,33 @@ class DesktopPluginRuntimeBridgeTest {
 
         assertThat(backend.installPlugin(source).success()).isFalse();
         assertThat(Files.readAllBytes(foreign)).isEqualTo(foreignBytes);
+    }
+
+    @Test
+    void installRefreshesLateExternalPackageBeforeReplacingSamePluginId() throws Exception {
+        oldDataDir = System.getProperty("myhomelib.dataDir");
+        Path dataDir = temp.resolve("app-data-late-install");
+        System.setProperty("myhomelib.dataDir", dataDir.toString());
+        DesktopIntegrationBackend backend = new DesktopIntegrationBackend(
+                new FakeSettings(), mock(PortableUserDataService.class), new RuntimeExtensionRegistry(),
+                new ObjectMapper(), java.util.List.of());
+
+        Path plugins = Files.createDirectories(dataDir.resolve("plugins"));
+        Path lateExisting = createPluginJar(plugins.resolve("test.late-install-0.9.0.jar"),
+                "test.late-install", "0.9.0");
+        Path source = createPluginJar(temp.resolve("test-late-install-1.0.0.jar"),
+                "test.late-install", "1.0.0");
+
+        assertThat(backend.installPlugin(source).success()).isTrue();
+
+        var installed = backend.plugins().stream()
+                .filter(info -> info.pluginId().equals("test.late-install") && info.installedPackage())
+                .toList();
+        assertThat(installed).singleElement().satisfies(info -> {
+            assertThat(info.version()).isEqualTo("1.0.0");
+            assertThat(Path.of(info.source()).getFileName().toString()).isEqualTo("test.late-install-1.0.0.jar");
+        });
+        assertThat(lateExisting).doesNotExist();
     }
 
     @Test

@@ -34,7 +34,7 @@ try:
             ["resources.locateBookFile"], [])
     require("resource resolver accepts only physical files",
             "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/resource/BookResourceResolver.java",
-            ["Files.isRegularFile(archivePath)", "Files.isRegularFile(filePath)", "resolveArchiveEntry", "archiveReader.listEntries"],
+            ["safeRegularPath", "SafeFilePublication.requireSafeRegularFile", "resolveArchiveEntry", "archiveReader.listEntries"],
             ["filePath != null && Files.exists(filePath)"])
     require("no UI thread sleeps",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/imports/ImportWorkspaceController.java",
@@ -73,9 +73,13 @@ try:
     require("reader persistence failure remains retryable",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderPersistenceService.java",
             ["public boolean savePosition", "return false;"], [])
-    require("reader autosave retries failed DB write",
+    require("reader autosave facade delegates lifecycle",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderPositionAutosaver.java",
-            ["if (persistence.savePosition", "dirty.set(true)", "position remains dirty for retry"], [])
+            ["new PositionAutosaveCoordinator", "coordinator.flush()", "coordinator.closeAndFlush()"], [])
+    require("reader autosave retries failed DB write",
+            "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/PositionAutosaveCoordinator.java",
+            ["retryPendingFailures()", "rememberFailure(key, snapshot)",
+             "pending.revision() <= snapshot.revision()", "boolean closeAndFlush()"], [])
     require("shared archive removal preview",
             "myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/download/RemoveLocalBookCopyUseCase.java",
             ["RemovalPreview", "preview(BookDto book)", "affectedBooks"], [])
@@ -87,10 +91,13 @@ try:
             ["handleBatchRemoveLocal", "handleBatchDelete", "ui.java.batch_operations_controller.eb95ca1047"], [])
     require("main command batch fallbacks",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/MainController.java",
-            ["handleBatchDelete", "handleBatchRemoveLocal"], [])
+            ["deferredLibraryActions.batchDelete", "deferredLibraryActions.batchRemoveLocal"], [])
+    require("deferred main actions own batch-controller delegation",
+            "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/DeferredMainLibraryActions.java",
+            ["handleBatchDelete(onComplete)", "handleBatchRemoveLocal(onComplete)"], [])
     require("post-import heavy work off FX",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/event/ImportEventHandler.java",
-            ["executor.submit", "statisticsService.refreshStatistics()", "syncSeriesUseCase.execute()"], [])
+            ["executor.submit", "postImportMaintenanceService.refreshAfterImport(event.collectionId())"], [])
     require("missing cover is not warning",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/presenter/CoverPresenter.java",
             ['log.debug("Обкладинка відсутня'], ['log.warn("Обкладинка не знайдена'])
@@ -99,14 +106,15 @@ try:
             ["HTTP {} in {} ms", "Content-Type", "Content-Length", "Response URI", "Downloaded {} bytes"], [])
     require("ConnectionScript validates once and propagates resolved archive entry",
             "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/scenario/ConnectionScriptExecutor.java",
-            ["resolvedArchiveEntry = validator.validate(state.payload(), target, book, archived)",
-             "return new Result(state.payload(), state.responseUri(), checked, resolvedArchiveEntry)"], [])
+            ["resolvedArchiveEntry = validator.validateOwned(",
+             "SafeFilePublication.requireOwnedPath",
+             "return new Result(state.payload(), state.responseUri(), checked, resolvedArchiveEntry, validatedSha256)"], [])
     require("validated atomic download commit and diagnostics",
             "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/HttpOnlineBookDownloadAdapter.java",
             ["HTTP RESPONSE: status={}", "finalUrl={}", "contentType={}", "contentLength={}",
              "PAYLOAD VALIDATED:", "STORAGE COMMIT:",
              "result.resolvedArchiveEntry()",
-             "AtomicFileSupport.moveReplacing(result.payload(), target)"],
+             "SafeFilePublication.publishReplacingIfUnchanged("],
             ["payloadValidator.validate(result.payload(), target, book, archived)"])
 except AssertionError as e:
     print("REVIEW4 CRITICAL BEHAVIOR CHECK: FAIL -", e)

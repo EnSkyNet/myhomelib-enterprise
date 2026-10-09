@@ -19,5 +19,9 @@ class WebTextCatalogTest {
         assertThat(catalog.entries("uk").keySet()).isEqualTo(catalog.entries("bg").keySet());
         assertThat(catalog.text("en", "web.results.count", 42)).isEqualTo("Found: 42");
         assertThat(catalog.text("bg", "web.reader.chapter", 3)).isEqualTo("Глава 3");
+        assertThat(catalog.entries("uk")).containsKeys("web.offline.save", "web.offline.remove", "web.offline.clear",
+                "web.offline.cleared", "web.pwa.name", "web.pwa.description");
+        assertThat(catalog.text("en", "web.offline.clear")).isEqualTo("Clear all offline copies");
+        assertThat(catalog.text("bg", "web.offline.save")).isEqualTo("Запази за офлайн четене");
     }
 }

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import shutil
 import sys
 import tempfile
@@ -52,6 +53,34 @@ def main() -> int:
             encoding="utf-8",
         )
         expect_fail(lambda: mod.structural_checks(copy), "must use -Repo")
+
+    with tempfile.TemporaryDirectory(prefix="mhl-readiness-current-validation-test-") as td:
+        copy = Path(td) / "repo"
+        shutil.copytree(ROOT, copy, ignore=shutil.ignore_patterns("target"))
+        validation = copy / "docs/release/CURRENT-VALIDATION.md"
+        text = validation.read_text(encoding="utf-8")
+        text, changed = re.subn(
+            r"((?:current Maven baseline aggregate(?:[^:]*):|exact-current R\d+ root Maven `?clean verify`?:)"
+            r"\s*\*\*)(\d+)( tests /)",
+            lambda m: m.group(1) + str(int(m.group(2)) - 1) + m.group(3),
+            text, count=1, flags=re.IGNORECASE,
+        )
+        assert changed == 1
+        validation.write_text(text, encoding="utf-8")
+        expect_fail(lambda: mod.structural_checks(copy), "does not match")
+
+    with tempfile.TemporaryDirectory(prefix="mhl-readiness-evidence-binding-test-") as td:
+        copy = Path(td) / "repo"
+        shutil.copytree(ROOT, copy, ignore=shutil.ignore_patterns("target"))
+        validation = copy / "docs/release/CURRENT-VALIDATION.md"
+        text = validation.read_text(encoding="utf-8")
+        text, changed = re.subn(
+            r"(Detailed exact-current evidence:\s*`docs/release/)POST-R\d+-R\d+(-VALIDATION-[^`]+`)",
+            r"\1POST-R1-R2\2", text, count=1,
+        )
+        assert changed == 1
+        validation.write_text(text, encoding="utf-8")
+        expect_fail(lambda: mod.structural_checks(copy), "does not match current candidate")
 
     print("External acceptance readiness regression tests: PASS")
     return 0

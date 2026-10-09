@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.usecase.book;
 
+import static com.myhomelibcorp.application.operation.LibraryOperationLeaseSupport.withSharedLease;
 import com.myhomelibcorp.application.dto.BookListItem;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.filter.BookQuickFilterField;
@@ -113,18 +114,7 @@ public class LoadBooksByAuthorUseCase {
     }
 
     private <T> T query(java.util.function.Supplier<T> action) {
-        if (operationCoordinator == null) return action.get();
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
-        try {
-            T result = action.get();
-            lease.markCompleted("");
-            return result;
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        return withSharedLease(operationCoordinator, LibraryOperationType.QUERY, action);
     }
 
     private BookFilterSpec buildFilter(String filterText) {

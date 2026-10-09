@@ -1,40 +1,12 @@
 spring:
   main:
+    # Desktop startup is intentionally lazy: optional feature graphs are created on first use.
+    # SpringContextStartupSmokeTest forces this off in CI so wiring errors still fail fast.
+    lazy-initialization: true
     allow-circular-references: false
     allow-bean-definition-overriding: false
   application:
     name: MyHomeLib Enterprise
-
-  flyway:
-    enabled: true
-    locations: classpath:db/migration
-    baseline-on-migrate: true
-
-  datasource:
-    url: jdbc:sqlite:placeholder
-    driver-class-name: org.sqlite.JDBC
-    hikari:
-      # Основні налаштування пулу
-      maximum-pool-size: 10
-      minimum-idle: 2
-      connection-timeout: 30000
-      idle-timeout: 600000
-      max-lifetime: 1800000
-      leak-detection-threshold: 60000
-      pool-name: MyHomeLibHikariPool
-      # Налаштування для SQLite
-      connection-init-sql: |
-        PRAGMA foreign_keys=ON;
-        PRAGMA busy_timeout=15000;
-        PRAGMA synchronous=NORMAL;
-        PRAGMA temp_store=MEMORY;
-        PRAGMA cache_size=-32768;
-        PRAGMA mmap_size=67108864;
-
-  cache:
-    type: caffeine
-    caffeine:
-      spec: maximumSize=10000,expireAfterWrite=30m
 
 app:
   metadata:
@@ -42,7 +14,9 @@ app:
   import:
     batch-size: 1000
     change-tracking-limit: 50000
-    # Large (100k+) full INPX snapshots use a larger bounded flush to reduce SQLite/JDBC overhead.
+    # Remote and large (100k+) full INPX snapshots use bounded 5000-row flushes.
+    # This is the benchmarked compromise between SQLite/JDBC overhead and transaction memory pressure.
+    online-batch-size: 5000
     large-catalog-batch-size: 5000
   search:
     index-path: ${user.home}/.myhomelibcorp/search-index
@@ -55,7 +29,7 @@ logging:
     com.myhomelibcorp.infrastructure.resource.BookResourceResolver: WARN
     com.myhomelibcorp.infrastructure.download: WARN
     com.myhomelibcorp.infrastructure.persistence.sqlite.helper: WARN
-    com.myhomelibcorp.ui.presenter.CoverPresenter: WARN
+    com.myhomelibcorp.ui.presenter.CoverPresenter: INFO
     com.zaxxer.hikari: WARN
     org.springframework: WARN
     org.flywaydb: WARN
@@ -75,12 +49,3 @@ logging:
       max-file-size: 10MB
       max-history: 14
       total-size-cap: 100MB
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info
-  endpoint:
-    health:
-      show-details: always

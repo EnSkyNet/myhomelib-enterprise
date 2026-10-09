@@ -1,10 +1,10 @@
 # MyHomeLib Enterprise — Architecture
 
 **Project version:** `8.0.0`  
-**Architecture snapshot:** 31 August 2026  
+**Architecture snapshot:** 2 October 2026  
 **Java:** 21  
 **Desktop UI:** JavaFX  
-**Runtime container:** Spring Boot 3.5.x  
+**Runtime container:** Spring Boot 4.1.1  
 **Primary storage:** SQLite + Flyway  
 **Search:** Apache Lucene 9.x  
 **Reader rendering:** JavaFX Canvas
@@ -13,58 +13,55 @@ This file is the current architecture contract. Historical stage documents are n
 
 ## 1. System shape
 
-MyHomeLib Enterprise is a modular desktop monolith with separate MCP and OPDS/Web sidecar runtimes.
+MyHomeLib Enterprise is a modular desktop monolith with separate MCP and OPDS/Web sidecar runtimes plus a standalone JDK-only updater helper used after the desktop process exits.
 
 ```text
-                         myhomelib-bootstrap
-                         composition root
-                                |
-              +-----------------+-----------------+
-              |                                   |
-              v                                   v
-        myhomelib-ui                    myhomelib-infrastructure
-        JavaFX presentation             SQLite/Lucene/network/files
-              |                                   |
-              +-----------------+-----------------+
-                                v
-                     myhomelib-application
-                     use cases / DTO / ports
-                         ^             |
-                         |             v
-                myhomelib-plugin-api  myhomelib-domain
-                stable extension SPI         |
-                                             v
-                                      myhomelib-shared
+                                      myhomelib-bootstrap
+                                      composition root
+                       /------------------|------------------\
+                      v                   v                   v
+                myhomelib-ui      myhomelib-infrastructure  myhomelib-opds
+                      |                /     |     \          |      \
+                      |               v      v      v          v       v
+                      |       library-organizer  converter-   web   application
+                      |              |           toolchain             ^
+                      |              v               |                 |
+                      +--------> application <--------+---------- plugin-api
+                                  |       ^                         ^     ^
+                                  v       |                         |     |
+                               domain     |                    samples  calibre-plugin
+                                  |       |
+                                  v       |
+                                shared <--+---- epub-optimizer
+                                  ^
+                                  |
+                              reader, mcp
 
-        myhomelib-reader                  myhomelib-opds
-        reader engine + JavaFX            JDK HTTP / OPDS + Web routes
-        depends on shared                 depends on application, shared, web
-
-        myhomelib-web
-        server-rendered browser UI
-        depends on application
-
-        myhomelib-mcp
-        independent MCP sidecar
-        depends on shared
+Standalone helper: myhomelib-updater (JDK-only, no product-module dependency).
+Verification-only modules: architecture-tests, e2e-tests, benchmark.
 ```
 
 `myhomelib-bootstrap` is the desktop composition root. It may know concrete UI and infrastructure classes because it owns startup, wiring and shutdown; feature logic should live below it.
 
 ## 2. Maven modules
 
-The root reactor contains 15 modules.
+The root reactor contains 20 child modules (21 Maven projects including the root aggregator).
 
 | Module | Responsibility |
 |---|---|
 | `myhomelib-shared` | Small reusable primitives, archive limits, paths, security/utilities |
 | `myhomelib-domain` | Domain entities, IDs/value objects, user/reader state models, events |
 | `myhomelib-application` | Use cases, queries, DTOs, application services and ports |
+| `myhomelib-epub-optimizer` | Shared EPUB optimization pipeline and image/font cleanup primitives |
+| `myhomelib-library-organizer` | Library analysis/apply workflows, duplicate/fingerprint planning and safe reorganization |
+| `myhomelib-converter-toolchain` | Provider-neutral conversion toolchain, metadata patching and external-engine orchestration |
 | `myhomelib-plugin-api` | Versioned public plugin SPI, manifests, compatibility/security contracts and developer test harness |
 | `myhomelib-plugin-samples` | Buildable SDK reference plugins; developer material, not wired into desktop runtime |
+| `myhomelib-converter-calibre-plugin` | Calibre converter plugin implementation against the public plugin/application contracts |
 | `myhomelib-infrastructure` | SQLite/Flyway, Lucene, import/export, filesystem/network/archive adapters |
 | `myhomelib-reader` | Format parsing, document/layout engine, bounded caches and JavaFX Canvas renderer |
 | `myhomelib-ui` | JavaFX controllers, workspaces, dialogs, localization and Reader integration |
+| `myhomelib-updater` | Standalone JDK-only post-exit update helper: re-verification, replacement, health marker and rollback |
 | `myhomelib-bootstrap` | Desktop composition root and lifecycle |
 | `myhomelib-mcp` | Separate MCP runtime with direct SQLite/archive technology |
 | `myhomelib-web` | Server-rendered Web Library / Web Reader presentation through application DTOs |
@@ -76,18 +73,23 @@ The root reactor contains 15 modules.
 ## 3. Direct production dependency graph
 
 ```text
-shared          -> -
-domain          -> shared
-application     -> shared, domain
-plugin-api      -> application
-plugin-samples  -> plugin-api
-reader          -> shared
-infrastructure  -> shared, domain, application
-ui              -> shared, domain, application, reader
-bootstrap       -> shared, domain, application, infrastructure, ui, opds
-mcp             -> shared
-web             -> application
-opds            -> shared, application, web
+shared                   -> -
+domain                   -> shared
+application              -> shared, domain
+epub-optimizer           -> shared
+library-organizer        -> shared, domain, application, epub-optimizer
+converter-toolchain      -> shared, domain, application, epub-optimizer
+plugin-api               -> application
+plugin-samples           -> application, plugin-api
+converter-calibre-plugin -> shared, domain, application, plugin-api
+reader                   -> shared
+infrastructure           -> shared, domain, application, epub-optimizer, library-organizer, converter-toolchain
+ui                       -> shared, domain, application, epub-optimizer, library-organizer, reader
+updater                  -> -
+bootstrap                -> shared, domain, application, epub-optimizer, library-organizer, converter-toolchain, plugin-api, converter-calibre-plugin, infrastructure, reader, ui, opds
+mcp                      -> shared
+web                      -> application
+opds                     -> shared, application, web
 ```
 
 The graph must remain acyclic.
@@ -109,7 +111,7 @@ Application describes intent and boundaries. It must not depend on Infrastructur
 
 ### Plugin API
 
-`plugin-api` is the public extension boundary for third-party providers. It may depend on stable Application contracts but must not depend on Infrastructure, UI, Reader, MCP, OPDS/Web, JavaFX, JDBC, Spring or Lucene. Plugin manifests declare an API compatibility range, the services provided, every intentional core-service override, and required network/filesystem capabilities; undeclared overrides and approval/manifest mismatches are rejected before activation. Trust is assigned by the host, never by plugin code. Untrusted plugins are not executed in-process. Trusted in-process plugins are not presented as an OS sandbox: host code must route calls through `PluginManager` when it needs disable/quarantine fault containment or capability-gated invocation. `PluginTestHarness` exposes the same structural checks to plugin CI without changing runtime trust state. `myhomelib-plugin-samples` depends only on the public plugin boundary and is intentionally excluded from desktop composition/runtime wiring.
+`plugin-api` is the public extension boundary for third-party providers. It may depend on stable Application contracts but must not depend on Infrastructure, UI, Reader, MCP, OPDS/Web, JavaFX, JDBC, Spring or Lucene. Plugin manifests declare an API compatibility range, the services provided, every intentional core-service override, and required network/filesystem capabilities; undeclared overrides and approval/manifest mismatches are rejected before activation. Trust is assigned by the host, never by plugin code. Untrusted plugins are not executed in-process. Trusted in-process plugins are not presented as an OS sandbox: host code must route calls through `PluginManager` when it needs disable/quarantine fault containment or capability-gated invocation. `PluginTestHarness` exposes the same structural checks to plugin CI without changing runtime trust state. `myhomelib-plugin-samples` is developer material, intentionally excluded from desktop composition/runtime wiring. It depends on the public plugin boundary plus the specific stable Application contracts used by the examples; those direct dependencies are declared explicitly rather than inherited transitively.
 
 ### Device profiles
 
@@ -128,6 +130,10 @@ UI owns JavaFX presentation and user interaction. It must not depend directly on
 
 Reader depends on `shared` only. Portable Reader packages (`api`, `core`, `format`, `layout`, `model`, `service`, `render.api`) must stay JavaFX-free. JavaFX code is confined to `reader.render.javafx`.
 
+### Updater
+
+`myhomelib-updater` is a standalone post-exit helper and deliberately has **no internal product-module dependencies**. It uses only JDK APIs plus its bundled trust-key resource. This keeps Windows replacement/rollback independent from Spring/JavaFX/JDBC/Lucene and prevents the updater from becoming a second application runtime.
+
 ### MCP
 
 MCP is a separate sidecar and deliberately owns its direct SQLite/archive access. It must not import desktop Domain/Application/Infrastructure/UI/Reader/Spring/JavaFX layers.
@@ -135,6 +141,29 @@ MCP is a separate sidecar and deliberately owns its direct SQLite/archive access
 ### OPDS
 
 OPDS depends on Application contracts plus low-level Shared utilities. SQL lives behind an application port in Infrastructure; desktop lifecycle/settings use `OpdsServerControl`. OPDS list endpoints are bounded/paginated and downloads are streamed. Default bind is loopback. Plain HTTP is restricted to loopback; non-loopback binds require JDK HTTPS/TLS. Managed self-signed certificates are generated inside the JVM and stored as PKCS12; imported PEM certificate/private-key material is converted to the same managed store. The sidecar applies bounded listen/request concurrency, per-client authentication throttling and an explicit health-endpoint exposure policy.
+
+## 4.1 V26 architecture audit and enforcement
+
+The root aggregator declares **20 child modules**; together with the root this is a **21-project reactor**. The architecture contract is guarded at two levels:
+
+1. `tools/architecture-check.py` validates the explicit direct Maven graph, source references and hard framework boundaries for all **17 production/runtime modules**;
+2. `myhomelib-architecture-tests` applies ArchUnit rules over compiled output for those same 17 modules, including the standalone updater.
+
+`tools/architecture-module-coverage-test.py` is a meta-regression: a new production module cannot silently appear in the reactor without being classified by the architecture guard. The three verification/benchmark modules are intentionally not part of the production dependency graph.
+
+V25 fixed two graph-truth defects: plugin samples now declare their direct Application dependency, and the Calibre plugin declares its direct Shared dependency. It also restored one UI responsibility boundary by routing Backup/Restore native directory selection through `FileChooserService`. No broad layer rewrite was justified.
+
+V26 extended that same UI responsibility boundary to **all** native file/directory chooser construction. `FileChooserService` is now the sole owner of JavaFX `FileChooser`/`DirectoryChooser`, including disappearing/invalid initial-directory fallback. This is a bounded architectural consolidation, not a new UI framework. Static boundary tests fail if native chooser construction reappears elsewhere. V26 also adds a strict action-specific behavioral coverage gate alongside the inventory/fingerprint gate.
+
+The detailed Ukrainian audit is `docs/current/ARCHITECTURE-AUDIT-UA.md`.
+
+### UI action completeness boundary
+
+User-facing interaction completeness is now architecture-adjacent release evidence rather than prose only. `tools/ui-action-coverage-check.py` inventories all current FXML and programmatic JavaFX actions, binds each to automated behavioral/delegate evidence and fingerprints handler/callback code. `build-check-v7.py` executes this gate, so source drift cannot add or materially change a user action without explicit coverage review. It also runs `user-functions-documentation-check.py`: every current JavaFX action must resolve via `user_function_ref` to a canonical flow marker in `docs/current/USER-FUNCTIONS-UA.md`.
+
+### Organizer metadata boundary
+
+Organizer distinguishes **structured metadata support** from mere file recognition. Every recognized organizer extension is classified as `STRUCTURED`, `FILENAME_ONLY` or `NOT_APPLICABLE`; `UNCLASSIFIED` for a recognized extension is a regression. Format-specific parsers remain narrow adapters (FB2/EPUB/DOCX/ODT/MOBI-family/PDF/comic ZIP) rather than a speculative universal metadata framework.
 
 ## 5. Persistence and collection lifecycle
 
@@ -377,3 +406,61 @@ Desktop audiobook progress reuses the existing reading-progress/application pers
 Obsidian/Joplin export is an Application-layer integration over the existing `AnnotationExportQueryPort`; UI only gathers scope/template/policy choices and never queries SQLite or annotation-domain repositories. `KnowledgeMarkdownExportService` consumes the same stable, bounded, per-book-contiguous projection as MHL-205 and writes one UTF-8 Markdown document per logical book through sibling staging + atomic publication.
 
 Path templates are treated as untrusted user configuration: placeholders are allow-listed, path segments are sanitized for cross-platform filesystem rules, traversal cannot escape the chosen root, and deterministic file names are used instead of automatic ` (1)` collision suffixes. The default `REPLACE_MANAGED` policy overwrites only a target containing the exact MyHomeLib ownership marker for the same book id. `SKIP_EXISTING` and `FAIL_IF_EXISTS` are explicit alternatives. Optional YAML frontmatter remains standard Markdown metadata; backlinks use the stable `myhomelib://book/<bookId>?annotation=<annotationId>` URI without embedding secrets or database identifiers beyond existing stable ids.
+
+
+## V27 data ownership: Reading Lists and On Deck
+
+- `ReadingList` is collection-scoped **user-owned persisted state**. Domain types live in `myhomelib-domain`, application contracts/use cases in `myhomelib-application`, and SQLite persistence in `myhomelib-infrastructure`. UI does not own list state.
+- `reading_lists` / `reading_list_items` are introduced only by Flyway `V64`; list deletion cascades membership, never `books`. Book deletion may cascade its membership row.
+- Portable user-data schema v5 owns transfer of Reading Lists and resolves book membership through the existing stable identity policy.
+- **Next in Series / On Deck is derived state only**. `NextInSeriesService` consumes a query port backed by one bounded SQLite query over existing `books` + `reading_progress`; no recommendation table/state is introduced.
+
+## V28 — Scoped Reader preference ownership
+
+Global Reader defaults remain application settings behind `ReaderPreferencesPort`. Non-global Reader profiles are collection-owned user state behind `ReaderScopedPreferencesPort`; `ReaderSettingsStateService` is the sole precedence owner and resolves `BOOK > SERIES > FORMAT > GLOBAL`. UI code supplies book/series/format context and displays the resolved source, but does not query SQLite or reproduce precedence rules.
+
+`V65__reader_scoped_preferences.sql` introduces `reader_preference_overrides` keyed by `(scope_type, scope_key)`. Released `reader_book_preferences` (V42) is not removed: existing rows migrate to `BOOK` and BOOK writes remain mirrored for backward-compatible merge/copy tooling and older integrations. Book deletion removes the generic BOOK row. Copy-between-collections transfers only BOOK state for copied books; SERIES and FORMAT profiles remain owned by the source/target collection independently. Merge/undo reconstructs the generic BOOK projection from the V42 snapshot so historical merge journals remain decodable.
+
+Portable user-data schema v6 owns scoped profile transfer. BOOK scope identity is restored through the existing stable book identity policy; SERIES and FORMAT restore only through normalized/canonical scope keys. Malformed stored profile JSON fails safe for that scope and lets the resolver continue to the next lower level rather than converting corruption into a global Reader-open failure.
+
+## V29 — PWA / offline Web Library boundary
+
+V29 remains inside the existing `myhomelib-web` + `myhomelib-opds` sidecar boundary. `WebPwaAssets` owns only versioned public shell assets (manifest, service-worker/client source, CSS, icons and offline fallback). `OfflineBookPackageRenderer` projects an already extracted `WebReaderDocument` into a sanitized versioned browser-reading package; no browser EPUB/FB2 parser and no second backend were introduced.
+
+Authenticated catalogue/reader HTML and API responses remain private/non-cacheable by default. Only public static PWA assets bypass Web Library authentication. The Service Worker strips credential-bearing response metadata before explicit Cache Storage writes, and book content is cached only after a user `SAVE_BOOK` message. One completed cache generation per saved book is retained; an older generation is deleted only after the replacement has been fully fetched. The explicit offline-book cache is bounded to 20 completed books with deterministic oldest-generation eviction, and `CLEAR_OFFLINE_BOOKS` removes all explicit book caches without touching the app shell.
+
+Offline reading progress is browser-owned transient state in IndexedDB. `WebProgressUpdate` crosses the Application boundary with client timestamp/monotonic sequence metadata; authoritative reading progress remains in the existing `ReadingProgressRepository`. Exact replays are idempotent and stale queued positions cannot overwrite a newer canonical server state.
+## V30 — Kobo native sync boundary
+
+- `myhomelib-application` owns Kobo DTOs, the pure progress translator and `KoboSyncPort`/`KoboSyncService`; it has no Kobo HTTP or JavaFX dependency.
+- `myhomelib-infrastructure` owns device/cursor/projection persistence and authentication state. Credentials are never persisted in SQLite/plain config and are delegated exclusively to the existing `SecretStore`.
+- `myhomelib-opds` is the protocol adapter: Kobo initialization, incremental sync, metadata/state and content download. It does not introduce a second web backend.
+- `ExportToDeviceUseCase` remains generic USB/device export; Kobo-specific protocol logic must not depend on or modify it.
+- Book identity is stable MyHomeLib book ID + artifact/content revision. Virtual conversion projections encode the source artifact id safely and invoke the existing converter use case only when content is downloaded.
+- Progress conflict authority is monotonic version/cursor first; raw timestamps are only a deterministic tie-breaker for the same base version.
+- Real Kobo protocol interoperability is a live external gate and is not inferred from local fixtures.
+
+
+
+## V31 — secure application update boundary
+
+- `myhomelib-application` owns update manifests, channels, verification policy and staging contracts; it does not own HTTP or filesystem replacement.
+- `myhomelib-infrastructure` owns bounded HTTPS manifest/artifact transport, public trust-key loading and atomic pending-plan persistence.
+- `myhomelib-updater` is intentionally standalone/JDK-only so replacement happens after the main JVM releases installation files. It re-verifies trust/hash before mutation and owns backup/health-marker rollback.
+- The private signing key is release-infrastructure material and must never be present in source/package/settings.
+
+## V32 — annotation remote-export boundary
+
+- Existing `AnnotationExportQueryPort` remains the canonical bounded local projection. `ExportAnnotationsToReadwiseUseCase` adds remote batching/checkpoint semantics without changing annotation ownership.
+- Infrastructure owns Readwise HTTP/auth and `SecretStore` access. SQLite checkpoint rows contain only stable annotation ids/fingerprints/timestamps.
+- Remote deletion is not inferred from local deletion in V1; the FK only cleans local checkpoint state.
+
+## V33 — local recommendation boundary
+
+- Similar-book computation is an Application derived query over existing metadata. No recommendation persistence/index/cloud service is introduced.
+- The result is explainable metadata evidence and a bounded top-K; UI only renders/navigates results.
+
+## V34 — page duplicate diagnostics boundary
+
+- Exact comic duplicate detection lives in Application and reads bytes through `BookResourcePort`; JavaFX image types do not cross into Application.
+- Shared comic entry safety/natural ordering is reused. V34 reports exact evidence only and never mutates archives. Perceptual/near matching remains a separate future boundary.

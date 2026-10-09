@@ -19,30 +19,23 @@ ROOT = Path(__file__).resolve().parents[1]
 NS = {"m": "http://maven.apache.org/POM/4.0.0"}
 
 MODULES = {
-    "myhomelib-shared": "shared",
-    "myhomelib-domain": "domain",
-    "myhomelib-application": "application",
-    "myhomelib-plugin-api": "plugin",
-    "myhomelib-infrastructure": "infrastructure",
-    "myhomelib-reader": "reader",
-    "myhomelib-ui": "ui",
-    "myhomelib-bootstrap": "bootstrap",
-    "myhomelib-mcp": "mcp",
-    "myhomelib-opds": "opds",
-    "myhomelib-web": "web",
-}
-
-PACKAGE_TO_MODULE = {
-    "shared": "myhomelib-shared",
-    "domain": "myhomelib-domain",
-    "application": "myhomelib-application",
-    "plugin": "myhomelib-plugin-api",
-    "infrastructure": "myhomelib-infrastructure",
-    "reader": "myhomelib-reader",
-    "ui": "myhomelib-ui",
-    "mcp": "myhomelib-mcp",
-    "opds": "myhomelib-opds",
-    "web": "myhomelib-web",
+    "myhomelib-shared": "com.myhomelibcorp.shared.",
+    "myhomelib-domain": "com.myhomelibcorp.domain.",
+    "myhomelib-application": "com.myhomelibcorp.application.",
+    "myhomelib-epub-optimizer": "com.myhomelibcorp.epub.optimizer.",
+    "myhomelib-library-organizer": "com.myhomelibcorp.organizer.",
+    "myhomelib-converter-toolchain": "com.myhomelibcorp.converter.toolchain.",
+    "myhomelib-plugin-api": "com.myhomelibcorp.plugin.api.",
+    "myhomelib-plugin-samples": "com.myhomelibcorp.plugins.samples.",
+    "myhomelib-converter-calibre-plugin": "com.myhomelibcorp.plugins.calibre.",
+    "myhomelib-infrastructure": "com.myhomelibcorp.infrastructure.",
+    "myhomelib-reader": "com.myhomelibcorp.reader.",
+    "myhomelib-ui": "com.myhomelibcorp.ui.",
+    "myhomelib-updater": "com.myhomelibcorp.updater.",
+    "myhomelib-bootstrap": "com.myhomelibcorp.bootstrap.",
+    "myhomelib-mcp": "com.myhomelibcorp.mcp.",
+    "myhomelib-opds": "com.myhomelibcorp.opds.",
+    "myhomelib-web": "com.myhomelibcorp.web.",
 }
 
 # Direct production dependencies that are allowed and expected after Stage 1.
@@ -50,16 +43,27 @@ EXPECTED_INTERNAL_DEPS = {
     "myhomelib-shared": set(),
     "myhomelib-domain": {"myhomelib-shared"},
     "myhomelib-application": {"myhomelib-shared", "myhomelib-domain"},
+    "myhomelib-epub-optimizer": {"myhomelib-shared"},
+    "myhomelib-library-organizer": {"myhomelib-shared", "myhomelib-domain", "myhomelib-application", "myhomelib-epub-optimizer"},
+    "myhomelib-converter-toolchain": {"myhomelib-shared", "myhomelib-domain", "myhomelib-application", "myhomelib-epub-optimizer"},
     "myhomelib-plugin-api": {"myhomelib-application"},
-    "myhomelib-infrastructure": {"myhomelib-shared", "myhomelib-domain", "myhomelib-application"},
+    "myhomelib-plugin-samples": {"myhomelib-plugin-api", "myhomelib-application"},
+    "myhomelib-converter-calibre-plugin": {"myhomelib-shared", "myhomelib-domain", "myhomelib-application", "myhomelib-plugin-api"},
+    "myhomelib-infrastructure": {"myhomelib-shared", "myhomelib-domain", "myhomelib-application", "myhomelib-library-organizer", "myhomelib-epub-optimizer", "myhomelib-converter-toolchain"},
     "myhomelib-reader": {"myhomelib-shared"},
-    "myhomelib-ui": {"myhomelib-shared", "myhomelib-domain", "myhomelib-application", "myhomelib-reader"},
+    "myhomelib-ui": {"myhomelib-shared", "myhomelib-domain", "myhomelib-application", "myhomelib-epub-optimizer", "myhomelib-library-organizer", "myhomelib-reader"},
+    "myhomelib-updater": set(),
     "myhomelib-bootstrap": {
         "myhomelib-shared",
         "myhomelib-domain",
         "myhomelib-application",
+        "myhomelib-epub-optimizer",
+        "myhomelib-library-organizer",
+        "myhomelib-converter-toolchain",
         "myhomelib-infrastructure",
         "myhomelib-plugin-api",
+        "myhomelib-converter-calibre-plugin",
+        "myhomelib-reader",
         "myhomelib-ui",
         "myhomelib-opds",
     },
@@ -165,12 +169,10 @@ def source_class_name(path: Path, text: str) -> str:
 
 
 def referenced_internal_modules(text: str) -> set[str]:
-    refs: set[str] = set()
-    for prefix in re.findall(r"com\.myhomelibcorp\.([A-Za-z_][A-Za-z0-9_]*)", text):
-        module = PACKAGE_TO_MODULE.get(prefix)
-        if module:
-            refs.add(module)
-    return refs
+    # Match exact product package roots rather than only the first package segment.
+    # This distinguishes plugin-api from plugin samples / Calibre plugin and keeps
+    # organizer/converter/optimizer modules visible to the direct-dependency guard.
+    return {module for module, package_prefix in MODULES.items() if package_prefix in text}
 
 
 def check_module_graph() -> None:
@@ -235,9 +237,41 @@ def check_forbidden_source_boundaries() -> None:
             "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.",
             "javafx.", "java.sql.", "javax.sql.", "org.springframework.jdbc.", "org.apache.lucene.",
         ),
+        "myhomelib-epub-optimizer": (
+            "com.myhomelibcorp.domain.", "com.myhomelibcorp.application.", "com.myhomelibcorp.organizer.",
+            "com.myhomelibcorp.converter.toolchain.", "com.myhomelibcorp.plugin.api.", "com.myhomelibcorp.plugins.",
+            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.",
+            "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.",
+            "javafx.", "java.sql.", "javax.sql.", "org.apache.lucene.",
+        ),
+        "myhomelib-library-organizer": (
+            "com.myhomelibcorp.converter.toolchain.", "com.myhomelibcorp.plugin.api.", "com.myhomelibcorp.plugins.",
+            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.",
+            "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.",
+            "javafx.", "java.sql.", "javax.sql.", "org.apache.lucene.",
+        ),
+        "myhomelib-converter-toolchain": (
+            "com.myhomelibcorp.organizer.", "com.myhomelibcorp.plugin.api.", "com.myhomelibcorp.plugins.",
+            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.",
+            "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.",
+            "javafx.", "java.sql.", "javax.sql.", "org.apache.lucene.",
+        ),
         "myhomelib-plugin-api": (
             "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.",
             "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.",
+            "javafx.", "java.sql.", "javax.sql.", "org.springframework.", "org.apache.lucene.",
+        ),
+        "myhomelib-plugin-samples": (
+            "com.myhomelibcorp.shared.", "com.myhomelibcorp.domain.", "com.myhomelibcorp.organizer.",
+            "com.myhomelibcorp.converter.toolchain.", "com.myhomelibcorp.epub.optimizer.",
+            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.",
+            "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.",
+            "javafx.", "java.sql.", "javax.sql.", "org.springframework.", "org.apache.lucene.",
+        ),
+        "myhomelib-converter-calibre-plugin": (
+            "com.myhomelibcorp.organizer.", "com.myhomelibcorp.converter.toolchain.", "com.myhomelibcorp.epub.optimizer.",
+            "com.myhomelibcorp.plugins.samples.", "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.",
+            "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.",
             "javafx.", "java.sql.", "javax.sql.", "org.springframework.", "org.apache.lucene.",
         ),
         "myhomelib-infrastructure": (
@@ -246,6 +280,9 @@ def check_forbidden_source_boundaries() -> None:
         "myhomelib-ui": (
             "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.", "java.sql.", "javax.sql.",
             "org.springframework.jdbc.", "org.apache.lucene.",
+        ),
+        "myhomelib-updater": (
+            "org.springframework.", "javafx.", "java.sql.", "javax.sql.", "org.apache.lucene.",
         ),
         "myhomelib-reader": (
             "com.myhomelibcorp.domain.", "com.myhomelibcorp.application.",
@@ -543,7 +580,7 @@ def check_online_update_stage6() -> None:
         if "CatalogSourceIdentity.remoteCollection(collection.getId())" not in text:
             fail("Stage 6 remote INPX must use stable collection identity instead of temp download path")
 
-    writer = ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/JdbcBatchWriter.java"
+    writer = ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/BookUpsertSql.java"
     if writer.exists():
         text = writer.read_text(encoding="utf-8")
         for marker in (

@@ -274,8 +274,12 @@ public class ApplicationThemeService {
     }
 
     private double parseFontSize(String value, double fallback) {
-        try { return Math.max(9.0, Math.min(24.0, Double.parseDouble(value))); }
-        catch (Exception ignored) { return fallback; }
+        try {
+            double parsed = Double.parseDouble(value);
+            return Double.isFinite(parsed) ? Math.max(9.0, Math.min(24.0, parsed)) : fallback;
+        } catch (Exception ignored) {
+            return fallback;
+        }
     }
 
     private String muted(ThemeConfig c) { return isDark(c.background()) ? "#aeb4bc" : "#6b7280"; }
@@ -308,7 +312,8 @@ public class ApplicationThemeService {
             ThemeMode safeMode = mode == null ? ThemeMode.SYSTEM : mode;
             return new ThemeConfig(safeMode, color(background, "#f8f9fa"), color(panel, "#ffffff"),
                     color(text, "#202124"), color(accent, "#1a73e8"), color(seriesRow, "#e8f0fe"),
-                    color(bookRow, "#ffffff"), color(downloadedRow, "#e6f4ea"), Math.max(9, Math.min(24, fontSize)));
+                    color(bookRow, "#ffffff"), color(downloadedRow, "#e6f4ea"),
+                    Double.isFinite(fontSize) ? Math.max(9, Math.min(24, fontSize)) : 13.0);
         }
         private static String color(String value, String fallback) {
             if (value == null || !value.matches("#[0-9a-fA-F]{6}")) return fallback;

@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.catalog.reader;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.github.luben.zstd.ZstdOutputStream;
 import com.myhomelibcorp.application.catalog.importing.CatalogReadSession;
 import com.myhomelibcorp.application.catalog.importing.CatalogRecord;

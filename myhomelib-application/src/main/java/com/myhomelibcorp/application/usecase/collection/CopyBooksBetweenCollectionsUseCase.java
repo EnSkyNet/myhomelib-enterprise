@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.usecase.collection;
 
+import com.myhomelibcorp.application.util.BookIdListSupport;
 import com.myhomelibcorp.application.content.indexing.ContentIndexAutoSchedulingService;
 import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
 import com.myhomelibcorp.application.imports.saver.BookSaver;
@@ -58,7 +59,7 @@ public class CopyBooksBetweenCollectionsUseCase {
      * The caller must hold the exclusive COPY lifecycle barrier before enqueueing asynchronous work.
      */
     public Result execute(List<BookId> ids, String targetCollectionId, String expectedSourceCollectionId) {
-        List<BookId> requested = normalize(ids);
+        List<BookId> requested = BookIdListSupport.stableDistinctIgnoringNulls(ids);
         if (requested.isEmpty()) return new Result(0, 0, List.of());
 
         Collection source = lifecycle.getCurrentCollection();
@@ -297,12 +298,6 @@ public class CopyBooksBetweenCollectionsUseCase {
                 .build();
     }
 
-    private static List<BookId> normalize(List<BookId> ids) {
-        if (ids == null || ids.isEmpty()) return List.of();
-        LinkedHashSet<BookId> unique = new LinkedHashSet<>();
-        for (BookId id : ids) if (id != null) unique.add(id);
-        return new ArrayList<>(unique);
-    }
 
     private static String safeFileName(String value) {
         String cleaned = SafeFileNameSupport.sanitizeComponent(value, 120);

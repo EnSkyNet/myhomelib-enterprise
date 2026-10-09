@@ -18,7 +18,16 @@ hist=need('myhomelib-application/src/main/java/com/myhomelibcorp/application/exp
 use=need('myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCase.java',
          'ExportCollisionResolver','case ASK','historyService.record','request.getSubfolderTemplate()',
          'request.getPostActionProfileId()','actionExecutionService.execute','request.isExtractOnly() && book.hasArchiveEntry()',
-         'Files.copy(sourceStream, stagedFile','commitExportedFile(stagedFile, targetFile)','ATOMIC_MOVE','verifyExportedFile(targetFile)','ExportProgress','AtomicBoolean')
+         'SafeFilePublication.copyFresh(sourceStream, stagedFile','verifyExportedFile(stagedFile)',
+         'commitExportedFile(stagedFile, targetFile, overwriteExpectedHash, stagedHash',
+         'SafeFilePublication.detachIfOwned(', 'SafeFilePublication.moveNoReplace(stagedFile, targetFile',
+         'completionService.complete(targetFile, completionPolicy, stagedHash)', 'ExportProgress','AtomicBoolean')
+crash=need('myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCaseCrashSafetyTest.java',
+           'failedConverterCannotDestroyExistingOverwriteTargetAndLeavesNoPartialFile',
+           'racingTargetCreatedAfterConversionIsNotOverwritten',
+           'changedOverwriteTargetIsPreservedInsteadOfBeingDetached',
+           'symbolicLinkDestinationIsRejectedWithoutTouchingLinkedDirectory',
+           'successfulConverterAtomicallyReplacesExistingTarget')
 ui=need('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/ExportController.java',
         'ExportProfileService','ExportHistoryService','onSaveProfileAs','onUpdateProfile','onDeleteProfile','onShowHistory',
         'this::resolveCollision','setProgressVisible(true)','setProgress(value)','CollisionPolicy.ASK')

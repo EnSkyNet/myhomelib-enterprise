@@ -1,10 +1,8 @@
 package com.myhomelibcorp.infrastructure.metadata;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import com.myhomelibcorp.application.metadata.MetadataCandidate;
 import com.myhomelibcorp.application.metadata.MetadataProvider;
 import com.myhomelibcorp.application.metadata.MetadataProviderErrorKind;
@@ -14,6 +12,7 @@ import com.myhomelibcorp.application.metadata.MetadataRequestContext;
 import com.myhomelibcorp.application.metadata.MetadataSource;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.domain.model.valueobject.Isbn;
+import com.myhomelibcorp.infrastructure.download.OnlineHttpClientProvider;
 import com.myhomelibcorp.infrastructure.download.OnlineHttpPolicy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -61,15 +60,22 @@ public final class OpenLibraryMetadataProvider implements MetadataProvider {
     private final Cache<MetadataQuery, List<MetadataCandidate>> cache;
     private final AtomicLong nextRequestNanos = new AtomicLong(System.nanoTime());
 
-    @Autowired
     public OpenLibraryMetadataProvider(ApplicationSettingsPort settings, ObjectMapper objectMapper) {
-        this(
-                settings,
-                objectMapper,
-                new OnlineHttpPolicy(Objects.requireNonNull(settings, "settings")).create(null),
+        this(settings, objectMapper, new OnlineHttpClientProvider(settings).shared());
+    }
+
+    @Autowired
+    public OpenLibraryMetadataProvider(ApplicationSettingsPort settings, ObjectMapper objectMapper,
+                                       OnlineHttpClientProvider httpClients) {
+        this(settings, objectMapper,
+                Objects.requireNonNull(httpClients, "httpClients").shared(),
                 DEFAULT_SEARCH_ENDPOINT,
                 DEFAULT_WEB_BASE,
                 DEFAULT_COVER_BASE);
+    }
+
+    private OpenLibraryMetadataProvider(ApplicationSettingsPort settings, ObjectMapper objectMapper, HttpClient client) {
+        this(settings, objectMapper, client, DEFAULT_SEARCH_ENDPOINT, DEFAULT_WEB_BASE, DEFAULT_COVER_BASE);
     }
 
     OpenLibraryMetadataProvider(
@@ -85,11 +91,7 @@ public final class OpenLibraryMetadataProvider implements MetadataProvider {
         this.searchEndpoint = requireHttpUri(searchEndpoint, "searchEndpoint");
         this.webBase = requireHttpUri(webBase, "webBase");
         this.coverBase = requireHttpUri(coverBase, "coverBase");
-        int cacheMinutes = clamp(settings.getInt("metadata.openLibrary.cacheMinutes", 30), 1, 24 * 60);
-        this.cache = Caffeine.newBuilder()
-                .maximumSize(500)
-                .expireAfterWrite(cacheMinutes, TimeUnit.MINUTES)
-                .build();
+        this.cache = candidateCache(settings.getInt("metadata.openLibrary.cacheMinutes", 30));
     }
 
     @Override
@@ -153,36 +155,8 @@ public final class OpenLibraryMetadataProvider implements MetadataProvider {
 
     private List<MetadataCandidate> handleResponse(HttpResponse<String> response, MetadataQuery query)
             throws MetadataProviderException {
-        int status = response.statusCode();
-        if (status == 429) {
-            throw MetadataProviderException.rateLimited(parseRetryAfter(response));
-        }
-        if (status == 408 || status == 504) throw MetadataProviderException.timeout();
-        if (status == 401 || status == 403) {
-            throw new MetadataProviderException(
-                    MetadataProviderErrorKind.AUTHENTICATION,
-                    "Open Library request was rejected");
-        }
-        if (status >= 500) {
-            throw new MetadataProviderException(
-                    MetadataProviderErrorKind.UNAVAILABLE,
-                    "Open Library is unavailable");
-        }
-        if (status < 200 || status >= 300) {
-            throw new MetadataProviderException(
-                    MetadataProviderErrorKind.FAILED,
-                    "Open Library request failed with HTTP " + status);
-        }
-
-        JsonNode root;
-        try {
-            root = objectMapper.readTree(response.body() == null ? "" : response.body());
-        } catch (JsonProcessingException invalidJson) {
-            throw new MetadataProviderException(
-                    MetadataProviderErrorKind.INVALID_RESPONSE,
-                    "Open Library returned invalid JSON",
-                    invalidJson);
-        }
+        requireSuccessfulResponse(response, PROVIDER_NAME, status -> status == 401 || status == 403);
+        JsonNode root = parseJson(objectMapper, response, PROVIDER_NAME);
         JsonNode docs = root == null ? null : root.get("docs");
         if (docs == null || !docs.isArray()) {
             throw new MetadataProviderException(
@@ -202,8 +176,8 @@ public final class OpenLibraryMetadataProvider implements MetadataProvider {
 
     private Optional<MetadataCandidate> mapCandidate(JsonNode doc, MetadataQuery query, int rank) {
         if (doc == null || !doc.isObject()) return Optional.empty();
-        String key = clean(doc.path("key").asText(""));
-        String title = clean(doc.path("title").asText(""));
+        String key = clean(doc.path("key").asString(""));
+        String title = clean(doc.path("title").asString(""));
         if (key.isBlank() || title.isBlank()) return Optional.empty();
 
         List<String> isbns = validIsbns(doc.get("isbn"));
@@ -273,16 +247,7 @@ public final class OpenLibraryMetadataProvider implements MetadataProvider {
             List<String> authors,
             boolean exactIsbn,
             int rank) {
-        if (exactIsbn) return 0.99;
-        double score = 0.55 + Math.max(0.0, 0.20 - (Math.min(rank, 20) * 0.01));
-        if (query.hasTitle() && normalizeForMatch(title).equals(normalizeForMatch(query.title()))) score += 0.12;
-        if (query.hasAuthor()) {
-            String expected = normalizeForMatch(query.author());
-            if (authors.stream().map(MetadataProviderSupport::normalizeForMatch).anyMatch(expected::equals)) {
-                score += 0.10;
-            }
-        }
-        return Math.min(0.98, roundConfidence(score));
+        return MetadataProviderSupport.rankedMatchConfidence(query, title, authors, exactIsbn, rank, 0.55);
     }
 
     private static List<String> validIsbns(JsonNode node) {

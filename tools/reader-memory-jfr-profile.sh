@@ -12,7 +12,7 @@ for mb in 20 50 100; do
   report="$OUT_DIR/reader-${mb}mb.json"
   jfr_file="$OUT_DIR/reader-${mb}mb.jfr"
   rm -f "$report" "$jfr_file" "$OUT_DIR/reader-${mb}mb-jfr-summary.txt"
-  "$ROOT/tools/invoke-maven.sh" -B -ntp -pl myhomelib-benchmark -am \
+  bash "$ROOT/tools/invoke-maven.sh" -B -ntp -pl myhomelib-benchmark -am \
     -Dtest=PerformanceBaselineTest \
     -Dsurefire.failIfNoSpecifiedTests=false \
     -Dmhl.performance=true \

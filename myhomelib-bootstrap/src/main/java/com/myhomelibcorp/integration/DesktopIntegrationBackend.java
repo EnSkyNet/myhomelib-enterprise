@@ -1,18 +1,30 @@
 package com.myhomelibcorp.integration;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.myhomelibcorp.application.ai.AiConsent;
-import com.myhomelibcorp.application.ai.AiExtensionService;
+import static com.myhomelibcorp.integration.DesktopIntegrationSupport.advanceCursors;
+import static com.myhomelibcorp.integration.DesktopIntegrationSupport.gzipBase64;
+import static com.myhomelibcorp.integration.DesktopIntegrationSupport.nonBlank;
+import static com.myhomelibcorp.integration.DesktopIntegrationSupport.parseLong;
+import static com.myhomelibcorp.integration.DesktopIntegrationSupport.readBounded;
+import static com.myhomelibcorp.integration.DesktopIntegrationSupport.safeId;
+import static com.myhomelibcorp.integration.DesktopIntegrationSupport.safeMessage;
+import static com.myhomelibcorp.integration.DesktopIntegrationSupport.sameEndpoint;
+import static com.myhomelibcorp.integration.DesktopIntegrationSupport.sanitizeFilePart;
+import static com.myhomelibcorp.integration.DesktopIntegrationSupport.sha256;
+import static com.myhomelibcorp.integration.DesktopIntegrationSupport.validateWebDavEndpoint;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 import com.myhomelibcorp.application.ai.AiOperation;
 import com.myhomelibcorp.application.ai.AiProvider;
-import com.myhomelibcorp.application.ai.AiProviderException;
-import com.myhomelibcorp.application.ai.AiRequest;
 import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import com.myhomelibcorp.application.extension.DeviceProfileDetector;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.kobo.KoboSyncService;
+import com.myhomelibcorp.application.kobo.KoboSyncCursor;
+import com.myhomelibcorp.application.annotation.remote.ExportAnnotationsToReadwiseUseCase;
+import com.myhomelibcorp.application.annotation.export.AnnotationExportSelection;
+import com.myhomelibcorp.infrastructure.integration.readwise.ReadwiseAnnotationExportAdapter;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.dto.ExportRequest;
@@ -25,15 +37,11 @@ import com.myhomelibcorp.application.sync.conflict.SyncConflictReviewSelection;
 import com.myhomelibcorp.domain.model.sync.ChangeSet;
 import com.myhomelibcorp.domain.model.sync.SyncEntityType;
 import com.myhomelibcorp.domain.model.sync.SyncRecord;
-import com.myhomelibcorp.infrastructure.ai.OpenAiResponsesProvider;
-import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
 import com.myhomelibcorp.infrastructure.sync.folder.SyncBundleJsonCodec;
 import com.myhomelibcorp.infrastructure.sync.webdav.JdkWebDavHttpClient;
 import com.myhomelibcorp.infrastructure.sync.webdav.WebDavCredentialStore;
 import com.myhomelibcorp.infrastructure.sync.webdav.WebDavSyncAdapter;
 import com.myhomelibcorp.infrastructure.sync.webdav.WebDavSyncSecrets;
-import com.myhomelibcorp.plugin.api.PluginApiRange;
-import com.myhomelibcorp.plugin.api.PluginApiVersion;
 import com.myhomelibcorp.plugin.api.PluginApproval;
 import com.myhomelibcorp.plugin.api.PluginEntrypoint;
 import com.myhomelibcorp.plugin.api.PluginLoader;
@@ -41,7 +49,6 @@ import com.myhomelibcorp.plugin.api.LoadedPlugin;
 import com.myhomelibcorp.plugin.api.PluginManager;
 import com.myhomelibcorp.plugin.api.PluginManifest;
 import com.myhomelibcorp.plugin.api.PluginInvocationResult;
-import com.myhomelibcorp.plugin.api.PluginPermission;
 import com.myhomelibcorp.plugin.api.PluginService;
 import com.myhomelibcorp.plugin.api.PluginState;
 import com.myhomelibcorp.plugin.api.PluginStatus;
@@ -53,14 +60,15 @@ import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.shared.util.SafeFileNameSupport;
 import com.myhomelibcorp.ui.integration.IntegrationBackend;
 import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -72,7 +80,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
@@ -89,47 +96,39 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 /** Production wiring for WebDAV user-data sync, plugin packages and optional AI providers. */
 @Component
+@Slf4j
 public final class DesktopIntegrationBackend implements IntegrationBackend {
     private static final String WEB_PREFIX = "sync.webdav.";
     private static final String WEB_ENDPOINT = WEB_PREFIX + "endpoint";
-    private static final String WEB_LAST_LOCAL_HASH = WEB_PREFIX + "lastLocalHash";
     private static final String WEB_SEQUENCE = WEB_PREFIX + "sequence";
-    private static final String WEB_CURSORS = WEB_PREFIX + "cursors";
-    private static final String SYNC_DEVICE_ID = "sync.deviceId";
     private static final String PLUGIN_APPROVAL_PREFIX = "plugins.approved.";
-    private static final String PLUGIN_MANIFEST = "META-INF/myhomelib-plugin.properties";
-    private static final String SNAPSHOT_PREFIX = "portable-user-data:";
-    private static final int SNAPSHOT_CHUNK_CHARS = 700_000;
-    private static final int MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
-    private static final int MAX_ENCODED_SNAPSHOT_CHARS = 12_000_000;
-    private static final int MAX_SNAPSHOT_CHUNKS =
-            (MAX_ENCODED_SNAPSHOT_CHARS + SNAPSHOT_CHUNK_CHARS - 1) / SNAPSHOT_CHUNK_CHARS;
-    private static final int MAX_PLUGIN_MANIFEST_BYTES = 64 * 1024;
-    private static final TypeReference<Map<String, Long>> CURSOR_MAP_TYPE = new TypeReference<>() { };
-
     private final ApplicationSettingsPort settings;
-    private final PortableUserDataService portableUserData;
+    private final Supplier<PortableUserDataService> portableUserDataSupplier;
     private final RuntimeExtensionRegistry runtimeExtensions;
-    private final ObjectMapper mapper;
-    private final PortableSnapshotConflictService snapshotConflicts;
-    private final List<AiProvider> builtInAiProviders;
+    private final Supplier<ObjectMapper> mapperSupplier;
+    private final WebDavSyncStateStore webDavState;
+    private volatile PortableSnapshotConflictService resolvedSnapshotConflicts;
+    private final DesktopAiIntegration aiIntegration;
     private final LibraryOperationCoordinator operationCoordinator;
+    private volatile KoboSyncService koboSync;
+    private volatile ExportAnnotationsToReadwiseUseCase readwiseExport;
+    private volatile ReadwiseAnnotationExportAdapter readwiseAdapter;
     private final CollectionLifecyclePort collectionLifecycle;
-    private final Optional<SecretStore> secretStore;
+    private volatile Optional<SecretStore> resolvedSecretStore;
     private final PluginManager pluginManager = new PluginManager(new PluginLoader(Set.of()));
     private final Path pluginDir = AppPaths.dataDir().resolve("plugins");
-    private final Map<String, PluginPackage> pluginPackages = new ConcurrentHashMap<>();
+    private final PluginRuntimePackageStager pluginRuntimePackageStager = new PluginRuntimePackageStager(pluginDir);
+    private final Map<String, PluginPackageDescriptor> pluginPackages = new ConcurrentHashMap<>();
     private final Map<String, BundledPlugin> bundledPlugins = new ConcurrentHashMap<>();
     private final Map<String, URLClassLoader> pluginClassLoaders = new ConcurrentHashMap<>();
     private final Map<String, Path> pluginRuntimeWorkspaces = new ConcurrentHashMap<>();
@@ -142,29 +141,47 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                               RuntimeExtensionRegistry runtimeExtensions,
                               ObjectMapper mapper,
                               List<AiProvider> builtInAiProviders) {
-        this(settings, portableUserData, runtimeExtensions, mapper, builtInAiProviders, null, null);
+        this(settings,
+                () -> Objects.requireNonNull(portableUserData, "portableUserData"),
+                runtimeExtensions,
+                () -> Objects.requireNonNull(mapper, "mapper"),
+                () -> builtInAiProviders,
+                null, null);
     }
 
     @Autowired
     public DesktopIntegrationBackend(ApplicationSettingsPort settings,
-                                     PortableUserDataService portableUserData,
+                                     ObjectProvider<PortableUserDataService> portableUserData,
                                      RuntimeExtensionRegistry runtimeExtensions,
-                                     ObjectMapper mapper,
-                                     List<AiProvider> builtInAiProviders,
+                                     ObjectProvider<ObjectMapper> mapper,
+                                     ObjectProvider<AiProvider> builtInAiProviders,
                                      LibraryOperationCoordinator operationCoordinator,
                                      CollectionLifecyclePort collectionLifecycle) {
+        this(settings,
+                Objects.requireNonNull(portableUserData, "portableUserData")::getObject,
+                runtimeExtensions,
+                Objects.requireNonNull(mapper, "mapper")::getObject,
+                () -> Objects.requireNonNull(builtInAiProviders, "builtInAiProviders")
+                        .orderedStream().toList(),
+                operationCoordinator, collectionLifecycle);
+    }
+
+    DesktopIntegrationBackend(ApplicationSettingsPort settings,
+                              Supplier<PortableUserDataService> portableUserDataSupplier,
+                              RuntimeExtensionRegistry runtimeExtensions,
+                              Supplier<ObjectMapper> mapperSupplier,
+                              Supplier<List<AiProvider>> builtInAiProviderSupplier,
+                              LibraryOperationCoordinator operationCoordinator,
+                              CollectionLifecyclePort collectionLifecycle) {
         this.settings = Objects.requireNonNull(settings, "settings");
-        this.portableUserData = Objects.requireNonNull(portableUserData, "portableUserData");
+        this.portableUserDataSupplier = Objects.requireNonNull(portableUserDataSupplier, "portableUserDataSupplier");
         this.runtimeExtensions = Objects.requireNonNull(runtimeExtensions, "runtimeExtensions");
-        this.mapper = Objects.requireNonNull(mapper, "mapper");
-        this.snapshotConflicts = new PortableSnapshotConflictService(this.mapper);
-        this.builtInAiProviders = builtInAiProviders == null ? List.of() : builtInAiProviders.stream()
-                .filter(Objects::nonNull)
-                .sorted(Comparator.comparing(AiProvider::id))
-                .toList();
+        this.mapperSupplier = Objects.requireNonNull(mapperSupplier, "mapperSupplier");
+        Supplier<List<AiProvider>> aiProviders = Objects.requireNonNull(builtInAiProviderSupplier, "builtInAiProviderSupplier");
+        this.webDavState = new WebDavSyncStateStore(this.settings, this.mapperSupplier);
+        this.aiIntegration = new DesktopAiIntegration(this.settings, this.runtimeExtensions, aiProviders, this::secretStore);
         this.operationCoordinator = operationCoordinator;
         this.collectionLifecycle = collectionLifecycle;
-        this.secretStore = openSecretStore();
         synchronizeCalibreRuntimeProperties();
         try {
             SafeFilePublication.createDirectoriesNoLinks(pluginDir, "Plugin directory");
@@ -174,7 +191,105 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         } catch (Exception e) {
             pluginFailures.put("__plugin_directory__", safeMessage(e));
         }
-        ensureDeviceId();
+    }
+
+    @Autowired
+    void setKoboSync(ObjectProvider<KoboSyncService> provider) {
+        this.koboSync = provider == null ? null : provider.getIfAvailable();
+    }
+
+    @Autowired
+    void setReadwise(ObjectProvider<ExportAnnotationsToReadwiseUseCase> exportProvider,
+                     ObjectProvider<ReadwiseAnnotationExportAdapter> adapterProvider) {
+        this.readwiseExport = exportProvider == null ? null : exportProvider.getIfAvailable();
+        this.readwiseAdapter = adapterProvider == null ? null : adapterProvider.getIfAvailable();
+    }
+
+    @Override
+    public ReadwiseStatus readwiseStatus() {
+        ReadwiseAnnotationExportAdapter adapter = readwiseAdapter;
+        return adapter == null ? new ReadwiseStatus(false, false, "")
+                : new ReadwiseStatus(adapter.configured(), adapter.secureStoreAvailable(), adapter.secureStoreBackend());
+    }
+
+    @Override
+    public Result saveReadwiseToken(String token) {
+        try { requireReadwiseAdapter().configureToken(token); return Result.ok("ui.integration.readwise.saved"); }
+        catch (RuntimeException e) { return Result.failTechnical("ui.integration.readwise.save_failed", safeMessage(e)); }
+    }
+
+    @Override
+    public Result clearReadwiseToken() {
+        try { requireReadwiseAdapter().clearToken(); return Result.ok("ui.integration.readwise.cleared"); }
+        catch (RuntimeException e) { return Result.failTechnical("ui.integration.readwise.clear_failed", safeMessage(e)); }
+    }
+
+    @Override
+    public Result testReadwise() {
+        try { requireReadwiseExport().testConnection(); return Result.ok("ui.integration.readwise.test_ok"); }
+        catch (RuntimeException e) { return Result.failTechnical("ui.integration.readwise.test_failed", safeMessage(e)); }
+    }
+
+    @Override
+    public Result exportAnnotationsToReadwise() {
+        try {
+            var result = requireReadwiseExport().export(AnnotationExportSelection.all());
+            return Result.ok("ui.integration.readwise.export_ok", result.exported(), result.unchanged());
+        } catch (RuntimeException e) { return Result.failTechnical("ui.integration.readwise.export_failed", safeMessage(e)); }
+    }
+
+    private ReadwiseAnnotationExportAdapter requireReadwiseAdapter() {
+        if (readwiseAdapter == null) throw new IllegalStateException("Readwise integration is unavailable");
+        return readwiseAdapter;
+    }
+    private ExportAnnotationsToReadwiseUseCase requireReadwiseExport() {
+        if (readwiseExport == null) throw new IllegalStateException("Readwise integration is unavailable");
+        return readwiseExport;
+    }
+
+    @Override
+    public KoboStatus koboStatus() {
+        KoboSyncService service = koboSync;
+        if (service == null) return new KoboStatus("", false, false, "", "", "unavailable");
+        var status = service.status();
+        return new KoboStatus(status.deviceId(), status.enabled(), status.secureStoreAvailable(),
+                status.secureStoreBackend(), status.lastSyncAt() == null ? "" : status.lastSyncAt().toString(), status.lastError());
+    }
+
+    @Override
+    public KoboCredential enableOrRotateKobo() {
+        KoboSyncService service = koboSync;
+        if (service == null) return new KoboCredential(Result.fail("ui.integration.kobo.unavailable"), "", "");
+        try {
+            var credential = service.enableOrRotate();
+            return new KoboCredential(Result.ok("ui.integration.kobo.credential_ready"), credential.deviceId(), credential.token());
+        } catch (RuntimeException failure) {
+            return new KoboCredential(Result.failTechnical("ui.integration.kobo.enable_failed", safeMessage(failure)), "", "");
+        }
+    }
+
+    @Override
+    public Result revokeKobo() {
+        KoboSyncService service = koboSync;
+        if (service == null) return Result.fail("ui.integration.kobo.unavailable");
+        try {
+            service.revoke();
+            return Result.ok("ui.integration.kobo.revoked");
+        } catch (RuntimeException failure) {
+            return Result.failTechnical("ui.integration.kobo.revoke_failed", safeMessage(failure));
+        }
+    }
+
+    @Override
+    public Result synchronizeKoboNow() {
+        KoboSyncService service = koboSync;
+        if (service == null) return Result.fail("ui.integration.kobo.unavailable");
+        try {
+            var batch = service.synchronize(KoboSyncCursor.initial(), 1);
+            return Result.ok("ui.integration.kobo.sync_ready", batch.changes().size());
+        } catch (RuntimeException failure) {
+            return Result.failTechnical("ui.integration.kobo.sync_failed", safeMessage(failure));
+        }
     }
 
     // ==================== WebDAV ====================
@@ -182,28 +297,28 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
     @Override
     public WebDavConfiguration webDavConfiguration() {
         String endpoint = settings.get(WEB_ENDPOINT, "").trim();
-        String deviceId = ensureDeviceId();
-        if (endpoint.isBlank() || secretStore.isEmpty()) {
-            return new WebDavConfiguration(endpoint, "", "", false, secretStore.isPresent(),
-                    secretStore.map(SecretStore::backendId).orElse(""), deviceId);
+        String deviceId = webDavState.ensureDeviceId();
+        if (endpoint.isBlank() || secretStore().isEmpty()) {
+            return new WebDavConfiguration(endpoint, "", "", false, secretStore().isPresent(),
+                    secretStore().map(SecretStore::backendId).orElse(""), deviceId);
         }
         try {
             URI uri = validateWebDavEndpoint(endpoint);
-            Optional<WebDavSyncSecrets> loaded = new WebDavCredentialStore(secretStore.orElseThrow(), uri).load();
+            Optional<WebDavSyncSecrets> loaded = new WebDavCredentialStore(secretStore().orElseThrow(), uri).load();
             return loaded.map(value -> new WebDavConfiguration(endpoint, value.username(), value.syncKeyBase64(),
-                            true, true, secretStore.orElseThrow().backendId(), deviceId))
+                            true, true, secretStore().orElseThrow().backendId(), deviceId))
                     .orElseGet(() -> new WebDavConfiguration(endpoint, "", "", false, true,
-                            secretStore.orElseThrow().backendId(), deviceId));
+                            secretStore().orElseThrow().backendId(), deviceId));
         } catch (Exception e) {
             return new WebDavConfiguration(endpoint, "", "", false, true,
-                    secretStore.orElseThrow().backendId(), deviceId);
+                    secretStore().orElseThrow().backendId(), deviceId);
         }
     }
 
     @Override
     public synchronized Result saveWebDavConfiguration(String endpoint, String username, String password, String syncKey) {
         try {
-            SecretStore secretsBackend = secretStore.orElseThrow(() -> new IllegalStateException(
+            SecretStore secretsBackend = secretStore().orElseThrow(() -> new IllegalStateException(
                     "Захищене сховище облікових даних недоступне. WebDAV-синхронізація не зберігатиме пароль у відкритому вигляді."));
             URI uri = validateWebDavEndpoint(endpoint);
             String oldEndpoint = settings.get(WEB_ENDPOINT, "").trim();
@@ -229,12 +344,16 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             }
 
             settings.put(WEB_ENDPOINT, uri.toString());
-            ensureDeviceId();
+            webDavState.ensureDeviceId();
             if (!oldEndpoint.isBlank() && !sameEndpoint(oldEndpoint, uri.toString())) {
                 try {
                     new WebDavCredentialStore(secretsBackend, validateWebDavEndpoint(oldEndpoint)).delete();
-                } catch (Exception ignored) { }
-                resetWebDavState();
+                } catch (Exception cleanupFailure) {
+                    log.warn("WebDAV endpoint changed but credentials for the previous endpoint could not be removed: {}",
+                            cleanupFailure.toString());
+                }
+                webDavState.reset();
+                settings.remove(WEB_SEQUENCE);
             }
             return Result.ok("ui.integration.webdav.saved");
         } catch (Exception e) {
@@ -246,14 +365,23 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
     public synchronized Result clearWebDavConfiguration() {
         String endpoint = settings.get(WEB_ENDPOINT, "").trim();
         try {
-            if (!endpoint.isBlank() && secretStore.isPresent()) {
-                new WebDavCredentialStore(secretStore.orElseThrow(), validateWebDavEndpoint(endpoint)).delete();
+            if (!endpoint.isBlank()) {
+                SecretStore backend = secretStore().orElseThrow(() -> new IllegalStateException(
+                        "Secure secret store is unavailable; WebDAV credentials cannot be removed safely"));
+                new WebDavCredentialStore(backend, validateWebDavEndpoint(endpoint)).delete();
             }
-        } catch (Exception ignored) { }
-        settings.remove(WEB_ENDPOINT);
-        resetWebDavState();
-        pendingSync.clear();
-        return Result.ok("ui.integration.webdav.cleared");
+            settings.remove(WEB_ENDPOINT);
+            webDavState.reset();
+            settings.remove(WEB_SEQUENCE);
+            pendingSync.clear();
+            return Result.ok("ui.integration.webdav.cleared");
+        } catch (Exception failure) {
+            // Keep endpoint/state intact so the user can retry. Dropping the endpoint after a native
+            // secret-store failure would orphan credentials that the application can no longer address.
+            log.warn("Cannot clear WebDAV configuration safely; configuration was preserved: {}",
+                    failure.toString());
+            return Result.failTechnical("ui.integration.webdav.clear_failed", safeMessage(failure));
+        }
     }
 
     @Override
@@ -275,10 +403,10 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             lease = acquireWebDavSyncLease();
             String originCollectionId = activeCollectionIdForSync();
             WebDavSyncAdapter adapter = webDavAdapter();
-            String deviceId = ensureDeviceId();
+            String deviceId = webDavState.ensureDeviceId();
             Snapshot local = exportSnapshot();
-            String baseline = settings.get(WEB_LAST_LOCAL_HASH, "").trim();
-            Map<String, Long> cursors = loadCursorMap();
+            String baseline = webDavState.lastLocalHash();
+            Map<String, Long> cursors = webDavState.loadCursors();
             List<ChangeSet> pulled = adapter.pull(cursors);
             Map<String, Long> nextCursors = advanceCursors(cursors, pulled);
 
@@ -287,17 +415,17 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 if (baseline.isBlank()) {
                     long seq = pushSnapshot(adapter, local, deviceId);
                     nextCursors.put(deviceId, seq);
-                    commitSyncState(local.hash(), nextCursors);
+                    webDavState.commit(local.hash(), nextCursors);
                     return new WebDavSyncAttempt(SyncState.COMPLETED,
                             UserMessage.of("ui.integration.webdav.sync.initial_uploaded"), "", List.of());
                 }
                 if (baseline.equals(local.hash())) {
-                    saveCursorMap(nextCursors);
+                    webDavState.saveCursors(nextCursors);
                     return new WebDavSyncAttempt(SyncState.NO_CHANGES, UserMessage.of("ui.integration.webdav.sync.no_changes"), "", List.of());
                 }
                 long seq = pushSnapshot(adapter, local, deviceId);
                 nextCursors.put(deviceId, seq);
-                commitSyncState(local.hash(), nextCursors);
+                webDavState.commit(local.hash(), nextCursors);
                 return new WebDavSyncAttempt(SyncState.COMPLETED,
                         UserMessage.of("ui.integration.webdav.sync.local_uploaded"), "", List.of());
             }
@@ -314,7 +442,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
 
             RemoteSnapshot remote = external.stream().max(Comparator.comparing(value -> value.changeSet().createdAt())).orElseThrow();
             if (local.hash().equals(remote.snapshot().hash())) {
-                commitSyncState(local.hash(), nextCursors);
+                webDavState.commit(local.hash(), nextCursors);
                 return new WebDavSyncAttempt(SyncState.NO_CHANGES,
                         UserMessage.of("ui.integration.webdav.sync.same"), "", List.of());
             }
@@ -323,19 +451,19 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             boolean remoteChanged = baseline.isBlank() || !baseline.equals(remote.snapshot().hash());
             if (!localChanged && remoteChanged) {
                 Snapshot restored = restoreRemoteSnapshot(remote.snapshot());
-                commitSyncState(restored.hash(), nextCursors);
+                webDavState.commit(restored.hash(), nextCursors);
                 return new WebDavSyncAttempt(SyncState.COMPLETED,
                         UserMessage.of("ui.integration.webdav.sync.remote_applied"), "", List.of());
             }
             if (localChanged && !remoteChanged) {
                 long seq = pushSnapshot(adapter, local, deviceId);
                 nextCursors.put(deviceId, seq);
-                commitSyncState(local.hash(), nextCursors);
+                webDavState.commit(local.hash(), nextCursors);
                 return new WebDavSyncAttempt(SyncState.COMPLETED,
                         UserMessage.of("ui.integration.webdav.sync.local_uploaded"), "", List.of());
             }
 
-            List<SyncConflictReviewItem> conflicts = snapshotConflicts.conflicts(local.bytes(), remote.snapshot().bytes());
+            List<SyncConflictReviewItem> conflicts = snapshotConflicts().conflicts(local.bytes(), remote.snapshot().bytes());
             if (conflicts.isEmpty()) {
                 return new WebDavSyncAttempt(SyncState.FAILED,
                         UserMessage.of("ui.integration.webdav.sync.conflict_sections_unknown"),
@@ -372,12 +500,12 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 return Result.fail("ui.integration.webdav.conflict.stale");
             }
             WebDavSyncAdapter adapter = webDavAdapter();
-            String deviceId = ensureDeviceId();
+            String deviceId = webDavState.ensureDeviceId();
             Snapshot currentLocal = exportSnapshot();
             if (!currentLocal.hash().equals(pending.local().hash())) {
                 return Result.fail("ui.integration.webdav.conflict.local_changed");
             }
-            Map<String, Long> currentCursors = loadCursorMap();
+            Map<String, Long> currentCursors = webDavState.loadCursors();
             List<ChangeSet> check = adapter.pull(currentCursors);
             Optional<ChangeSet> originalRemote = check.stream()
                     .filter(set -> set.changeSetId().equals(pending.remote().changeSet().changeSetId()))
@@ -400,7 +528,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 return Result.fail("ui.integration.webdav.conflict.newer_remote");
             }
 
-            byte[] mergedBytes = snapshotConflicts.merge(
+            byte[] mergedBytes = snapshotConflicts().merge(
                     pending.local().bytes(), pending.remote().snapshot().bytes(), selections);
             Snapshot requested = new Snapshot(mergedBytes, sha256(mergedBytes));
             Snapshot resolved = currentLocal.hash().equals(requested.hash())
@@ -412,7 +540,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             long seq = pushSnapshot(adapter, resolved, deviceId);
             Map<String, Long> nextCursors = new HashMap<>(pending.nextCursors());
             nextCursors.put(deviceId, seq);
-            commitSyncState(resolved.hash(), nextCursors);
+            webDavState.commit(resolved.hash(), nextCursors);
             return Result.ok("ui.integration.webdav.conflict.resolved");
         } catch (Exception e) {
             if (lease != null) lease.markFailed(e);
@@ -446,7 +574,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                     manifest.permissions().stream().map(Enum::name).sorted().toList(),
                     "BUNDLED", failure, bundled.fingerprint(), false));
         }
-        for (PluginPackage pkg : pluginPackages.values()) {
+        for (PluginPackageDescriptor pkg : pluginPackages.values()) {
             PluginStatus status = pluginManager.status(pkg.manifest().pluginId()).orElse(null);
             String state = status == null ? PluginState.DISABLED.name() : status.state().name();
             String trust = status == null ? PluginTrustLevel.UNTRUSTED.name() : status.trustLevel().name();
@@ -471,6 +599,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 throw new IllegalArgumentException("Плагін має бути JAR-файлом");
             }
             SafeFilePublication.createDirectoriesNoLinks(pluginDir, "Plugin directory");
+            scanPluginPackages();
             workspace = SafeFilePublication.createPrivateWorkspace(pluginDir, ".plugin-install-", "Plugin installation workspace");
             Path staged = workspace.resolve("package.jar");
             try (InputStream in = Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS)) {
@@ -478,11 +607,11 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             }
 
             // Inspect only stable private bytes. The chooser path may change immediately after selection.
-            PluginManifest manifest = readPluginManifest(staged);
+            PluginManifest manifest = PluginPackageInspector.readManifest(staged);
             pluginManager.inspect(manifest); // API compatibility and metadata validation only.
             String targetName = manifest.pluginId() + "-" + sanitizeFilePart(manifest.version()) + ".jar";
             Path target = pluginDir.resolve(targetName).toAbsolutePath().normalize();
-            PluginPackage existing = pluginPackages.get(manifest.pluginId());
+            PluginPackageDescriptor existing = pluginPackages.get(manifest.pluginId());
             if (existing != null && pluginManager.status(manifest.pluginId())
                     .map(PluginStatus::state).orElse(PluginState.DISABLED) == PluginState.ENABLED) {
                 throw new IllegalStateException("Спочатку вимкніть поточну версію плагіна " + manifest.displayName());
@@ -534,9 +663,16 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             if (!pluginPackages.containsKey(pluginId) && bundledPlugins.containsKey(pluginId)) {
                 return enableBundledPlugin(pluginId);
             }
-            PluginPackage pkg = requirePluginPackage(pluginId);
+            PluginPackageDescriptor pkg = requirePluginPackage(pluginId);
             disablePluginInternal(pluginId);
-            PluginRuntimePackage runtimePackage = stageVerifiedPluginPackageForLoad(pkg);
+            PluginRuntimePackageStager.RuntimePackage runtimePackage;
+            try {
+                runtimePackage = pluginRuntimePackageStager.stageVerified(pkg);
+            } catch (PluginRuntimePackageStager.PackageChangedException changed) {
+                clearPluginApprovals(pkg.manifest().pluginId());
+                pluginManager.resetApproval(pkg.manifest());
+                throw changed;
+            }
             URLClassLoader classLoader = new URLClassLoader(
                     new URL[]{runtimePackage.jar().toUri().toURL()}, getClass().getClassLoader());
             boolean success = false;
@@ -593,7 +729,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             if (!pluginPackages.containsKey(pluginId) && bundledPlugins.containsKey(pluginId)) {
                 return Result.fail("ui.integration.plugin.bundled_remove_forbidden");
             }
-            PluginPackage pkg = requirePluginPackage(pluginId);
+            PluginPackageDescriptor pkg = requirePluginPackage(pluginId);
             disablePluginInternal(pluginId);
             clearPluginApprovals(pkg.manifest().pluginId());
             SafeFilePublication.removeIfOwned(pkg.jar(), pkg.sha256(), "Plugin package removal");
@@ -609,104 +745,46 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
 
     @Override
     public AiConfiguration aiConfiguration() {
-        boolean apiKey = false;
-        if (secretStore.isPresent()) {
-            try {
-                apiKey = secretStore.orElseThrow().read("myhomelib.ai." + OpenAiResponsesProvider.ID + ".api-key").isPresent();
-            } catch (Exception ignored) { }
-        }
-        return new AiConfiguration(
-                settings.get(OpenAiResponsesProvider.ENDPOINT_KEY, OpenAiResponsesProvider.DEFAULT_ENDPOINT),
-                settings.get(OpenAiResponsesProvider.MODEL_KEY, OpenAiResponsesProvider.DEFAULT_MODEL),
-                Math.max(1, settings.getInt(OpenAiResponsesProvider.MAX_OUTPUT_TOKENS_KEY, 2048)),
-                apiKey,
-                secretStore.isPresent(),
-                secretStore.map(SecretStore::backendId).orElse(""));
+        return aiIntegration.configuration();
     }
 
     @Override
     public synchronized List<AiProviderInfo> aiProviders() {
-        return currentAiProviders().stream()
-                .map(provider -> new AiProviderInfo(provider.id(), provider.displayName(),
-                        provider.capabilities().operations().stream().map(Enum::name).sorted().toList(),
-                        provider.capabilities().networkRequired(),
-                        provider.capabilities().requiredSecrets().stream().sorted().toList()))
-                .sorted(Comparator.comparing(AiProviderInfo::displayName, String.CASE_INSENSITIVE_ORDER))
-                .toList();
+        return aiIntegration.providers();
     }
 
     @Override
     public synchronized Result saveAiConfiguration(String endpoint, String model, int maxOutputTokens, String apiKey) {
-        try {
-            OpenAiResponsesProvider.validateEndpoint(endpoint);
-            if (model == null || model.isBlank()) throw new IllegalArgumentException("Вкажіть модель ШІ");
-            if (maxOutputTokens < 1 || maxOutputTokens > 32768) {
-                throw new IllegalArgumentException("Максимальна кількість токенів відповіді має бути від 1 до 32768");
-            }
-            settings.put(OpenAiResponsesProvider.ENDPOINT_KEY, endpoint.trim());
-            settings.put(OpenAiResponsesProvider.MODEL_KEY, model.trim());
-            settings.putInt(OpenAiResponsesProvider.MAX_OUTPUT_TOKENS_KEY, maxOutputTokens);
-            if (apiKey != null && !apiKey.isBlank()) {
-                return saveAiProviderSecret(OpenAiResponsesProvider.ID, "api-key", apiKey);
-            }
-            return Result.ok("ui.integration.ai.settings_saved");
-        } catch (Exception e) {
-            return Result.failTechnical("ui.integration.ai.settings_save_failed", safeMessage(e));
-        }
+        return aiIntegration.saveConfiguration(endpoint, model, maxOutputTokens, apiKey);
     }
 
     @Override
     public synchronized Result clearAiApiKey() {
-        return deleteAiProviderSecret(OpenAiResponsesProvider.ID, "api-key");
+        return aiIntegration.clearApiKey();
     }
 
     @Override
     public synchronized Result saveAiProviderSecret(String providerId, String secretName, String value) {
-        try {
-            if (value == null || value.isBlank()) throw new IllegalArgumentException("Секретне значення порожнє");
-            AiProvider provider = requireAiProvider(providerId);
-            AiExtensionService service = aiService();
-            service.saveProviderSecret(provider.id(), secretName, value);
-            return Result.ok("ui.integration.ai.secret_saved", secretStore.map(SecretStore::backendId).orElse(""));
-        } catch (Exception e) {
-            return Result.failTechnical("ui.integration.ai.secret_save_failed", safeMessage(e));
-        }
+        return aiIntegration.saveProviderSecret(providerId, secretName, value);
     }
 
     @Override
     public synchronized Result deleteAiProviderSecret(String providerId, String secretName) {
-        try {
-            AiProvider provider = requireAiProvider(providerId);
-            aiService().deleteProviderSecret(provider.id(), secretName);
-            return Result.ok("ui.integration.ai.secret_deleted");
-        } catch (Exception e) {
-            return Result.failTechnical("ui.integration.ai.secret_delete_failed", safeMessage(e));
-        }
+        return aiIntegration.deleteProviderSecret(providerId, secretName);
     }
 
     @Override
     public AiExecutionResult executeAi(String providerId, String bookId, AiOperation operation, String prompt,
                                        String bookContent, boolean allowNetwork, boolean allowBookContent) {
-        try {
-            AiProvider provider = requireAiProvider(providerId);
-            AiExtensionService service = aiService();
-            AiRequest request = new AiRequest(bookId, operation, prompt, bookContent);
-            var response = service.executeWithTransientBookOptIn(provider.id(), request,
-                    new AiConsent(allowNetwork, allowBookContent), Duration.ofSeconds(120), new AtomicBoolean(false));
-            return new AiExecutionResult(true, response.text(), "");
-        } catch (AiProviderException e) {
-            return new AiExecutionResult(false, safeMessage(e), e.kind().name());
-        } catch (Exception e) {
-            return new AiExecutionResult(false, safeMessage(e), "FAILED");
-        }
+        return aiIntegration.execute(providerId, bookId, operation, prompt, bookContent, allowNetwork, allowBookContent);
     }
 
     private void synchronizeCalibreRuntimeProperties() {
         String executable = settings.get("converter.calibre.executable", "").trim();
-        String timeout = settings.get("converter.calibre.timeoutSeconds", "300").trim();
+        String timeout = settings.get("converter.calibre.timeoutSeconds", "1800").trim();
         if (executable.isBlank()) System.clearProperty("myhomelib.calibre.executable");
         else System.setProperty("myhomelib.calibre.executable", executable);
-        System.setProperty("myhomelib.calibre.timeoutSeconds", timeout.isBlank() ? "300" : timeout);
+        System.setProperty("myhomelib.calibre.timeoutSeconds", timeout.isBlank() ? "1800" : timeout);
     }
 
     // ==================== lifecycle/helpers ====================
@@ -718,7 +796,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
     }
 
     private WebDavSyncAdapter webDavAdapter() {
-        SecretStore backend = secretStore.orElseThrow(() -> new IllegalStateException(
+        SecretStore backend = secretStore().orElseThrow(() -> new IllegalStateException(
                 "Захищене сховище облікових даних недоступне на цій системі"));
         String endpoint = settings.get(WEB_ENDPOINT, "").trim();
         if (endpoint.isBlank()) throw new IllegalStateException("WebDAV не налаштовано");
@@ -731,7 +809,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 .build();
         return new WebDavSyncAdapter(uri,
                 new JdkWebDavHttpClient(client, Duration.ofSeconds(60), SyncBundleJsonCodec.MAX_BUNDLE_BYTES + 1024 * 1024),
-                new SyncBundleJsonCodec(mapper),
+                new SyncBundleJsonCodec(mapper()),
                 () -> credentials.load().orElseThrow(() -> new IllegalStateException("Облікові дані WebDAV недоступні")),
                 2, Duration.ofMillis(350));
     }
@@ -741,14 +819,14 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 AppPaths.cacheDir(), ".mhl-webdav-export-", "WebDAV snapshot export workspace");
         Path temp = workspace.resolve("user-data.json");
         try {
-            portableUserData.exportTo(temp);
+            portableUserData().exportTo(temp);
             SafeFilePublication.requireSafeRegularFile(temp, "WebDAV exported user-data snapshot");
-            byte[] bytes = readBounded(temp, MAX_SNAPSHOT_BYTES,
+            byte[] bytes = readBounded(temp, WebDavSnapshotCodec.MAX_SNAPSHOT_BYTES,
                     "Користувацькі дані перевищують безпечний ліміт синхронізації 64 МБ");
-            JsonNode root = mapper.readTree(bytes);
+            JsonNode root = mapper().readTree(bytes);
             if (!(root instanceof ObjectNode object)) throw new IOException("Експорт користувацьких даних має некоректний формат");
             object.remove("exportedAt"); // Timestamp must not create a false local change on every sync.
-            byte[] canonical = mapper.writeValueAsBytes(object);
+            byte[] canonical = mapper().writeValueAsBytes(object);
             return new Snapshot(canonical, sha256(canonical));
         } finally {
             cleanupWorkspace(workspace, "WebDAV snapshot export workspace");
@@ -767,10 +845,10 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             SafeFilePublication.copyFresh(new ByteArrayInputStream(before.bytes()), rollbackFile,
                     "WebDAV rollback snapshot");
             try {
-                portableUserData.restoreFrom(remoteFile);
+                portableUserData().restoreFrom(remoteFile);
             } catch (Exception failure) {
                 try {
-                    portableUserData.restoreFrom(rollbackFile);
+                    portableUserData().restoreFrom(rollbackFile);
                 } catch (Exception rollbackFailure) {
                     failure.addSuppressed(rollbackFailure);
                 }
@@ -814,98 +892,19 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
 
     private long pushSnapshot(WebDavSyncAdapter adapter, Snapshot snapshot, String deviceId) throws IOException {
         long sequence = Math.max(0L, parseLong(settings.get(WEB_SEQUENCE, "0"), 0L)) + 1L;
-        Instant now = Instant.now();
-        String encoded = gzipBase64(snapshot.bytes());
-        if (encoded.length() > MAX_ENCODED_SNAPSHOT_CHARS) {
-            throw new IOException("Стиснений пакет користувацьких даних завеликий для одного безпечного WebDAV-пакета");
-        }
-        int count = Math.max(1, (encoded.length() + SNAPSHOT_CHUNK_CHARS - 1) / SNAPSHOT_CHUNK_CHARS);
-        List<SyncRecord> records = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            int start = i * SNAPSHOT_CHUNK_CHARS;
-            int end = Math.min(encoded.length(), start + SNAPSHOT_CHUNK_CHARS);
-            String index = String.format(Locale.ROOT, "%05d", i);
-            Map<String, String> payload = new LinkedHashMap<>();
-            payload.put("kind", "portable-user-data-v1");
-            payload.put("hash", snapshot.hash());
-            payload.put("index", Integer.toString(i));
-            payload.put("count", Integer.toString(count));
-            payload.put("encoding", "gzip+base64");
-            payload.put("chunk", encoded.substring(start, end));
-            records.add(SyncRecord.live(SNAPSHOT_PREFIX + index, SyncEntityType.SETTING, SNAPSHOT_PREFIX + index,
-                    Math.max(0, sequence - 1), sequence, now, deviceId, payload));
-        }
-        ChangeSet set = new ChangeSet(UUID.randomUUID().toString(), deviceId, sequence,
-                sequence <= 1 ? "" : deviceId + ":" + (sequence - 1), now,
-                com.myhomelibcorp.domain.model.sync.SyncSchema.CURRENT_VERSION, records);
+        ChangeSet set = WebDavSnapshotCodec.encode(snapshot.bytes(), snapshot.hash(), sequence, deviceId, Instant.now());
         adapter.push(set);
         settings.put(WEB_SEQUENCE, Long.toString(sequence));
         return sequence;
     }
 
     private boolean isSnapshotChangeSet(ChangeSet set) {
-        if (set == null || set.records().isEmpty()) return false;
-        return set.records().stream().allMatch(record -> record.entityType() == SyncEntityType.SETTING
-                && record.syncId().startsWith(SNAPSHOT_PREFIX)
-                && "portable-user-data-v1".equals(record.payload().get("kind")));
+        return WebDavSnapshotCodec.supports(set);
     }
 
     private Snapshot decodeSnapshot(ChangeSet set) throws IOException {
-        if (!isSnapshotChangeSet(set)) throw new IOException("Пакет не є підтримуваною версією синхронізації користувацьких даних");
-        if (set.records().size() > MAX_SNAPSHOT_CHUNKS) {
-            throw new IOException("WebDAV snapshot contains too many chunks");
-        }
-        List<SyncRecord> records;
-        try {
-            records = set.records().stream()
-                    .sorted(Comparator.comparingInt(record -> parseSnapshotInt(record, "index")))
-                    .toList();
-        } catch (IllegalArgumentException invalidIndex) {
-            throw new IOException("WebDAV snapshot contains an invalid chunk index", invalidIndex);
-        }
-        int expectedCount;
-        try {
-            expectedCount = parseSnapshotInt(records.getFirst(), "count");
-        } catch (IllegalArgumentException invalidCount) {
-            throw new IOException("WebDAV snapshot contains an invalid chunk count", invalidCount);
-        }
-        String expectedHash = records.getFirst().payload().getOrDefault("hash", "");
-        if (expectedCount < 1 || expectedCount > MAX_SNAPSHOT_CHUNKS
-                || expectedCount != records.size() || !expectedHash.matches("[0-9a-fA-F]{64}")) {
-            throw new IOException("Неповний пакет WebDAV-синхронізації");
-        }
-        int totalChars = 0;
-        for (SyncRecord record : records) {
-            String chunk = record.payload().getOrDefault("chunk", "");
-            if (chunk.length() > SNAPSHOT_CHUNK_CHARS
-                    || totalChars > MAX_ENCODED_SNAPSHOT_CHARS - chunk.length()) {
-                throw new IOException("WebDAV snapshot exceeds the encoded safety limit");
-            }
-            totalChars += chunk.length();
-        }
-        StringBuilder encoded = new StringBuilder(totalChars);
-        for (int i = 0; i < records.size(); i++) {
-            SyncRecord record = records.get(i);
-            if (!Integer.toString(i).equals(record.payload().get("index"))
-                    || !Integer.toString(expectedCount).equals(record.payload().get("count"))
-                    || !expectedHash.equals(record.payload().get("hash"))
-                    || !"gzip+base64".equals(record.payload().get("encoding"))) {
-                throw new IOException("Пошкоджено послідовність частин WebDAV-пакета");
-            }
-            encoded.append(record.payload().getOrDefault("chunk", ""));
-        }
-        byte[] bytes = gunzipBase64(encoded.toString());
-        String actual = sha256(bytes);
-        if (!expectedHash.equals(actual)) throw new IOException("Контрольна сума WebDAV-пакета не збігається");
-        return new Snapshot(bytes, actual);
-    }
-
-    private static int parseSnapshotInt(SyncRecord record, String key) {
-        String value = record == null ? null : record.payload().get(key);
-        if (value == null || value.isBlank() || value.length() > 8) {
-            throw new IllegalArgumentException("Invalid snapshot integer field: " + key);
-        }
-        return Integer.parseInt(value);
+        WebDavSnapshotCodec.DecodedSnapshot decoded = WebDavSnapshotCodec.decode(set);
+        return new Snapshot(decoded.bytes(), decoded.hash());
     }
 
     private List<RemoteSnapshot> latestExternalSnapshots(List<ChangeSet> pulled, String localDeviceId) throws IOException {
@@ -920,104 +919,22 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         return List.copyOf(result);
     }
 
-    private Map<String, Long> loadCursorMap() {
-        String raw = settings.get(WEB_CURSORS, "").trim();
-        if (raw.isBlank()) return new HashMap<>();
-        try {
-            Map<String, Long> parsed = mapper.readValue(raw, CURSOR_MAP_TYPE);
-            Map<String, Long> clean = new HashMap<>();
-            parsed.forEach((key, value) -> {
-                if (key != null && !key.isBlank() && value != null && value >= 0) clean.put(key, value);
-            });
-            return clean;
-        } catch (Exception e) {
-            return new HashMap<>();
-        }
-    }
-
-    private void saveCursorMap(Map<String, Long> cursors) {
-        try {
-            settings.put(WEB_CURSORS, mapper.writeValueAsString(cursors == null ? Map.of() : cursors));
-        } catch (Exception e) {
-            throw new IllegalStateException("Не вдалося зберегти курсор WebDAV-синхронізації", e);
-        }
-    }
-
-    private static Map<String, Long> advanceCursors(Map<String, Long> original, List<ChangeSet> pulled) {
-        Map<String, Long> result = new HashMap<>(original == null ? Map.of() : original);
-        if (pulled != null) {
-            for (ChangeSet set : pulled) {
-                if (set == null) continue;
-                result.merge(set.sourceDeviceId(), set.sequence(), Math::max);
-            }
-        }
-        return result;
-    }
-
-    private void commitSyncState(String localHash, Map<String, Long> cursors) {
-        settings.put(WEB_LAST_LOCAL_HASH, localHash);
-        saveCursorMap(cursors);
-    }
-
-    private void resetWebDavState() {
-        settings.remove(WEB_LAST_LOCAL_HASH);
-        settings.remove(WEB_SEQUENCE);
-        settings.remove(WEB_CURSORS);
-    }
-
-    private String ensureDeviceId() {
-        String current = settings.get(SYNC_DEVICE_ID, "").trim();
-        if (!current.isBlank()) return current;
-        String generated = "device-" + UUID.randomUUID();
-        settings.put(SYNC_DEVICE_ID, generated);
-        return generated;
-    }
-
-    private static URI validateWebDavEndpoint(String value) {
-        URI uri;
-        try {
-            uri = URI.create(Objects.requireNonNullElse(value, "").trim()).normalize();
-        } catch (RuntimeException e) {
-            throw new IllegalArgumentException("Некоректна URL-адреса WebDAV", e);
-        }
-        String scheme = uri.getScheme();
-        if (scheme == null || !("https".equalsIgnoreCase(scheme) || isLoopbackHttp(uri))) {
-            throw new IllegalArgumentException("WebDAV має використовувати HTTPS; HTTP дозволено лише для localhost");
-        }
-        if (uri.getUserInfo() != null) throw new IllegalArgumentException("Не додавайте логін або пароль у URL WebDAV");
-        if (uri.getHost() == null || uri.getHost().isBlank()) throw new IllegalArgumentException("У URL WebDAV відсутній сервер");
-        String text = uri.toString();
-        if (!text.endsWith("/")) text += "/";
-        return URI.create(text);
-    }
-
-    private static boolean isLoopbackHttp(URI uri) {
-        if (!"http".equalsIgnoreCase(uri.getScheme())) return false;
-        String host = uri.getHost();
-        return "localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host) || "::1".equals(host);
-    }
-
-    private static boolean sameEndpoint(String left, String right) {
-        try { return validateWebDavEndpoint(left).equals(validateWebDavEndpoint(right)); }
-        catch (Exception ignored) { return Objects.equals(left, right); }
-    }
-
     private void scanPluginPackages() throws IOException {
         SafeFilePublication.createDirectoriesNoLinks(pluginDir, "Plugin directory");
-        Map<String, PluginPackage> found = new LinkedHashMap<>();
+        Map<String, PluginPackageDescriptor> found = new LinkedHashMap<>();
         try (var stream = Files.list(pluginDir)) {
             for (Path jar : stream.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
                     .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar"))
                     .sorted().toList()) {
                 try {
-                    PluginPackage pkg = inspectPluginPackage(jar);
+                    PluginPackageDescriptor pkg = PluginPackageInspector.inspect(jar);
                     PluginManifest manifest = pkg.manifest();
-                    PluginPackage previous = found.putIfAbsent(manifest.pluginId(), pkg);
+                    PluginPackageDescriptor previous = found.putIfAbsent(manifest.pluginId(), pkg);
                     if (previous != null) {
                         pluginFailures.put(manifest.pluginId(), "Знайдено кілька JAR з однаковим pluginId; використовується " + previous.jar().getFileName());
                         continue;
                     }
-                    PluginPackage known = pluginPackages.get(manifest.pluginId());
+                    PluginPackageDescriptor known = pluginPackages.get(manifest.pluginId());
                     if (known != null && !known.sha256().equals(pkg.sha256())) {
                         disablePluginInternal(manifest.pluginId());
                         clearPluginApprovals(manifest.pluginId());
@@ -1036,49 +953,6 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         found.forEach(pluginPackages::put);
     }
 
-    private PluginPackage inspectPluginPackage(Path jar) throws IOException {
-        Path safeJar = SafeFilePublication.requireSafeRegularFile(jar, "Plugin JAR");
-        try (SafeZipArchive archive = SafeZipArchive.open(safeJar, StandardCharsets.UTF_8, "Plugin JAR")) {
-            // Hash and manifest must describe the same already-open bytes. A plugin package can be
-            // replaced while the integration screen is open, so two pathname opens are not a
-            // coherent approval identity. enablePlugin() later re-stages and rechecks this hash.
-            String hash = archive.sha256("Plugin package");
-            PluginManifest manifest = readPluginManifest(archive);
-            return new PluginPackage(jar.toAbsolutePath().normalize(), manifest, hash);
-        }
-    }
-
-    private PluginManifest readPluginManifest(Path jar) throws IOException {
-        Path safeJar = SafeFilePublication.requireSafeRegularFile(jar, "Plugin JAR");
-        try (SafeZipArchive archive = SafeZipArchive.open(safeJar, StandardCharsets.UTF_8, "Plugin JAR")) {
-            return readPluginManifest(archive);
-        }
-    }
-
-    private PluginManifest readPluginManifest(SafeZipArchive archive) throws IOException {
-        var zip = archive.zip();
-        var entry = zip.getEntry(PLUGIN_MANIFEST);
-        if (entry == null || entry.isDirectory()) {
-            throw new IOException("У JAR відсутній " + PLUGIN_MANIFEST);
-        }
-        if (entry.getSize() > MAX_PLUGIN_MANIFEST_BYTES) throw new IOException("Маніфест плагіна завеликий");
-        Properties properties = new Properties();
-        try (InputStream in = zip.getInputStream(entry)) {
-            byte[] bytes = in.readNBytes(MAX_PLUGIN_MANIFEST_BYTES + 1);
-            if (bytes.length > MAX_PLUGIN_MANIFEST_BYTES) throw new IOException("Маніфест плагіна завеликий");
-            properties.load(new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8));
-        }
-        String id = requiredProperty(properties, "pluginId");
-        String name = requiredProperty(properties, "displayName");
-        String version = requiredProperty(properties, "version");
-        PluginApiVersion min = parseApiVersion(requiredProperty(properties, "apiMin"));
-        PluginApiVersion max = parseApiVersion(requiredProperty(properties, "apiMax"));
-        Set<PluginService> services = parseEnumSet(properties.getProperty("services", ""), PluginService.class);
-        Set<PluginService> overrides = parseEnumSet(properties.getProperty("overrides", ""), PluginService.class);
-        Set<PluginPermission> permissions = parseEnumSet(properties.getProperty("permissions", ""), PluginPermission.class);
-        return new PluginManifest(id, name, version, new PluginApiRange(min, max), services, overrides, permissions);
-    }
-
     private void autoEnableApprovedPlugins() {
         for (BundledPlugin bundled : new ArrayList<>(bundledPlugins.values())) {
             PluginManifest manifest = bundled.entrypoint().manifest();
@@ -1087,7 +961,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             Result result = enablePlugin(manifest.pluginId(), true);
             if (!result.success()) pluginFailures.put(manifest.pluginId(), technicalResultDetail(result));
         }
-        for (PluginPackage pkg : new ArrayList<>(pluginPackages.values())) {
+        for (PluginPackageDescriptor pkg : new ArrayList<>(pluginPackages.values())) {
             if (!settings.getBoolean(approvalKey(pkg), false)) continue;
             Result result = enablePlugin(pkg.manifest().pluginId(), true);
             if (!result.success()) pluginFailures.put(pkg.manifest().pluginId(), technicalResultDetail(result));
@@ -1138,7 +1012,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
     }
 
     private PluginManifest requireAnyPluginManifest(String pluginId) {
-        PluginPackage external = pluginPackages.get(pluginId);
+        PluginPackageDescriptor external = pluginPackages.get(pluginId);
         if (external != null) return external.manifest();
         BundledPlugin bundled = bundledPlugins.get(pluginId);
         if (bundled != null) return bundled.entrypoint().manifest();
@@ -1306,11 +1180,6 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         };
     }
 
-    private static String safeId(String value, String fallback) {
-        String normalized = value == null ? "" : value.trim().replaceAll("[^A-Za-z0-9._-]", "-");
-        return normalized.isBlank() ? fallback : normalized.substring(0, Math.min(80, normalized.length()));
-    }
-
     private List<DeviceProfileDetector> managedDeviceProfileDetectors(LoadedPlugin loaded) {
         List<com.myhomelibcorp.plugin.api.DeviceProvider> providers = managedServiceList(
                 loaded, PluginService.DEVICE_PROVIDER, com.myhomelibcorp.plugin.api.DeviceProvider.class);
@@ -1388,7 +1257,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 case "toString" -> "ManagedPluginService[" + pluginId + "/" + service + "]";
                 case "hashCode" -> System.identityHashCode(proxy);
                 case "equals" -> proxy == (args == null || args.length == 0 ? null : args[0]);
-                default -> throw new UnsupportedOperationException(method.getName());
+                default -> throw new IllegalStateException("Unsupported Object method on managed plugin proxy: " + method.getName());
             };
         }
 
@@ -1424,68 +1293,54 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         if (quarantined) pluginFailures.put(pluginId, message == null ? "Помилка виконання плагіна" : message);
     }
 
-    /**
-     * Freezes exactly the approved plugin bytes into an application-owned runtime workspace.
-     * URLClassLoader may lazily reopen/read its URL long after enable() returns, so loading directly
-     * from the mutable installed-package pathname would leave a hash-check -> classload TOCTOU gap.
-     */
-    private PluginRuntimePackage stageVerifiedPluginPackageForLoad(PluginPackage pkg) throws IOException {
-        Path safeJar = SafeFilePublication.requireSafeRegularFile(pkg.jar(), "Plugin executable package");
-        Path workspace = SafeFilePublication.createPrivateWorkspace(
-                pluginDir, ".plugin-runtime-", "Plugin runtime workspace");
-        Path stagedJar = workspace.resolve("plugin.jar");
-        boolean success = false;
-        try {
-            try (InputStream in = Files.newInputStream(
-                    safeJar, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
-                SafeFilePublication.copyFresh(in, stagedJar, "Plugin runtime package");
-            }
-            String stagedHash = SafeFilePublication.sha256(stagedJar, "Plugin runtime package verification");
-            if (!pkg.sha256().equalsIgnoreCase(stagedHash)) {
-                clearPluginApprovals(pkg.manifest().pluginId());
-                pluginManager.resetApproval(pkg.manifest());
-                throw new SecurityException("JAR плагіна змінено після перевірки; повторно перевірте та схваліть пакет");
-            }
-            success = true;
-            return new PluginRuntimePackage(workspace, stagedJar);
-        } finally {
-            if (!success) cleanupPluginRuntimeWorkspace(pkg.manifest().pluginId(), workspace);
-        }
-    }
-
     private void cleanupPluginRuntimeWorkspace(String pluginId, Path workspace) {
         try {
-            SafeFilePublication.cleanupPrivateWorkspace(workspace);
+            pluginRuntimePackageStager.cleanup(workspace);
         } catch (IOException cleanupFailure) {
             pluginFailures.put(pluginId == null ? "" : pluginId,
                     "Не вдалося очистити runtime-копію плагіна: " + safeMessage(cleanupFailure));
         }
     }
 
-    private record PluginRuntimePackage(Path workspace, Path jar) { }
-
-    private PluginPackage requirePluginPackage(String pluginId) {
+    private PluginPackageDescriptor requirePluginPackage(String pluginId) {
         if (pluginId == null || pluginId.isBlank()) throw new IllegalArgumentException("Не вибрано плагін");
-        PluginPackage pkg = pluginPackages.get(pluginId);
+        PluginPackageDescriptor pkg = pluginPackages.get(pluginId);
         if (pkg == null) throw new IllegalArgumentException("Плагін не встановлено: " + pluginId);
         return pkg;
     }
 
-    private List<AiProvider> currentAiProviders() {
-        Map<String, AiProvider> providers = new LinkedHashMap<>();
-        for (AiProvider provider : builtInAiProviders) providers.put(provider.id(), provider);
-        for (AiProvider provider : runtimeExtensions.aiProviders()) providers.putIfAbsent(provider.id(), provider);
-        return List.copyOf(providers.values());
+    private PortableUserDataService portableUserData() {
+        return Objects.requireNonNull(portableUserDataSupplier.get(), "portableUserData");
     }
 
-    private AiProvider requireAiProvider(String providerId) {
-        if (providerId == null || providerId.isBlank()) throw new IllegalArgumentException("Не вибрано провайдера ШІ");
-        return currentAiProviders().stream().filter(provider -> provider.id().equals(providerId)).findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Провайдер ШІ недоступний: " + providerId));
+    private ObjectMapper mapper() {
+        return Objects.requireNonNull(mapperSupplier.get(), "mapper");
     }
 
-    private AiExtensionService aiService() {
-        return new AiExtensionService(currentAiProviders(), settings, secretStore);
+    private PortableSnapshotConflictService snapshotConflicts() {
+        PortableSnapshotConflictService current = resolvedSnapshotConflicts;
+        if (current != null) return current;
+        synchronized (this) {
+            current = resolvedSnapshotConflicts;
+            if (current == null) {
+                current = new PortableSnapshotConflictService(mapper());
+                resolvedSnapshotConflicts = current;
+            }
+            return current;
+        }
+    }
+
+    private Optional<SecretStore> secretStore() {
+        Optional<SecretStore> current = resolvedSecretStore;
+        if (current != null) return current;
+        synchronized (this) {
+            current = resolvedSecretStore;
+            if (current == null) {
+                current = openSecretStore();
+                resolvedSecretStore = current;
+            }
+            return current;
+        }
     }
 
     private Optional<SecretStore> openSecretStore() {
@@ -1496,13 +1351,17 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 .sorted(Comparator.comparingInt(SecretStoreProvider::priority).reversed())
                 .map(provider -> {
                     try { return provider.open(context); }
-                    catch (RuntimeException ignored) { return Optional.<SecretStore>empty(); }
+                    catch (RuntimeException failure) {
+                        log.warn("Secret-store provider {} failed to initialize: {}",
+                                provider.getClass().getName(), failure.toString());
+                        return Optional.<SecretStore>empty();
+                    }
                 })
                 .flatMap(Optional::stream)
                 .findFirst();
     }
 
-    private static String approvalKey(PluginPackage pkg) {
+    private static String approvalKey(PluginPackageDescriptor pkg) {
         return approvalKey(pkg.manifest(), pkg.sha256());
     }
 
@@ -1516,93 +1375,6 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         settings.findByPrefix(prefix).keySet().forEach(settings::remove);
     }
 
-    private static String requiredProperty(Properties properties, String key) {
-        String value = properties.getProperty(key, "").trim();
-        if (value.isBlank()) throw new IllegalArgumentException("У маніфесті плагіна відсутнє поле " + key);
-        return value;
-    }
-
-    private static PluginApiVersion parseApiVersion(String value) {
-        String[] parts = value.trim().split("\\.");
-        if (parts.length != 2) throw new IllegalArgumentException("Версія Plugin API має формат major.minor: " + value);
-        return new PluginApiVersion(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
-    }
-
-    private static <E extends Enum<E>> Set<E> parseEnumSet(String raw, Class<E> type) {
-        String value = raw == null ? "" : raw.trim();
-        if (value.isBlank()) return Set.of();
-        EnumSet<E> result = EnumSet.noneOf(type);
-        for (String token : value.split(",")) {
-            String normalized = token.trim();
-            if (!normalized.isBlank()) result.add(Enum.valueOf(type, normalized));
-        }
-        return Set.copyOf(result);
-    }
-
-    private static String sanitizeFilePart(String value) {
-        String normalized = value == null ? "" : value.replaceAll("[^A-Za-z0-9._-]", "_");
-        return normalized.isBlank() ? "unknown" : normalized;
-    }
-
-    private static String gzipBase64(byte[] bytes) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try (GZIPOutputStream gzip = new GZIPOutputStream(out)) { gzip.write(bytes); }
-        return Base64.getEncoder().encodeToString(out.toByteArray());
-    }
-
-    private static byte[] gunzipBase64(String encoded) throws IOException {
-        byte[] compressed;
-        try { compressed = Base64.getDecoder().decode(encoded); }
-        catch (IllegalArgumentException e) { throw new IOException("Некоректне Base64-кодування пакета", e); }
-        try (GZIPInputStream gzip = new GZIPInputStream(new ByteArrayInputStream(compressed));
-             ByteArrayOutputStream out = new ByteArrayOutputStream(Math.min(MAX_SNAPSHOT_BYTES, Math.max(8192, compressed.length * 2)))) {
-            byte[] buffer = new byte[8192];
-            int total = 0;
-            for (int read; (read = gzip.read(buffer)) >= 0;) {
-                if (read == 0) continue;
-                total += read;
-                if (total > MAX_SNAPSHOT_BYTES) throw new IOException("Розпакований пакет перевищує безпечний ліміт 64 МБ");
-                out.write(buffer, 0, read);
-            }
-            return out.toByteArray();
-        }
-    }
-
-    private static String sha256(byte[] bytes) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-        } catch (Exception impossible) {
-            throw new IllegalStateException("SHA-256 недоступний", impossible);
-        }
-    }
-
-    private static byte[] readBounded(Path path, int maxBytes, String tooLargeMessage) throws IOException {
-        try (InputStream in = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) {
-            byte[] bytes = in.readNBytes(maxBytes + 1);
-            if (bytes.length > maxBytes) throw new IOException(tooLargeMessage);
-            return bytes;
-        }
-    }
-
-    private static Optional<String> nonBlank(String value) {
-        return value == null || value.isBlank() ? Optional.empty() : Optional.of(value.trim());
-    }
-
-    private static long parseLong(String value, long fallback) {
-        try { return Long.parseLong(value); }
-        catch (Exception ignored) { return fallback; }
-    }
-
-    private static String safeMessage(Throwable failure) {
-        if (failure == null) return "Невідома помилка";
-        Throwable current = failure;
-        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
-        String message = current.getMessage();
-        if (message == null || message.isBlank()) message = current.getClass().getSimpleName();
-        String clean = message.replaceAll("[\\r\\n\\t]+", " ").trim();
-        return clean.length() <= 600 ? clean : clean.substring(0, 600);
-    }
-
     private record Snapshot(byte[] bytes, String hash) {
         private Snapshot {
             bytes = bytes == null ? new byte[0] : bytes.clone();
@@ -1613,6 +1385,5 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
 
     private record RemoteSnapshot(ChangeSet changeSet, Snapshot snapshot) { }
     private record PendingSync(String collectionId, Snapshot local, RemoteSnapshot remote, Map<String, Long> nextCursors) { }
-    private record PluginPackage(Path jar, PluginManifest manifest, String sha256) { }
     private record BundledPlugin(PluginEntrypoint entrypoint, String fingerprint) { }
 }

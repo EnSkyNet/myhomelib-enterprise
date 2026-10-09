@@ -56,13 +56,7 @@ public class CachedBookQueryRepository implements BookQueryRepository {
             return Optional.empty();
         }
 
-        Optional<Book> cached = bookCache.get(id);
-        if (cached.isPresent()) {
-            return cached;
-        }
-        Optional<Book> book = delegate.findById(id);
-        book.ifPresent(b -> bookCache.put(id, b));
-        return book;
+        return CacheAsideRepositorySupport.findById(id, bookCache, delegate::findById);
     }
 
     @Override

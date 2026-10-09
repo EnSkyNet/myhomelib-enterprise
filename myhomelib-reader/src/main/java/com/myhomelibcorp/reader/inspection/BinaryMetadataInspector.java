@@ -67,7 +67,11 @@ final class BinaryMetadataInspector {
         }
 
         int mobiStart = 16;
-        int headerLength = (int) u32(record0, mobiStart + 4);
+        long declaredHeaderLength = u32(record0, mobiStart + 4);
+        if (declaredHeaderLength < 84 || (long) mobiStart + declaredHeaderLength > record0.length) {
+            throw new IOException("Некоректний MOBI header length");
+        }
+        int headerLength = (int) declaredHeaderLength;
         int encodingCode = (int) u32(record0, mobiStart + 12);
         Charset charset = encodingCode == 65001 ? StandardCharsets.UTF_8 : safeCharset("windows-1252");
         int fullNameOffset = safeInt(u32(record0, mobiStart + 68));
@@ -82,12 +86,12 @@ final class BinaryMetadataInspector {
                 if (asciiEquals(record0, exthStart, "EXTH")) {
                     int exthLength = safeInt(u32(record0, exthStart + 4));
                     int count = safeInt(u32(record0, exthStart + 8));
-                    int end = Math.min(record0.length, exthStart + Math.max(12, exthLength));
+                    int end = (int) Math.min(record0.length, (long) exthStart + Math.max(12, exthLength));
                     int pos = exthStart + 12;
                     for (int i = 0; i < count && pos + 8 <= end && i < 10_000; i++) {
                         int type = safeInt(u32(record0, pos));
                         int len = safeInt(u32(record0, pos + 4));
-                        if (len < 8 || pos + len > end) break;
+                        if (len < 8 || len > end - pos) break;
                         byte[] data = java.util.Arrays.copyOfRange(record0, pos + 8, pos + len);
                         exth.computeIfAbsent(type, ignored -> new ArrayList<>()).add(data);
                         pos += len;
@@ -259,7 +263,7 @@ final class BinaryMetadataInspector {
 
     private static String sliceString(byte[] data, int offset, int length, Charset charset) {
         if (offset < 0 || length <= 0 || offset >= data.length) return "";
-        int end = Math.min(data.length, offset + length);
+        int end = (int) Math.min(data.length, (long) offset + length);
         return cleanText(new String(data, offset, end - offset, charset));
     }
 

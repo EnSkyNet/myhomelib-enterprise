@@ -42,4 +42,26 @@ class ApplicationThemeServiceTest {
         assertThat(service.effective(cycled).background()).isEqualTo("#000000");
     }
 
+    @Test
+    void nonFinitePersistedFontSizeFallsBackToDefault() {
+        UiPreferenceService preferences = mock(UiPreferenceService.class);
+        when(preferences.get(anyString(), anyString())).thenAnswer(invocation -> {
+            String key = invocation.getArgument(0);
+            return key.equals("ui.theme.fontSize") ? "NaN" : invocation.getArgument(1);
+        });
+
+        ApplicationThemeService service = new ApplicationThemeService(preferences);
+
+        assertThat(service.current().fontSize()).isEqualTo(13.0);
+    }
+
+    @Test
+    void normalizedThemeRejectsNonFiniteProgrammaticFontSize() {
+        ApplicationThemeService.ThemeConfig config = new ApplicationThemeService.ThemeConfig(
+                ApplicationThemeService.ThemeMode.CUSTOM, "#ffffff", "#ffffff", "#000000", "#0000ff",
+                "#ffffff", "#ffffff", "#ffffff", Double.NaN).normalized();
+
+        assertThat(config.fontSize()).isEqualTo(13.0);
+    }
+
 }

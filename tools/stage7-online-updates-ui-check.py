@@ -28,9 +28,10 @@ require('findPendingUpdateItems' in port and 'findPendingUpdateItems' in adapter
 require('pendingUpdateSnapshot()' in service and 'CatalogUpdateAuthorGroup' in service, 'grouped Stage 7 snapshot missing')
 require('CatalogUpdateType.NEW_BY_FOLLOWED_AUTHOR' in workspace and 'CatalogUpdateType.UPDATED_DOWNLOADED_BOOK' in workspace,
         'workspace does not render both update types')
-require('downloadUpdate(book)' in workspace, 'updated books are not force-downloaded')
-require('loadAuthoritative(book).thenCompose' in coordinator and 'download(authoritative, true)' in coordinator,
-        'authoritative force update download path missing')
+require('bookDownloadCoordinator.downloadUpdate(book, expectedCollectionId)' in workspace, 'updated books are not force-downloaded through the collection-stable path')
+require('loadAuthoritative(book, expectedCollectionId, LibraryOperationType.DOWNLOAD).thenCompose' in coordinator
+        and 'download(authoritative, true, true, true, expectedCollectionId)' in coordinator,
+        'authoritative collection-stable force update download path missing')
 require('markDownloadedBaseline(bookId)' in text('myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/download/DownloadBookUseCase.java'),
         'successful download does not acknowledge catalog baseline')
 require('showUpdatesWorkspace' in manager and '/view/updates-workspace.fxml' in manager, 'Updates workspace not wired')

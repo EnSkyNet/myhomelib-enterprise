@@ -36,6 +36,7 @@ public class OperationCenterService {
     private final Object lock = new Object();
     private final LinkedHashMap<String, OperationCenterEntry> entries = new LinkedHashMap<>();
     private final Map<String, RootOperationState> roots = new HashMap<>();
+    private final Map<String, Runnable> cancellationActions = new HashMap<>();
     private final CopyOnWriteArrayList<Consumer<List<OperationCenterEntry>>> listeners = new CopyOnWriteArrayList<>();
 
     public String start(String title, String collectionId, OperationStage stage, boolean cancellable) {
@@ -43,9 +44,30 @@ public class OperationCenterService {
     }
 
     public String start(String title, String collectionId, OperationKind kind, OperationStage stage, boolean cancellable) {
+        return start(title, collectionId, kind, stage, cancellable, null);
+    }
+
+    /** Starts an operation with an optional one-shot cancellation action owned by the operation producer. */
+    public String start(String title, String collectionId, OperationKind kind, OperationStage stage,
+                        boolean cancellable, Runnable cancellationAction) {
+        if (cancellationAction != null && !cancellable) {
+            throw new IllegalArgumentException("Cancellation action requires a cancellable operation");
+        }
         String id = "ui-operation-" + UUID.randomUUID();
-        accept(title, collectionId, kind, OperationProgress.stage(id, stage, cancellable));
-        return id;
+        if (cancellationAction != null) {
+            synchronized (lock) {
+                cancellationActions.put(id, cancellationAction);
+            }
+        }
+        try {
+            accept(title, collectionId, kind, OperationProgress.stage(id, stage, cancellable));
+            return id;
+        } catch (RuntimeException | Error failure) {
+            synchronized (lock) {
+                cancellationActions.remove(id);
+            }
+            throw failure;
+        }
     }
 
     public void accept(String title, String collectionId, OperationProgress progress) {
@@ -95,7 +117,10 @@ public class OperationCenterService {
                     progress.skipped(), progress.duplicates(), progress.warnings(), progress.errors(), progress.currentItem(),
                     progress.cancellable() && !terminal(progress.stage()), startedAt, now, finishedAt, previousError));
 
-            if (terminal(progress.stage())) roots.remove(rootId);
+            if (terminal(progress.stage())) {
+                roots.remove(rootId);
+                cancellationActions.remove(rootId);
+            }
             trimHistoryLocked();
         }
         publishSnapshot();
@@ -123,6 +148,38 @@ public class OperationCenterService {
         synchronized (lock) {
             return sortedSnapshotLocked();
         }
+    }
+
+    /** Returns whether the selected active row has an attached cancellation action. */
+    public boolean canRequestCancellation(String operationId) {
+        if (operationId == null || operationId.isBlank()) return false;
+        synchronized (lock) {
+            String rootId = rootIdForEntryLocked(operationId);
+            Runnable action = cancellationActions.get(rootId);
+            if (action == null) return false;
+            RootOperationState root = roots.get(rootId);
+            String entryId = root == null ? operationId : root.currentEntryId();
+            OperationCenterEntry entry = entries.get(entryId);
+            return entry != null && entry.active() && entry.cancellable();
+        }
+    }
+
+    /** Signals cancellation exactly once; terminal state remains producer-owned after real cleanup. */
+    public boolean requestCancellation(String operationId) {
+        if (operationId == null || operationId.isBlank()) return false;
+        Runnable action;
+        synchronized (lock) {
+            String rootId = rootIdForEntryLocked(operationId);
+            RootOperationState root = roots.get(rootId);
+            String entryId = root == null ? operationId : root.currentEntryId();
+            OperationCenterEntry entry = entries.get(entryId);
+            if (entry == null || !entry.active() || !entry.cancellable()) return false;
+            action = cancellationActions.remove(rootId);
+            if (action == null) return false;
+        }
+        publishSnapshot();
+        action.run();
+        return true;
     }
 
     public int activeCount() {
@@ -181,9 +238,18 @@ public class OperationCenterService {
                     false, previous.startedAt(), now, now,
                     errorMessage == null ? previous.errorMessage() : errorMessage));
             roots.remove(operationId);
+            cancellationActions.remove(operationId);
             trimHistoryLocked();
         }
         publishSnapshot();
+    }
+
+    private String rootIdForEntryLocked(String operationId) {
+        if (roots.containsKey(operationId)) return operationId;
+        for (Map.Entry<String, RootOperationState> root : roots.entrySet()) {
+            if (operationId.equals(root.getValue().currentEntryId())) return root.getKey();
+        }
+        return operationId;
     }
 
     private void closePhaseLocked(String entryId, OperationKind rootKind, Instant now) {

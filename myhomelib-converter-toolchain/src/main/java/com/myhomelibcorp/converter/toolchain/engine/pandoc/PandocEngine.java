@@ -3,9 +3,9 @@ package com.myhomelibcorp.converter.toolchain.engine.pandoc;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.converter.toolchain.*;
 import com.myhomelibcorp.converter.toolchain.discovery.ConverterToolRegistry;
+import com.myhomelibcorp.converter.toolchain.engine.ExternalConversionEngineSupport;
 import com.myhomelibcorp.converter.toolchain.fs.ConversionPathSafety;
 import com.myhomelibcorp.converter.toolchain.discovery.ToolInstallation;
-import com.myhomelibcorp.converter.toolchain.process.ExternalToolRequest;
 import com.myhomelibcorp.converter.toolchain.process.ExternalToolResult;
 import com.myhomelibcorp.converter.toolchain.process.ExternalToolRunner;
 import org.slf4j.Logger;
@@ -20,8 +20,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.charset.UnmappableCharacterException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.BooleanSupplier;
 
 @Component
@@ -65,18 +65,17 @@ public class PandocEngine implements ConversionEngine {
             throw new ConversionToolchainException(ConversionFailureKind.IO_FAILURE,
                     "Pandoc output path already exists: " + target);
         }
-        int timeout = Math.max(10, Math.min(3600, settings.getInt("converter.toolchain.pandoc.timeoutSeconds", 300)));
-        ExternalToolResult result = runner.run(new ExternalToolRequest(
+        int timeout = ExternalConversionEngineSupport.timeoutSeconds(
+                settings, "converter.toolchain.pandoc.timeoutSeconds", 300);
+        ExternalToolResult result = ExternalConversionEngineSupport.run(
+                runner,
                 commands.build(installation.executable(), source, target, step.sourceFormat(), step.targetFormat()),
-                target.getParent(), Duration.ofSeconds(timeout), 256 * 1024, cancelled, target, maxOutputBytes));
+                target.getParent(), timeout, cancelled, target, maxOutputBytes);
         log.debug("Pandoc conversion {} -> {} exited {}: {}", step.sourceFormat(), step.targetFormat(), result.exitCode(), result.mergedOutput());
-        if (result.exitCode() != 0) {
-            throw new ConversionToolchainException(classify(result.mergedOutput()),
-                    "Pandoc conversion failed with exit code " + result.exitCode());
-        }
-        try { ConversionPathSafety.requireSafeRegularFile(target, "Pandoc output"); }
-        catch (Exception unsafe) { throw new ConversionToolchainException(ConversionFailureKind.OUTPUT_INVALID, "Pandoc produced an unsafe output", unsafe); }
-        return new ConversionStepResult(step, target, result.durationMs(), size(target));
+        ExternalConversionEngineSupport.requireSuccessful(result, "Pandoc", this::classify);
+        ExternalConversionEngineSupport.requireSafeOutput(target, "Pandoc output", "Pandoc");
+        return new ConversionStepResult(step, target, result.durationMs(),
+                ExternalConversionEngineSupport.sizeOrUnknown(target));
     }
 
     private boolean isStrictUtf8(Path source) throws ConversionToolchainException {
@@ -96,7 +95,7 @@ public class PandocEngine implements ConversionEngine {
     }
 
     private ConversionFailureKind classify(String output) {
-        String lower = output == null ? "" : output.toLowerCase();
+        String lower = output == null ? "" : output.toLowerCase(Locale.ROOT);
         if (lower.contains("could not find data file")
                 || lower.contains("data file") && lower.contains("not found")) {
             // A sandboxed Pandoc binary without embedded data files cannot service formats
@@ -113,5 +112,4 @@ public class PandocEngine implements ConversionEngine {
         return ConversionFailureKind.ENGINE_CRASH;
     }
 
-    private long size(Path path) { try { return Files.size(path); } catch (Exception ignored) { return -1; } }
 }

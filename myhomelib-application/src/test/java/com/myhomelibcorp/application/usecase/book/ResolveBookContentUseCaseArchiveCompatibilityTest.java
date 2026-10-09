@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.usecase.book;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.dto.BookArtifactDto;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -69,6 +70,36 @@ class ResolveBookContentUseCaseArchiveCompatibilityTest {
         assertThat(resolved.temporary()).isFalse();
         verify(resources, never()).listArchiveEntries(any());
         verify(resources, never()).readArchiveEntry(any(), anyString());
+    }
+
+    @Test
+    void missingDerivedPreferredArtifactFallsBackToReadableOriginalProjection() throws Exception {
+        BookResourcePort resources = mock(BookResourcePort.class);
+        Path original = tempDir.resolve("original.fb2");
+        BookArtifactDto originalArtifact = BookArtifactDto.builder()
+                .id("original").format("fb2").fileName("original.fb2")
+                .collectionRoot(tempDir.toString()).archiveEntry("")
+                .local(true).state("AVAILABLE").build();
+        BookArtifactDto missingDerived = BookArtifactDto.builder()
+                .id("derived").sourceId("conversion:epub").format("epub").fileName("missing.epub")
+                .collectionRoot(tempDir.resolve("exports").toString()).archiveEntry("")
+                .local(true).state("AVAILABLE").build();
+        BookDto book = BookDto.builder()
+                .fileName("missing.epub").collectionRoot(tempDir.resolve("exports").toString())
+                .artifacts(java.util.List.of(originalArtifact, missingDerived))
+                .preferredArtifactId("derived").build();
+
+        when(resources.locateBookFile("missing.epub", null, tempDir.resolve("exports").toString(), ""))
+                .thenReturn(Optional.empty());
+        when(resources.locateBookFile("original.fb2", null, tempDir.toString(), ""))
+                .thenReturn(Optional.of(original));
+        when(resources.isArchive(original.toString())).thenReturn(false);
+
+        ResolveBookContentUseCase useCase = new ResolveBookContentUseCase(resources);
+        ResolvedBookContent resolved = useCase.execute(book, ResolveBookContentUseCase.DETAILS_EXTENSIONS);
+
+        assertThat(resolved.path()).isEqualTo(original);
+        assertThat(resolved.temporary()).isFalse();
     }
 
 }

@@ -6,9 +6,9 @@ import com.myhomelibcorp.application.port.out.cache.SeriesCache;
 import com.myhomelibcorp.domain.event.book.BookDeletedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.event.EventListener;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 @Component
 @RequiredArgsConstructor
@@ -19,11 +19,10 @@ public class CacheEvictor {
     private final GenreCache genreCache;
     private final SeriesCache seriesCache;
 
-
-    @Async
-    @EventListener
+    /** Clear catalog projections only for a deletion that actually committed. */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onBookDeleted(BookDeletedEvent event) {
-        log.debug("Очищення кешів при видаленні книги: {}", event.getBookId());
+        log.debug("Очищення кешів після commit видалення книги: {}", event.getBookId());
         authorCache.clear();
         genreCache.clear();
         seriesCache.clear();

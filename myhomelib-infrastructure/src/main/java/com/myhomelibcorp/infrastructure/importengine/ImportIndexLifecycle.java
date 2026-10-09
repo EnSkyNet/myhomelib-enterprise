@@ -1,7 +1,9 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
+import com.myhomelibcorp.application.port.out.infrastructure.ImportIndexMaintenancePort;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -10,26 +12,20 @@ import java.util.List;
 
 /**
  * Captures and restores the exact live definitions of secondary indexes temporarily suspended
- * for a full INPX snapshot. The import pipeline only orchestrates the token lifecycle.
+ * for a full INPX snapshot. Deferred definitions are also persisted in SQLite so a crash can be
+ * repaired on the next startup before the collection is exposed to the UI.
  */
 @Component
 @RequiredArgsConstructor
-final class ImportIndexLifecycle {
+@Slf4j
+public final class ImportIndexLifecycle implements ImportIndexMaintenancePort {
+    private static final String QUEUE_TABLE = "import_deferred_index_restore";
     private static final List<String> FULL_SNAPSHOT_SUSPEND_INDEXES = List.of(
             "idx_books_title",
             "idx_books_series",
             "idx_authors_last_name"
     );
 
-    /**
-     * Additional non-unique indexes that are pure write amplification during the first import into
-     * an empty catalog. They are intentionally not suspended for a refresh of an existing catalog:
-     * rebuilding a large pre-existing index can cost more than maintaining it during UPSERTs.
-     *
-     * The exact author-name lookup index stays live because the import path can need it for the
-     * safe author-cache fallback. Initial-baseline relation replacement is insert-only, so the
-     * book-side keyword/catalog-state indexes are also pure write amplification and may be rebuilt.
-     */
     private static final List<String> INITIAL_BASELINE_EXTRA_SUSPEND_INDEXES = List.of(
             "idx_books_language",
             "idx_books_created_at",
@@ -59,6 +55,7 @@ final class ImportIndexLifecycle {
     SuspendedIndexes suspendForFullSnapshot(boolean initialBaseline) {
         if (!collectionManager.hasActiveCollection()) return SuspendedIndexes.empty();
         JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
+        ensureQueueTable(jdbc);
         List<String> indexNames = new ArrayList<>(FULL_SNAPSHOT_SUSPEND_INDEXES);
         if (initialBaseline) indexNames.addAll(INITIAL_BASELINE_EXTRA_SUSPEND_INDEXES);
         List<IndexDefinition> definitions = new ArrayList<>();
@@ -69,6 +66,17 @@ final class ImportIndexLifecycle {
                     name));
         }
         try {
+            // Persist exact live CREATE statements before DROP. This row set commits atomically with
+            // the import, so a crash before commit rolls both catalog changes and dropped indexes back;
+            // a crash after commit leaves a durable repair plan for startup recovery.
+            if (!definitions.isEmpty()) {
+                jdbc.batchUpdate("INSERT INTO " + QUEUE_TABLE + "(index_name, create_sql) VALUES (?, ?) "
+                                + "ON CONFLICT(index_name) DO UPDATE SET create_sql=excluded.create_sql",
+                        definitions, 100, (ps, definition) -> {
+                            ps.setString(1, definition.name());
+                            ps.setString(2, definition.createSql());
+                        });
+            }
             for (IndexDefinition definition : definitions) {
                 jdbc.execute("DROP INDEX IF EXISTS " + quoteIdentifier(definition.name()));
             }
@@ -85,14 +93,43 @@ final class ImportIndexLifecycle {
 
     void restore(SuspendedIndexes suspended) {
         if (suspended == null || suspended.definitions().isEmpty() || !collectionManager.hasActiveCollection()) return;
+        restoreDefinitions(suspended.definitions());
+    }
+
+    @Override
+    public boolean hasPendingIndexes() {
+        if (!collectionManager.hasActiveCollection()) return false;
         JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
+        ensureQueueTable(jdbc);
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM " + QUEUE_TABLE, Integer.class);
+        return count != null && count > 0;
+    }
+
+    @Override
+    public void restorePendingIndexes() {
+        if (!collectionManager.hasActiveCollection()) return;
+        JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
+        ensureQueueTable(jdbc);
+        List<IndexDefinition> pending = jdbc.query(
+                "SELECT index_name, create_sql FROM " + QUEUE_TABLE + " ORDER BY index_name",
+                (rs, rowNum) -> new IndexDefinition(rs.getString(1), rs.getString(2)));
+        if (pending.isEmpty()) return;
+        log.info("Restoring {} deferred SQLite performance indexes", pending.size());
+        restoreDefinitions(pending);
+    }
+
+    private void restoreDefinitions(List<IndexDefinition> definitions) {
+        JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
+        ensureQueueTable(jdbc);
         RuntimeException firstFailure = null;
-        for (IndexDefinition definition : suspended.definitions()) {
+        for (IndexDefinition definition : definitions) {
             try {
                 Integer present = jdbc.queryForObject(
                         "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?",
                         Integer.class, definition.name());
                 if (present == null || present == 0) jdbc.execute(definition.createSql());
+                // Delete only after CREATE/verification succeeds, preserving crash recovery semantics.
+                jdbc.update("DELETE FROM " + QUEUE_TABLE + " WHERE index_name=?", definition.name());
             } catch (RuntimeException e) {
                 if (firstFailure == null) firstFailure = e;
                 else firstFailure.addSuppressed(e);
@@ -101,6 +138,11 @@ final class ImportIndexLifecycle {
         if (firstFailure != null) {
             throw new IllegalStateException("Failed to restore one or more import indexes", firstFailure);
         }
+    }
+
+    private static void ensureQueueTable(JdbcTemplate jdbc) {
+        jdbc.execute("CREATE TABLE IF NOT EXISTS " + QUEUE_TABLE + " ("
+                + "index_name TEXT PRIMARY KEY, create_sql TEXT NOT NULL, queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)");
     }
 
     private static String quoteIdentifier(String identifier) {

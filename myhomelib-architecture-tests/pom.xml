@@ -29,6 +29,12 @@
             <artifactId>myhomelib-plugin-api</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
+        <!-- Updater is standalone, but ArchUnit must still scan its compiled output. -->
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-updater</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

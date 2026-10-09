@@ -78,7 +78,9 @@ class HttpOnlineBookDownloadAdapterTest {
             else respond(exchange, 200, "ok");
         });
 
-        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
+        ApplicationSettingsPort config = settings();
+        when(config.getInt("online.retryCount", 2)).thenReturn(2);
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(config, mock(ArchiveReader.class));
         adapter.download(book("a", "a.txt", "", ""), onlineCollection(), null, null);
 
         assertThat(requests.get()).isEqualTo(3);
@@ -123,7 +125,7 @@ class HttpOnlineBookDownloadAdapterTest {
         });
 
         ApplicationSettingsPort config = settings();
-        when(config.getInt("online.retryCount", 3)).thenReturn(0);
+        when(config.getInt("online.retryCount", 2)).thenReturn(0);
         HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(config, mock(ArchiveReader.class));
 
         assertThatThrownBy(() -> adapter.download(book("a", "a.txt", "", ""), onlineCollection(), null, null))
@@ -139,6 +141,139 @@ class HttpOnlineBookDownloadAdapterTest {
         assertThat(temp.resolve("a.txt.part.meta")).doesNotExist();
     }
 
+
+    @Test
+    void retriesFullDownloadWhenTruncatedResponseHasNoResumeValidator() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<String> retryRange = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<String> retryIfRange = new java.util.concurrent.atomic.AtomicReference<>();
+        server = server(exchange -> {
+            int n = requests.incrementAndGet();
+            if (n == 1) {
+                exchange.sendResponseHeaders(200, 11);
+                exchange.getResponseBody().write("hello ".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            retryRange.set(exchange.getRequestHeaders().getFirst("Range"));
+            retryIfRange.set(exchange.getRequestHeaders().getFirst("If-Range"));
+            respond(exchange, 200, "replacement");
+        });
+
+        ApplicationSettingsPort config = settings();
+        when(config.getInt("online.retryCount", 2)).thenReturn(1);
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(config, mock(ArchiveReader.class));
+
+        adapter.download(book("no-validator", "no-validator.txt", "", ""), onlineCollection(), null, null);
+
+        assertThat(requests.get()).isEqualTo(2);
+        assertThat(retryRange.get()).isNull();
+        assertThat(retryIfRange.get()).isNull();
+        assertThat(Files.readString(temp.resolve("no-validator.txt"))).isEqualTo("replacement");
+    }
+
+
+    @Test
+    void rejectsTruncatedChunkedResumeBodyInsteadOfPublishingPartialPayload() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = server(exchange -> {
+            int n = requests.incrementAndGet();
+            if (n == 1) {
+                exchange.getResponseHeaders().add("ETag", "\"entity-v1\"");
+                exchange.sendResponseHeaders(200, 11);
+                exchange.getResponseBody().write("hello ".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            assertThat(exchange.getRequestHeaders().getFirst("Range")).isEqualTo("bytes=6-");
+            assertThat(exchange.getRequestHeaders().getFirst("If-Range")).isEqualTo("\"entity-v1\"");
+            exchange.getResponseHeaders().add("ETag", "\"entity-v1\"");
+            exchange.getResponseHeaders().add("Content-Range", "bytes 6-10/11");
+            exchange.sendResponseHeaders(206, 0); // chunked: declared range is 5 bytes, body sends only 3
+            exchange.getResponseBody().write("wor".getBytes(StandardCharsets.UTF_8));
+        });
+
+        ApplicationSettingsPort config = settings();
+        when(config.getInt("online.retryCount", 2)).thenReturn(0);
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(config, mock(ArchiveReader.class));
+
+        assertThatThrownBy(() -> adapter.download(book("short", "short.txt", "", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class);
+        assertThat(Files.readString(temp.resolve("short.txt.part"))).isEqualTo("hello ");
+
+        assertThatThrownBy(() -> adapter.download(book("short", "short.txt", "", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class);
+
+        assertThat(requests.get()).isEqualTo(2);
+        assertThat(temp.resolve("short.txt")).doesNotExist();
+        assertThat(Files.readString(temp.resolve("short.txt.part"))).isEqualTo("hello wor");
+    }
+
+    @Test
+    void rejectsTruncatedChunkedResumeBodyWhenTotalSizeIsUnknown() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = server(exchange -> {
+            int n = requests.incrementAndGet();
+            if (n == 1) {
+                exchange.getResponseHeaders().add("ETag", "\"entity-v1\"");
+                exchange.sendResponseHeaders(200, 11);
+                exchange.getResponseBody().write("hello ".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            assertThat(exchange.getRequestHeaders().getFirst("Range")).isEqualTo("bytes=6-");
+            assertThat(exchange.getRequestHeaders().getFirst("If-Range")).isEqualTo("\"entity-v1\"");
+            exchange.getResponseHeaders().add("ETag", "\"entity-v1\"");
+            exchange.getResponseHeaders().add("Content-Range", "bytes 6-10/*");
+            exchange.sendResponseHeaders(206, 0); // chunked: range promises 5 bytes, body sends only 3
+            exchange.getResponseBody().write("wor".getBytes(StandardCharsets.UTF_8));
+        });
+
+        ApplicationSettingsPort config = settings();
+        when(config.getInt("online.retryCount", 2)).thenReturn(0);
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(config, mock(ArchiveReader.class));
+
+        assertThatThrownBy(() -> adapter.download(book("short-unknown", "short-unknown.txt", "", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class);
+        assertThat(Files.readString(temp.resolve("short-unknown.txt.part"))).isEqualTo("hello ");
+
+        assertThatThrownBy(() -> adapter.download(book("short-unknown", "short-unknown.txt", "", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class);
+
+        assertThat(requests.get()).isEqualTo(2);
+        assertThat(temp.resolve("short-unknown.txt")).doesNotExist();
+        assertThat(Files.readString(temp.resolve("short-unknown.txt.part"))).isEqualTo("hello wor");
+    }
+
+    @Test
+    void rejectsResumeWhenServerReturnsDifferentEntityValidator() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = server(exchange -> {
+            int n = requests.incrementAndGet();
+            if (n == 1) {
+                exchange.getResponseHeaders().add("ETag", "\"entity-v1\"");
+                exchange.sendResponseHeaders(200, 11);
+                exchange.getResponseBody().write("hello ".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            assertThat(exchange.getRequestHeaders().getFirst("Range")).isEqualTo("bytes=6-");
+            assertThat(exchange.getRequestHeaders().getFirst("If-Range")).isEqualTo("\"entity-v1\"");
+            exchange.getResponseHeaders().add("ETag", "\"entity-v2\"");
+            exchange.getResponseHeaders().add("Content-Range", "bytes 6-10/11");
+            respond(exchange, 206, "world");
+        });
+
+        ApplicationSettingsPort config = settings();
+        when(config.getInt("online.retryCount", 2)).thenReturn(0);
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(config, mock(ArchiveReader.class));
+
+        assertThatThrownBy(() -> adapter.download(book("changed", "changed.txt", "", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class);
+        assertThat(Files.readString(temp.resolve("changed.txt.part"))).isEqualTo("hello ");
+
+        assertThatThrownBy(() -> adapter.download(book("changed", "changed.txt", "", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class);
+
+        assertThat(requests.get()).isEqualTo(2);
+        assertThat(temp.resolve("changed.txt")).doesNotExist();
+    }
 
     @Test
     void refusesRegularFileReplacementBetweenResumeSnapshotAndAppend() throws Exception {
@@ -161,7 +296,7 @@ class HttpOnlineBookDownloadAdapterTest {
         });
 
         ApplicationSettingsPort config = settings();
-        when(config.getInt("online.retryCount", 3)).thenReturn(0);
+        when(config.getInt("online.retryCount", 2)).thenReturn(0);
         HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(config, mock(ArchiveReader.class));
 
         assertThatThrownBy(() -> adapter.download(book("race", "race.txt", "", ""), onlineCollection(), null, null))

@@ -27,6 +27,7 @@ def reject(source: str, *needles: str) -> None:
 canvas = read("myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderCanvas.java")
 view = read("myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderView.java")
 workspace = read("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java")
+coordinator = read("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderTextProviderCoordinator.java")
 dictionary_service = read("myhomelib-application/src/main/java/com/myhomelibcorp/application/dictionary/DictionaryLookupService.java")
 translation_service = read("myhomelib-application/src/main/java/com/myhomelibcorp/application/translation/TranslationService.java")
 local_dictionary = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/dictionary/LocalDictionaryProvider.java")
@@ -35,6 +36,7 @@ deepl = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastru
 google = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/translation/GoogleTranslationProvider.java")
 custom = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/translation/CustomHttpTranslationProvider.java")
 http_support = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/textprovider/TextProviderHttpSupport.java")
+execution_support = read("myhomelib-application/src/main/java/com/myhomelibcorp/application/textprovider/TextProviderExecutionSupport.java")
 
 require(canvas, "ui.reader.selection.dictionary", "ui.reader.selection.translate", "setOnDictionaryRequested", "setOnTranslationRequested")
 require(view, "setOnDictionaryRequested", "setOnTranslationRequested")
@@ -44,28 +46,36 @@ reject(view, "com.myhomelibcorp.application", "com.myhomelibcorp.infrastructure"
 require(workspace,
         "setOnDictionaryRequested(this::lookupDictionaryFromSelection)",
         "setOnTranslationRequested(this::translateSelection)",
+        "cancelTextProviderRequests();",
+        "textProviderCoordinator.cancelRequests();",
+        "sameOpenBook(requestToken, bookId)")
+require(coordinator,
         "provider.remote() && !dialogService.showConfirmation",
         "ui.reader.translation.privacy.message",
-        "cancelTextProviderRequests();",
-        "sameOpenBook(requestToken, bookId)")
+        "public void cancelRequests()")
 reject(workspace, "com.myhomelibcorp.infrastructure.dictionary", "com.myhomelibcorp.infrastructure.translation")
+reject(coordinator, "com.myhomelibcorp.infrastructure.dictionary", "com.myhomelibcorp.infrastructure.translation")
 if "setOnSelectionChanged(this::translate" in workspace:
     raise SystemExit("Translation must never be triggered by a selection-change observer")
 
-require(dictionary_service, "DictionaryProvider::isOffline", "TextProviderRequestContext.create", ".orTimeout(")
-require(translation_service, "TranslationProvider::isRemote", "TextProviderRequestContext.create", ".orTimeout(")
+require(dictionary_service, "DictionaryProvider::isOffline", "TextProviderRequestContext.create", "TextProviderExecutionSupport.submitBounded")
+require(translation_service, "TranslationProvider::isRemote", "TextProviderRequestContext.create", "TextProviderExecutionSupport.submitBounded")
+require(execution_support, "submitted.future().orTimeout", "submitted.cancel()", "TextProviderFailures.unwrap")
 require(local_dictionary, "isOffline() { return true; }", "dictionary.local.path", "StandardCharsets.UTF_8")
 require(local_translation, "isRemote() { return false; }", "translation.local.path", "StandardCharsets.UTF_8")
 
-for source, name in [(deepl, "DeepL"), (google, "Google"), (custom, "Custom")]:
-    require(source, "isRemote() { return true; }", "HttpRequest", "TextProviderHttpSupport.send")
+for source, name in [(deepl, "DeepL"), (google, "Google")]:
+    require(source, "isRemote() { return true; }", "TextProviderHttpSupport.postForm")
     if 'isEnabled() { return true; }' in source:
         raise SystemExit(f"{name} remote provider must not be enabled unconditionally")
+require(custom, "isRemote() { return true; }", "HttpRequest", "TextProviderHttpSupport.send")
+if 'isEnabled() { return true; }' in custom:
+    raise SystemExit("Custom remote provider must not be enabled unconditionally")
 
 require(deepl, 'settings.getBoolean("translation.deepl.enabled", false)')
 require(google, 'settings.getBoolean("translation.google.enabled", false)')
 require(custom, 'settings.getBoolean("translation.custom.enabled", false)')
-require(http_support, '"https".equalsIgnoreCase(uri.getScheme())', "EncryptionUtil.isEncrypted", "must be encrypted or supplied at runtime")
+require(http_support, '"https".equalsIgnoreCase(uri.getScheme())', "EncryptionUtil.isEncrypted", "must be encrypted or supplied at runtime", "HttpRequest", "public static HttpResponse<String> send", "public static HttpResponse<String> postForm")
 
 keys = {
     "ui.reader.selection.dictionary",

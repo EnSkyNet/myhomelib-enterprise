@@ -52,7 +52,14 @@ public final class LocalMetadataExtractionService {
             String key = entry.getKey() == null ? "" : entry.getKey().trim();
             if (key.isBlank()) continue;
             String value = entry.getValue() == null ? "" : entry.getValue().trim();
-            if (value.length() > MAX_VALUE_CHARS) value = value.substring(0, MAX_VALUE_CHARS) + "…";
+            if (value.length() > MAX_VALUE_CHARS) {
+                int end = MAX_VALUE_CHARS;
+                if (Character.isHighSurrogate(value.charAt(end - 1))
+                        && Character.isLowSurrogate(value.charAt(end))) {
+                    end--;
+                }
+                value = value.substring(0, end) + "…";
+            }
             result.put(key, value);
         }
         return Map.copyOf(result);

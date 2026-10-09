@@ -25,7 +25,7 @@ check("queue work and durable checkpoints run on daemon executors",
       contains(queue, "mhl-content-index-worker", "mhl-content-index-coordinator", "mhl-content-index-checkpoint", "requestCheckpoint"))
 check("restart checkpoint port persists unfinished tasks",
       contains("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/contentindexing/FileContentIndexQueueCheckpointAdapter.java",
-               "task.count", "enqueuedAt", "paused", "AtomicFileSupport.moveReplacing"))
+               "task.count", "enqueuedAt", "paused", "SafeFilePublication.publishReplacingIfUnchanged"))
 check("startup restores active collection indexing queue",
       contains("myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/ContentIndexingStartupTask.java",
                "queueService.restore", "activeCollection().getId()") and

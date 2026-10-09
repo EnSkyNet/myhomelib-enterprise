@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.duplicate;
 
 import com.myhomelibcorp.ui.service.DialogLocalization;
 
+import com.myhomelibcorp.ui.service.OperationStageText;
 import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.duplicate.ExactDuplicateGroup;
@@ -335,7 +336,7 @@ public class DuplicateReviewUiService {
 
     private void requireCurrentCollection(String expectedCollectionId) {
         if (!isCurrentCollection(expectedCollectionId)) {
-            throw new IllegalStateException("Активна колекція змінилася до виконання операції з дублікатами");
+            throw new IllegalStateException(UiText.text("ui.error.collection_changed.duplicates"));
         }
     }
 
@@ -463,32 +464,17 @@ public class DuplicateReviewUiService {
         if (stage == null) return "—";
         return switch (stage) {
             case CHECKING_SERVER -> UiText.text("ui.java.duplicate_review_ui_service.d5cb0c3a91");
-            case DOWNLOADING -> UiText.text("ui.import.stage.downloading");
-            case CREATING_CHECKPOINT -> UiText.text("ui.import.stage.creating_checkpoint");
-            case VALIDATING -> UiText.text("ui.import.stage.validating");
-            case READING_CATALOG -> UiText.text("ui.import.stage.reading_catalog");
             case IMPORTING -> UiText.text("ui.import.action.generic");
-            case UPDATING_AUTHORS -> UiText.text("ui.import.stage.updating_authors");
-            case APPLYING_DELETIONS -> UiText.text("ui.import.stage.applying_deletions");
-            case UPDATING_SEARCH_INDEX -> UiText.text("ui.import.stage.updating_index");
             case ROLLING_BACK -> UiText.text("ui.java.duplicate_review_ui_service.d0f715afcd");
             case REFRESHING_STATISTICS -> UiText.text("ui.java.duplicate_review_ui_service.7c96a35ead");
-            case INTEGRITY_CHECKS -> UiText.text("ui.import.stage.integrity_checks");
-            case SCANNING_DUPLICATES -> UiText.text("ui.import.stage.scanning_duplicates");
-            case SYNCHRONIZING_FILES -> UiText.text("ui.import.stage.synchronizing_files");
             case OPTIMIZING_DATABASE -> UiText.text("ui.java.duplicate_review_ui_service.bd69af2a4d");
             case BACKING_UP -> UiText.text("ui.backup.confirm.start.title");
-            case RESTORING -> UiText.text("ui.import.stage.restoring");
-            case CREATING_COLLECTION -> UiText.text("ui.import.stage.creating_collection");
-            case DELETING_COLLECTION -> UiText.text("ui.import.stage.deleting_collection");
             case FINALIZING -> UiText.text("ui.fxml.operation_center_workspace.finalizing");
-            case BOOK_DOWNLOAD -> UiText.text("ui.import.stage.book_download");
-            case CONVERTING -> UiText.text("ui.import.stage.converting");
-            case COMPLETED -> UiText.text("ui.import.stage.completed");
-            case CANCELLED -> UiText.text("ui.import.stage.cancelled");
             case FAILED -> UiText.text("common.error");
+            default -> OperationStageText.text(stage);
         };
     }
+
 
     private static void renderExactResult(ExactDuplicateScanResult result, Label status, Label counters,
                                           ProgressBar progress, TextArea results) {

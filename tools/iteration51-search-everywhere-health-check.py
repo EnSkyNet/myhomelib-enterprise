@@ -9,6 +9,7 @@ def check(name, cond, detail=''):
 def text(rel): return (ROOT/rel).read_text(encoding='utf-8')
 
 controller=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/search/SearchWorkspaceController.java')
+content_coordinator=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/search/ContentSearchCoordinator.java')
 fxml=text('myhomelib-ui/src/main/resources/view/search-workspace.fxml')
 reader=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java')
 health=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/IntegrityCheckController.java')
@@ -20,7 +21,7 @@ app_paths=text('myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/App
 
 check('MHL-304 modes', all(x in controller for x in ['METADATA("ui.search.mode.metadata")','CONTENTS("ui.search.mode.contents")','BOTH("ui.search.mode.both")']))
 check('MHL-304 FXML results', all(x in fxml for x in ['searchModeChoice','contentSection','contentListView','contentCountLabel']))
-check('MHL-304 cancellable', 'submitCancellable' in controller and 'task.cancel(true)' in controller)
+check('MHL-304 cancellable', 'submitCollectionScopedCancellable' in content_coordinator and 'currentTask.cancel(true)' in content_coordinator and 'cancelContentSearch()' in controller)
 check('MHL-304 snippets/offset', 'snippet' in lucene and 'matchOffset' in lucene and 'showContentHitInReader' in controller)
 check('MHL-304 reader jump', 'jumpToContentSearchTarget' in reader and 'goToPosition(position)' in reader)
 check('MHL-305 health fields', all(x in health for x in ['schemaVersion()','documentCount()','sizeBytes()','compatible()']))

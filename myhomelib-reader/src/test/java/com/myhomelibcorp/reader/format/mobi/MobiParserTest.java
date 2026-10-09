@@ -55,12 +55,46 @@ class MobiParserTest {
     }
 
     @Test
+    void boundsCorruptFullNameLengthWithoutIntegerOverflow() throws Exception {
+        byte[] mobi = mobi("Bounded", "<p>safe text</p>", 1, 0);
+        int record0Offset = 78 + 2 * 8;
+        ByteBuffer.wrap(mobi).order(ByteOrder.BIG_ENDIAN).putInt(record0Offset + 88, -1);
+
+        var document = new MobiParser().parse(source("corrupt-title.mobi", "mobi", mobi), ParseOptions.withoutImages());
+
+        assertThat(document.text().getFullText()).contains("safe text");
+        assertThat(document.metadata().title()).startsWith("Bounded");
+    }
+
+    @Test
+    void truncatedUnknownSizeMutationsFailClosed() {
+        byte[] valid = mobi("Unknown size", "<p>safe text</p>", 1, 0);
+        int[] lengths = {0, 1, 32, 77, 78, 85, valid.length / 2, Math.max(0, valid.length - 1)};
+        for (int length : lengths) {
+            byte[] truncated = java.util.Arrays.copyOf(valid, length);
+            assertThatThrownBy(() -> new MobiParser().parse(unknownSizeSource("truncated.mobi", "mobi", truncated), ParseOptions.minimal()))
+                    .as("truncated unknown-size MOBI length %s/%s", length, valid.length)
+                    .isInstanceOf(IOException.class);
+        }
+    }
+
+    @Test
     void standardRegistryRecognizesMobiPrcAzwAndAzw3() {
         var registry = DefaultBookFormatRegistry.standard();
         assertThat(registry.findByExtension("mobi")).isPresent();
         assertThat(registry.findByExtension("prc")).isPresent();
         assertThat(registry.findByExtension("azw")).isPresent();
         assertThat(registry.findByExtension("azw3")).isPresent();
+    }
+
+    private static BookSource unknownSizeSource(String name, String extension, byte[] bytes) {
+        return new BookSource() {
+            @Override public InputStream openStream() { return new ByteArrayInputStream(bytes); }
+            @Override public OptionalLong size() { return OptionalLong.empty(); }
+            @Override public String name() { return name; }
+            @Override public String extension() { return extension; }
+            @Override public String id() { return "test:" + name; }
+        };
     }
 
     private static BookSource source(String name, String extension, byte[] bytes) {

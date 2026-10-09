@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.annotation;
 
+import static com.myhomelibcorp.application.operation.LibraryOperationLeaseSupport.withSharedLease;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.annotation.AnnotationManagerQueryPort;
@@ -236,18 +237,7 @@ public class AnnotationManagerService {
 
 
     private <T> T withQueryLease(Supplier<T> action) {
-        if (operationCoordinator == null) return action.get();
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
-        try {
-            T result = action.get();
-            lease.markCompleted("");
-            return result;
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        return withSharedLease(operationCoordinator, LibraryOperationType.QUERY, action);
     }
 
     private <T> T withAnnotationLease(Supplier<T> action) {

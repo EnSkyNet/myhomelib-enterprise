@@ -61,6 +61,69 @@ class BookMultiArtifactTest {
         assertThat(afterRemoval.getFileName()).isEqualTo("book.epub");
     }
 
+
+    @Test
+    void missingExplicitPreferenceKeepsLegacyProjectionInsteadOfGeneratedConversion() {
+        BookArtifact conversion = BookArtifact.builder()
+                .id("a-conversion")
+                .sourceId("conversion:calibre-cli:epub")
+                .name("converted.epub")
+                .format("epub")
+                .file(new BookFile("converted.epub", "converted", "", 200, "/output"))
+                .local(true)
+                .remote(false)
+                .state(BookArtifactState.AVAILABLE)
+                .build();
+        BookArtifact original = BookArtifact.builder()
+                .id("z-original")
+                .sourceId("inpx:flibusta")
+                .name("legacy.fb2")
+                .format("fb2")
+                .file(new BookFile("legacy.fb2", "books", "", 100, "/library"))
+                .local(true)
+                .remote(false)
+                .state(BookArtifactState.AVAILABLE)
+                .build();
+
+        Book hydrated = baseBook().withArtifacts(List.of(conversion, original), null);
+
+        assertThat(hydrated.getPreferredArtifactId()).isEqualTo("z-original");
+        assertThat(hydrated.getFileName()).isEqualTo("legacy.fb2");
+        assertThat(hydrated.getCollectionRoot()).isEqualTo("/library");
+    }
+
+
+    @Test
+    void missingExplicitPreferenceDoesNotTrustCorruptedConversionProjectionWhenOriginalExists() {
+        BookArtifact conversion = BookArtifact.builder()
+                .id("a-conversion")
+                .sourceId("conversion:calibre-cli:epub")
+                .name("converted.epub")
+                .format("epub")
+                .file(new BookFile("converted.epub", "converted", "", 200, "/output"))
+                .local(true)
+                .remote(false)
+                .state(BookArtifactState.AVAILABLE)
+                .build();
+        BookArtifact original = BookArtifact.builder()
+                .id("z-original")
+                .sourceId("inpx:flibusta")
+                .name("legacy.fb2")
+                .format("fb2")
+                .file(new BookFile("legacy.fb2", "books", "", 100, "/library"))
+                .local(true)
+                .remote(false)
+                .state(BookArtifactState.AVAILABLE)
+                .build();
+
+        Book corruptedProjection = baseBook().changeFile(conversion.getFile());
+        Book hydrated = corruptedProjection.withArtifacts(List.of(conversion, original), null);
+
+        assertThat(hydrated.getPreferredArtifactId()).isEqualTo("z-original");
+        assertThat(hydrated.getFileName()).isEqualTo("legacy.fb2");
+        assertThat(hydrated.getCollectionRoot()).isEqualTo("/library");
+    }
+
     @Test
     void artifactsAreImmutableFromOutsideAndUnknownPreferredArtifactIsRejected() {
         Book book = baseBook().withArtifacts(List.of(artifact("a-fb2", "book.fb2", "fb2")), "a-fb2");

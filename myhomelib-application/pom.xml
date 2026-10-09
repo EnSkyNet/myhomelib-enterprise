@@ -6,6 +6,7 @@
     <parent>
         <groupId>com.myhomelibcorp</groupId>
         <artifactId>myhomelib-enterprise</artifactId>
+
         <version>8.0.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
@@ -14,6 +15,7 @@
     <artifactId>myhomelib-application</artifactId>
 
     <properties>
+        <mhl.test.jvmArgs>${mhl.mockito.agentArg}</mhl.test.jvmArgs>
         <mapstruct.version>1.5.5.Final</mapstruct.version>
     </properties>
 
@@ -35,6 +37,7 @@
             <groupId>org.mapstruct</groupId>
             <artifactId>mapstruct</artifactId>
             <version>${mapstruct.version}</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.mapstruct</groupId>

@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.bulkedit;
 
+import com.myhomelibcorp.application.util.BookIdListSupport;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.history.OperationHistoryPort;
@@ -21,7 +22,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -265,16 +265,8 @@ public class BatchMetadataEditUseCase {
     }
 
     private static List<BookId> normalizeIds(List<BookId> source) {
-        if (source == null || source.isEmpty()) return List.of();
-        LinkedHashSet<BookId> unique = new LinkedHashSet<>();
-        for (BookId id : source) {
-            if (id == null) continue;
-            unique.add(id);
-            if (unique.size() > MAX_SELECTED_BOOKS) {
-                throw new IllegalArgumentException("Batch metadata selection limit: " + MAX_SELECTED_BOOKS);
-            }
-        }
-        return List.copyOf(unique);
+        return BookIdListSupport.stableDistinctIgnoringNulls(
+                source, MAX_SELECTED_BOOKS, "Batch metadata selection limit: " + MAX_SELECTED_BOOKS);
     }
 
     private static Map<BookId, Book> orderedMap(List<Book> found) {

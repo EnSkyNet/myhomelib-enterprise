@@ -13,7 +13,7 @@ public record FuzzyDuplicateMatch(
 ) {
     public FuzzyDuplicateMatch {
         if (leftBookId == null || rightBookId == null) throw new IllegalArgumentException("Both book ids are required");
-        score = Math.max(0.0, Math.min(1.0, score));
+        score = Double.isFinite(score) ? Math.max(0.0, Math.min(1.0, score)) : 0.0;
         reasons = List.copyOf(reasons == null ? List.of() : reasons);
         if (reasons.isEmpty()) throw new IllegalArgumentException("At least one duplicate reason is required");
     }

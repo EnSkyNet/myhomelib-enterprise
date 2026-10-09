@@ -22,7 +22,12 @@ public class Bookmark {
         if (context != null && !context.isEmpty()) {
             String clean = context.replaceAll("\\s+", " ").trim();
             if (clean.length() > 50) {
-                return clean.substring(0, 47) + "...";
+                int end = 47;
+                if (Character.isHighSurrogate(clean.charAt(end - 1))
+                        && Character.isLowSurrogate(clean.charAt(end))) {
+                    end--;
+                }
+                return clean.substring(0, end) + "...";
             }
             return clean;
         }

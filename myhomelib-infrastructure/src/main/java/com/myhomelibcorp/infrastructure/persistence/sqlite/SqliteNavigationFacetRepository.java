@@ -10,12 +10,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.OptionalLong;
-import java.util.Set;
 
 /** SQLite aggregation queries backing navigation facets and Stage 8 unified filters. */
 @Repository
@@ -124,15 +122,8 @@ public class SqliteNavigationFacetRepository implements NavigationFacetRepositor
                        a.first_name,
                        a.middle_name,
                        a.last_name,
-                       (
-                           SELECT COUNT(*)
-                           FROM book_authors count_ba
-                           JOIN books b ON b.id = count_ba.book_id
-                           WHERE count_ba.author_id = a.id
-                             AND b.deleted = 0
-                             %s
-                       ) AS book_count
-                FROM authors a
+                       -1 AS book_count
+                FROM authors a INDEXED BY idx_authors_navigation_page
                 WHERE %s
                   %s
                   AND EXISTS (
@@ -148,12 +139,12 @@ public class SqliteNavigationFacetRepository implements NavigationFacetRepositor
                          COALESCE(a.middle_name, '') COLLATE NOCASE,
                          a.id
                 LIMIT ?
-                """.formatted(matchingBookFilter, initialSql.condition(), cursorCondition, matchingBookFilter);
+                """.formatted(initialSql.condition(), cursorCondition, matchingBookFilter);
 
-        // SQL placeholder order matters: SELECT/count subquery comes before the
-        // outer WHERE, then EXISTS. The filter therefore intentionally appears twice.
-        List<Object> dataParams = new ArrayList<>(f.params());
-        dataParams.addAll(initialSql.params());
+        // Book counts are intentionally omitted from the first navigation page. Computing
+        // COUNT(*) for 500 authors caused hundreds of correlated scans on 500k+ catalogues;
+        // the UI already supports an unknown count (-1), while EXISTS preserves filtering.
+        List<Object> dataParams = new ArrayList<>(initialSql.params());
         if (after != null) {
             dataParams.add(after.lastName());
             dataParams.add(after.firstName());
@@ -300,30 +291,52 @@ public class SqliteNavigationFacetRepository implements NavigationFacetRepositor
     @Override
     public Optional<Character> findFirstAuthorInitial(BookFilterSpec filter) {
         BookFilterSqlAdapter.FilterSql f = BookFilterSqlAdapter.build(filter, "b");
-        List<Object> params = new ArrayList<>(f.params());
-        String sql = """
-                SELECT DISTINCT SUBSTR((%s), 1, 1) AS initial
-                FROM authors a
-                JOIN book_authors ba ON ba.author_id = a.id
-                JOIN books b ON b.id = ba.book_id
-                WHERE b.deleted = 0
-                  AND TRIM((%s)) <> ''
-                  %s
-                """.formatted(AUTHOR_DISPLAY_EXPR, AUTHOR_DISPLAY_EXPR, andFilter(f));
-        List<String> values = jdbc().query(sql, (rs, rowNum) -> rs.getString("initial"), params.toArray());
-        Set<Character> available = new HashSet<>();
-        boolean other = false;
-        for (String value : values) {
-            if (value == null || value.isBlank()) continue;
-            char c = value.charAt(0);
-            char upper = Character.toUpperCase(c);
-            if (Character.isLetter(c) && TOOLBAR_INITIALS.indexOf(upper) >= 0) available.add(upper);
-            else other = true;
-        }
+
+        // Probe toolbar initials in UI order and stop on the first match. The previous DISTINCT
+        // join aggregated the complete author/book relation (hundreds of thousands of rows) just
+        // to discover one letter. V32/V46 provide an expression index for the initial, so each
+        // probe is bounded and EXISTS stops on the first eligible book.
         for (char candidate : TOOLBAR_INITIALS.toCharArray()) {
-            if (available.contains(candidate)) return Optional.of(candidate);
+            AuthorInitialSql initialSql = authorInitialSql(candidate);
+            List<Object> params = new ArrayList<>(initialSql.params());
+            params.addAll(f.params());
+            String sql = """
+                    SELECT 1
+                      FROM authors a
+                     WHERE %s
+                       AND EXISTS (
+                           SELECT 1
+                             FROM book_authors ba
+                             JOIN books b ON b.id = ba.book_id
+                            WHERE ba.author_id = a.id
+                              AND b.deleted = 0
+                              %s
+                       )
+                     LIMIT 1
+                    """.formatted(initialSql.condition(), andFilter(f));
+            List<Integer> found = jdbc().query(sql, (rs, rowNum) -> rs.getInt(1), params.toArray());
+            if (!found.isEmpty()) return Optional.of(candidate);
         }
-        return other ? Optional.of('#') : Optional.empty();
+
+        AuthorInitialSql otherSql = authorInitialSql('#');
+        List<Object> otherParams = new ArrayList<>(otherSql.params());
+        otherParams.addAll(f.params());
+        String otherQuery = """
+                SELECT 1
+                  FROM authors a
+                 WHERE %s
+                   AND EXISTS (
+                       SELECT 1
+                         FROM book_authors ba
+                         JOIN books b ON b.id = ba.book_id
+                        WHERE ba.author_id = a.id
+                          AND b.deleted = 0
+                          %s
+                   )
+                 LIMIT 1
+                """.formatted(otherSql.condition(), andFilter(f));
+        return jdbc().query(otherQuery, (rs, rowNum) -> rs.getInt(1), otherParams.toArray()).isEmpty()
+                ? Optional.empty() : Optional.of('#');
     }
 
     @Override

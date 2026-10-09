@@ -7,8 +7,15 @@ import com.myhomelibcorp.application.port.out.opds.OpdsCatalogQueryPort;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.usecase.book.ResolveBookContentUseCase;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -59,6 +66,62 @@ class OpdsLifecycleIsolationTest {
                     .isInstanceOf(LibraryOperationConflictException.class);
             verifyNoInteractions(load, resolve);
         }
+    }
+
+
+    @Test
+    void largeDownloadStreamsFromPinnedHandleWithoutWholeFileMaterialization(@TempDir Path tempDir) throws Exception {
+        byte[] payload = new byte[2 * 1024 * 1024 + 17];
+        for (int i = 0; i < payload.length; i++) payload[i] = (byte) (i * 31);
+        Path source = tempDir.resolve("large.fb2");
+        Files.write(source, payload);
+
+        LoadBookByIdUseCase load = mock(LoadBookByIdUseCase.class);
+        ResolveBookContentUseCase resolve = mock(ResolveBookContentUseCase.class);
+        when(load.execute(any())).thenReturn(Optional.of(com.myhomelibcorp.application.dto.BookDto.builder()
+                .id("11111111-1111-1111-1111-111111111111").title("Large").fileName("large.fb2").local(true).build()));
+        when(resolve.execute(any(), any())).thenReturn(new com.myhomelibcorp.application.usecase.book.ResolvedBookContent(source, false));
+
+        OpdsDownloadService service = new OpdsDownloadService(load, resolve);
+        try (OpdsDownloadService.Download download = service.open("11111111-1111-1111-1111-111111111111").orElseThrow();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            assertThat(download.size()).isEqualTo(payload.length);
+            download.transferTo(out);
+            assertThat(out.toByteArray()).isEqualTo(payload);
+        }
+    }
+
+    @Test
+    void clientDisconnectDuringDownloadStillReleasesPinnedFileAndTemporaryContent(@TempDir Path tempDir) throws Exception {
+        Path source = tempDir.resolve("temporary.fb2");
+        Files.write(source, new byte[256 * 1024]);
+
+        LoadBookByIdUseCase load = mock(LoadBookByIdUseCase.class);
+        ResolveBookContentUseCase resolve = mock(ResolveBookContentUseCase.class);
+        when(load.execute(any())).thenReturn(Optional.of(com.myhomelibcorp.application.dto.BookDto.builder()
+                .id("11111111-1111-1111-1111-111111111111").title("Temporary").fileName("temporary.fb2").local(true).build()));
+        when(resolve.execute(any(), any())).thenReturn(new com.myhomelibcorp.application.usecase.book.ResolvedBookContent(source, true));
+
+        OpdsDownloadService service = new OpdsDownloadService(load, resolve);
+        OpdsDownloadService.Download download = service.open("11111111-1111-1111-1111-111111111111").orElseThrow();
+        OutputStream disconnected = new OutputStream() {
+            private boolean first = true;
+            @Override public void write(int value) throws IOException { throw new IOException("client disconnected"); }
+            @Override public void write(byte[] bytes, int offset, int length) throws IOException {
+                if (first) { first = false; throw new IOException("client disconnected"); }
+                throw new IOException("client disconnected");
+            }
+        };
+
+        assertThatThrownBy(() -> download.transferTo(disconnected))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("client disconnected");
+        download.close();
+
+        assertThat(Files.exists(source)).isFalse();
+        assertThatThrownBy(() -> download.transferTo(OutputStream.nullOutputStream()))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("already closed");
     }
 
     @Test

@@ -10,7 +10,7 @@ public record CollectionRuntimeStatus(
 ) {
     public CollectionRuntimeStatus {
         state = state == null ? CollectionRuntimeState.READY : state;
-        fraction = fraction < 0 ? -1.0 : Math.max(0.0, Math.min(1.0, fraction));
+        fraction = !Double.isFinite(fraction) || fraction < 0 ? -1.0 : Math.max(0.0, Math.min(1.0, fraction));
         detail = detail == null ? "" : detail;
     }
 

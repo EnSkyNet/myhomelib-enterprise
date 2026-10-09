@@ -25,6 +25,8 @@ import com.myhomelibcorp.organizer.plan.*;
 import com.myhomelibcorp.organizer.policy.OriginalRetentionPolicy;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.shared.archive.SafeZipSupport;
+import static com.myhomelibcorp.organizer.apply.OrganizerFileIntegritySupport.*;
+import static com.myhomelibcorp.organizer.apply.OrganizerArchiveSupport.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -59,6 +61,7 @@ public final class ApplyLibraryOrganizationUseCase {
     private final ApplicationSettingsPort settings;
     private final OrganizerOutputValidationPort outputValidation;
     private final CollectionLifecyclePort collectionLifecycle;
+    private final OrganizerTargetPublisher targetPublisher = new OrganizerTargetPublisher();
 
     /** Backward-compatible constructor for collection-independent organizer tests/callers. */
     public ApplyLibraryOrganizationUseCase(List<BookConverter> converters, OrganizationJournalPort journal,
@@ -406,7 +409,7 @@ public final class ApplyLibraryOrganizationUseCase {
                 prepared.sourceHash(), prepared.targetHash(), null));
         boolean targetCommitted = false;
         try {
-            finalizeTarget(prepared.staged(), item.targetPath());
+            targetPublisher.publish(prepared.staged(), item.targetPath());
             targetCommitted = true;
             applyCatalog(item);
         } catch (Exception failure) {
@@ -437,7 +440,7 @@ public final class ApplyLibraryOrganizationUseCase {
         }
         boolean targetCommitted = false;
         try {
-            finalizeTarget(prepared.staged(), item.targetPath());
+            targetPublisher.publish(prepared.staged(), item.targetPath());
             targetCommitted = true;
             applyCatalog(item);
             if (!item.archiveEntry() && !inPlace) {
@@ -478,7 +481,7 @@ public final class ApplyLibraryOrganizationUseCase {
 
         boolean targetCommitted = false;
         try {
-            finalizeTarget(prepared.staged(), item.targetPath());
+            targetPublisher.publish(prepared.staged(), item.targetPath());
             targetCommitted = true;
             applyCatalog(item);
             if (originalBackup != null) {
@@ -729,7 +732,7 @@ public final class ApplyLibraryOrganizationUseCase {
         Path staged=workspace.staged(item.itemId(),extension(item.targetPath()));
         copyAndVerify(item.sourcePath(),staged,sourceHash);
         transition(manifest,item,journalItem(plan.operationId(),item,OrganizationItemState.VALIDATED,sourceHash,sha256(staged),null));
-        finalizeTarget(staged,item.targetPath());
+        targetPublisher.publish(staged,item.targetPath());
         String targetHash=sha256(item.targetPath());
         if(!targetHash.equals(sourceHash))throw new IllegalStateException("Target hash mismatch after commit");
         try {
@@ -741,7 +744,7 @@ public final class ApplyLibraryOrganizationUseCase {
         } catch(Exception failure) {
             rollbackCatalog(item, failure);
             if(!same(item.sourcePath(),item.targetPath())) {
-                if (matchesSafeHash(item.sourcePath(), sourceHash)) {
+                if (matchesRequiredHash(item.sourcePath(), sourceHash)) {
                     try { removeOwnedFileIfPresent(item.targetPath(), sourceHash, "Organizer move rollback target"); }
                     catch (Exception cleanup) { recordRetainedTarget(failure, item.targetPath(), cleanup); }
                 } else {
@@ -759,100 +762,6 @@ public final class ApplyLibraryOrganizationUseCase {
                 "Retained target for recovery because rollback ownership verification failed: " + target, cleanup));
     }
 
-    private void finalizeTarget(Path staged,Path target)throws Exception {
-        Path safeStaged = OrganizerPathSafety.canonicalExistingFile(staged, "Organizer staged output");
-        Path t=OrganizerPathSafety.canonicalForCreation(target, "Organizer target");
-        Path parent=t.getParent();
-        if(parent==null)throw new IllegalArgumentException("Target has no parent: "+t);
-        OrganizerPathSafety.createDirectoriesNoLinks(parent, "Organizer target directory");
-        if(Files.exists(t,LinkOption.NOFOLLOW_LINKS))throw new FileAlreadyExistsException(t.toString());
-        String expected=sha256(safeStaged);
-        Path temp=t.resolveSibling("."+t.getFileName()+".mhl-tmp-"+UUID.randomUUID());
-        boolean published=false;
-        try {
-            OrganizerPathSafety.copyFreshFile(safeStaged,temp,"Organizer destination temporary copy");
-            verifySafeRegularHash(temp,expected,"Destination temporary copy hash mismatch");
-            // No REPLACE_EXISTING/ATOMIC_MOVE here: the target must remain fail-closed if another
-            // process creates it between preflight and publication.
-            Files.move(temp,t);
-            published=true;
-            verifySafeRegularHash(t,expected,"Final target hash mismatch");
-        } catch(Exception failure) {
-            try { Files.deleteIfExists(temp); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
-            if (published) {
-                if (matchesSafeHash(t, expected)) {
-                    try { removeOwnedFileIfPresent(t, expected, "Organizer failed final publication rollback"); }
-                    catch (Exception cleanup) { recordRetainedTarget(failure, t, cleanup); }
-                } else if (Files.exists(t, LinkOption.NOFOLLOW_LINKS)) {
-                    failure.addSuppressed(new IllegalStateException(
-                            "Published target changed after commit; retained it as recovery evidence: " + t));
-                }
-            }
-            throw failure;
-        } finally {
-            try { Files.deleteIfExists(temp); } catch (Exception ignored) { }
-        }
-    }
-    private boolean removeOwnedFileIfPresent(Path path, String expectedHash, String role) throws Exception {
-        if (path == null || !Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return false;
-        removeOwnedFile(path, expectedHash, role);
-        return true;
-    }
-
-    /** Removes only the exact journaled bytes. The file is detached first and re-verified so a racing
-     * replacement is never deleted. If the detached bytes changed, they are restored when possible. */
-    private void removeOwnedFile(Path path, String expectedHash, String role) throws Exception {
-        if (expectedHash == null || expectedHash.isBlank()) throw new IllegalStateException(role + ": expected SHA-256 is missing");
-        Path safe = OrganizerPathSafety.canonicalExistingFile(path, role);
-        verifyHash(safe, expectedHash, role + " pre-detach hash mismatch");
-        Path parent = safe.getParent();
-        if (parent == null) throw new IllegalStateException(role + ": path has no parent: " + safe);
-        Path evidence = parent.resolve("." + safe.getFileName() + ".mhl-remove-" + UUID.randomUUID() + ".tmp");
-        evidence = OrganizerPathSafety.canonicalForCreation(evidence, role + " evidence");
-        if (Files.exists(evidence, LinkOption.NOFOLLOW_LINKS)) throw new FileAlreadyExistsException(evidence.toString());
-        Files.move(safe, evidence);
-        try {
-            verifySafeRegularHash(evidence, expectedHash, role + " post-detach hash mismatch");
-        } catch (Exception changed) {
-            try {
-                if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) Files.move(evidence, path);
-                else changed.addSuppressed(new IllegalStateException(role + ": original path was occupied; detached evidence retained at " + evidence));
-            } catch (Exception restore) {
-                changed.addSuppressed(restore);
-            }
-            throw changed;
-        }
-        Files.delete(evidence);
-    }
-
-    private void verifyHash(Path file,String expected,String message)throws Exception{
-        if(expected==null||expected.isBlank()||!expected.equalsIgnoreCase(sha256(file)))throw new IllegalStateException(message+": "+file);
-    }
-    private void requireSafeRegularFile(Path file,String message){
-        try {
-            OrganizerPathSafety.canonicalExistingFile(file, message);
-        } catch (Exception unsafe) {
-            throw new IllegalStateException(message+": unsafe or missing file "+file, unsafe);
-        }
-    }
-
-    private boolean matchesSafeHash(Path file, String expected) {
-        try {
-            verifySafeRegularHash(file, expected, "Source safety/hash verification failed");
-            return true;
-        } catch (Exception ignored) {
-            return false;
-        }
-    }
-    private void verifySafeRegularHash(Path file,String expected,String message)throws Exception{
-        requireSafeRegularFile(file,message);
-        verifyHash(file,expected,message);
-    }
-    private void copyAndVerify(Path source,Path target,String expected)throws Exception{
-        verifySafeRegularHash(source,expected,"Source hash mismatch before copy");
-        OrganizerPathSafety.copyFreshFile(source,target,"Organizer verified copy");
-        verifySafeRegularHash(target,expected,"Staged hash mismatch");
-    }
     private Path sourceForPreparation(OrganizationPlanItem item, LibraryOperationWorkspace workspace,
                                       BooleanSupplier cancelled, String expectedHash) throws Exception {
         ensureSourceUnchanged(item, expectedHash);
@@ -873,20 +782,9 @@ public final class ApplyLibraryOrganizationUseCase {
         OrganizerPathSafety.createDirectoriesNoLinks(target.toAbsolutePath().normalize().getParent(), "Organizer archive extraction target");
         requireSafeRegularFile(item.sourcePath(), "Archive source is unsafe");
         try (ZipFile zip = SafeZipSupport.openDetected(item.sourcePath(), "Organizer source archive")) {
-            ZipArchiveEntry selected = findArchiveEntry(zip, item.sourceEntry());
-            validateArchiveEntry(selected);
-            try (InputStream in = zip.getInputStream(selected);
-                 java.io.OutputStream out = OrganizerPathSafety.openFreshOutputStream(target, "Organizer archive extraction target")) {
-                byte[] buffer = new byte[64 * 1024];
-                long total = 0L;
-                for (int read; (read = in.read(buffer)) >= 0;) {
-                    if (cancelled != null && cancelled.getAsBoolean()) throw new CancellationException("Archive extraction cancelled");
-                    if (read == 0) continue;
-                    total = safeAdd(total, read);
-                    if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES) throw new IllegalStateException("Archive entry exceeds 512 MiB limit");
-                    out.write(buffer, 0, read);
-                }
-                if (selected.getSize() >= 0 && total != selected.getSize()) throw new IllegalStateException("Archive entry size mismatch");
+            ZipArchiveEntry selected = requireEntry(zip, item.sourceEntry());
+            try (java.io.OutputStream out = OrganizerPathSafety.openFreshOutputStream(target, "Organizer archive extraction target")) {
+                copyEntry(zip, selected, out, cancelled);
             }
             if (!sha256(target).equals(expectedHash)) throw new IllegalStateException("Archive entry hash changed during extraction");
         } finally {
@@ -898,77 +796,14 @@ public final class ApplyLibraryOrganizationUseCase {
 
     private String sha256Source(OrganizationPlanItem item) throws Exception {
         requireSafeRegularFile(item.sourcePath(), "Organizer source is unsafe");
-        if (!item.archiveEntry()) return sha256(item.sourcePath());
-        try (ZipFile zip = SafeZipSupport.openDetected(item.sourcePath(), "Organizer source archive")) {
-            ZipArchiveEntry entry = findArchiveEntry(zip, item.sourceEntry());
-            validateArchiveEntry(entry);
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] buffer = new byte[1024 * 1024];
-            long total = 0L;
-            try (InputStream in = zip.getInputStream(entry)) {
-                for (int read; (read = in.read(buffer)) >= 0;) {
-                    if (read == 0) continue;
-                    total = safeAdd(total, read);
-                    if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES) throw new IllegalStateException("Archive entry exceeds 512 MiB limit");
-                    digest.update(buffer, 0, read);
-                }
-            }
-            if (entry.getSize() >= 0 && total != entry.getSize()) throw new IllegalStateException("Archive entry size mismatch");
-            return HexFormat.of().formatHex(digest.digest());
-        }
+        return item.archiveEntry() ? OrganizerArchiveSupport.sha256(item.sourcePath(), item.sourceEntry()) : sha256(item.sourcePath());
     }
 
     private long sourceSize(OrganizationPlanItem item) throws Exception {
-        if (!item.archiveEntry()) return Files.size(OrganizerPathSafety.canonicalExistingFile(item.sourcePath(), "Organizer source size"));
-        try (ZipFile zip = SafeZipSupport.openDetected(item.sourcePath(), "Organizer source archive")) {
-            ZipArchiveEntry entry = findArchiveEntry(zip, item.sourceEntry());
-            validateArchiveEntry(entry);
-            if (entry.getSize() >= 0) return entry.getSize();
-            long total = 0L;
-            byte[] buffer = new byte[64 * 1024];
-            try (InputStream in = zip.getInputStream(entry)) {
-                for (int read; (read = in.read(buffer)) >= 0;) {
-                    if (read <= 0) continue;
-                    total = safeAdd(total, read);
-                    if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES) throw new IllegalStateException("Archive entry exceeds 512 MiB limit");
-                }
-            }
-            return total;
+        if (!item.archiveEntry()) {
+            return Files.size(OrganizerPathSafety.canonicalExistingFile(item.sourcePath(), "Organizer source size"));
         }
-    }
-
-    private ZipArchiveEntry findArchiveEntry(ZipFile zip, String expectedName) {
-        if (expectedName == null || expectedName.isBlank() || unsafeArchiveEntryName(expectedName))
-            throw new IllegalArgumentException("Unsafe archive entry name");
-        ZipArchiveEntry selected = null;
-        int inspected = 0;
-        Enumeration<ZipArchiveEntry> entries = zip.getEntries();
-        while (entries.hasMoreElements()) {
-            if (++inspected > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IllegalStateException("Archive entry-count limit exceeded");
-            ZipArchiveEntry entry = entries.nextElement();
-            if (unsafeArchiveEntryName(entry.getName())) throw new IllegalStateException("Archive contains unsafe entry path");
-            if (!entry.isDirectory() && expectedName.equals(entry.getName())) {
-                if (selected != null) throw new IllegalStateException("Archive contains duplicate selected entry name");
-                selected = entry;
-            }
-        }
-        if (selected == null) throw new IllegalStateException("Archive entry disappeared: " + expectedName);
-        return selected;
-    }
-
-    private void validateArchiveEntry(ZipArchiveEntry entry) {
-        if (entry == null || entry.isDirectory()) throw new IllegalArgumentException("Archive entry is not a file");
-        if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize())) throw new IllegalStateException("Archive entry exceeds 512 MiB limit");
-        long compressed = entry.getCompressedSize(), size = entry.getSize();
-        if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed)) {
-            throw new IllegalStateException("Archive entry compression ratio exceeds safety limit");
-        }
-    }
-
-    private boolean unsafeArchiveEntryName(String name) {
-        if (name == null || name.isBlank() || name.startsWith("/") || name.startsWith("\\") || name.matches("^[A-Za-z]:.*")) return true;
-        for (String part : name.replace('\\','/').split("/")) if ("..".equals(part)) return true;
-        return false;
+        return OrganizerArchiveSupport.size(item.sourcePath(), item.sourceEntry());
     }
 
     private String sourceEntryExtension(String entry) {
@@ -1036,7 +871,7 @@ public final class ApplyLibraryOrganizationUseCase {
         if(backup==null||source==null)return;
         try{
             if(Files.exists(source,LinkOption.NOFOLLOW_LINKS)){
-                verifySafeRegularHash(source,expected,"Rollback source already exists but is not the expected original");
+                verifyRequiredHash(source,expected,"Rollback source already exists but is not the expected original");
                 return;
             }
             Path parent=source.toAbsolutePath().normalize().getParent();
@@ -1052,7 +887,7 @@ public final class ApplyLibraryOrganizationUseCase {
         Path backup=backupOriginal(item.sourcePath(),root,item.itemId(),sourceHash);
         String backupHash=sha256(backup);
         transition(manifest,item,journalItem(plan.operationId(),item,OrganizationItemState.VALIDATED,sourceHash,backupHash,backup));
-        verifySafeRegularHash(item.sourcePath(),sourceHash,"Source changed before relocation commit");
+        verifyRequiredHash(item.sourcePath(),sourceHash,"Source changed before relocation commit");
         removeOwnedFile(item.sourcePath(), sourceHash, "Organizer relocated-original source removal");
         try {
             applyCatalog(item);
@@ -1067,13 +902,13 @@ public final class ApplyLibraryOrganizationUseCase {
     private Path backupOriginal(Path source,Path root,UUID itemId,String expectedHash)throws Exception{
         OrganizerPathSafety.createDirectoriesNoLinks(root,"Organizer recovery directory");
         Path target=root.resolve(itemId+"-"+source.getFileName());
-        verifySafeRegularHash(source,expectedHash,"Source changed before recovery backup");
+        verifyRequiredHash(source,expectedHash,"Source changed before recovery backup");
         if(Files.exists(target,LinkOption.NOFOLLOW_LINKS)){
-            verifySafeRegularHash(target,expectedHash,"Existing recovery backup is unsafe or belongs to different content");
+            verifyRequiredHash(target,expectedHash,"Existing recovery backup is unsafe or belongs to different content");
         }else{
             copyAndVerify(source,target,expectedHash);
         }
-        verifySafeRegularHash(source,expectedHash,"Source changed while recovery backup was created");
+        verifyRequiredHash(source,expectedHash,"Source changed while recovery backup was created");
         return target;
     }
     private void preflight(OrganizationPlan plan)throws Exception{
@@ -1255,7 +1090,6 @@ public final class ApplyLibraryOrganizationUseCase {
         return actual;
     }
     private void verifyExpectedSource(OrganizationPlanItem i)throws Exception{itemSourceHash(i);}
-    private String sha256(Path p)throws Exception{Path safe=OrganizerPathSafety.canonicalExistingFile(p,"Organizer hash source");MessageDigest d=MessageDigest.getInstance("SHA-256");byte[]b=new byte[1024*1024];try(InputStream in=Files.newInputStream(safe,LinkOption.NOFOLLOW_LINKS)){for(int n;(n=in.read(b))>=0;)if(n>0)d.update(b,0,n);}return HexFormat.of().formatHex(d.digest());}
     private boolean same(Path a,Path b){return a!=null&&b!=null&&a.toAbsolutePath().normalize().equals(b.toAbsolutePath().normalize());}
     private String extension(Path p){String n=p.getFileName().toString();int d=n.lastIndexOf('.');return d<0?"":n.substring(d);}
     private String fileStem(Path p){String n=p.getFileName().toString();int d=n.lastIndexOf('.');return d>0?n.substring(0,d):n;}

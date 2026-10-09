@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.usecase.duplicate;
 
+import static com.myhomelibcorp.application.operation.LibraryOperationLeaseSupport.withSharedLease;
 import com.myhomelibcorp.application.duplicate.merge.BookMergeJournalEntry;
 import com.myhomelibcorp.application.duplicate.merge.BookMergeMutationResult;
 import com.myhomelibcorp.application.duplicate.merge.BookMergePlan;
@@ -60,31 +61,11 @@ public class MergeBooksUseCase {
     }
 
     private <T> T withQueryLease(java.util.function.Supplier<T> action) {
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
-        try {
-            T result = action.get();
-            lease.markCompleted("");
-            return result;
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        return withSharedLease(operationCoordinator, LibraryOperationType.QUERY, action);
     }
 
     private <T> T withEditLease(java.util.function.Supplier<T> action) {
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EDIT);
-        try {
-            T result = action.get();
-            lease.markCompleted("");
-            return result;
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        return withSharedLease(operationCoordinator, LibraryOperationType.EDIT, action);
     }
 
     private static BookMergeResult result(BookMergeMutationResult mutation, boolean searchOk) {

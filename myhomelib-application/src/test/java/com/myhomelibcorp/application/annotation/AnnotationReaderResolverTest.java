@@ -23,6 +23,32 @@ class AnnotationReaderResolverTest {
     }
 
     @Test
+    void crossArtifactCandidateMatchesCanonicallyEquivalentQuote() {
+        String text = "prefix cafe\u0301 suffix";
+        AnnotationReaderItem item = item("other-artifact", "café", "prefix ", " suffix", 0.5);
+
+        var candidate = AnnotationReaderResolver.findRebindCandidate(item, text).orElseThrow();
+
+        assertThat(candidate.startOffset()).isEqualTo(text.indexOf("cafe\u0301"));
+        assertThat(candidate.endOffset()).isEqualTo(text.indexOf("cafe\u0301") + "cafe\u0301".length());
+        assertThat(candidate.occurrenceCount()).isEqualTo(1);
+        assertThat(candidate.safeToRebind()).isTrue();
+    }
+
+    @Test
+    void crossArtifactCandidateMatchesLongDecomposedQuoteAgainstComposedText() {
+        String composed = "é".repeat(12);
+        String decomposed = "e\u0301".repeat(12);
+        String text = composed;
+        AnnotationReaderItem item = item("other-artifact", decomposed, "", "", 0.5);
+
+        var candidate = AnnotationReaderResolver.findRebindCandidate(item, text).orElseThrow();
+
+        assertThat(text.substring((int) candidate.startOffset(), (int) candidate.endOffset())).isEqualTo(composed);
+        assertThat(candidate.occurrenceCount()).isEqualTo(1);
+    }
+
+    @Test
     void repeatedQuoteWithoutContextIsNotSafeToRebind() {
         String text = "quote middle quote";
         AnnotationReaderItem item = item("other-artifact", "quote", "", "", 0.5);

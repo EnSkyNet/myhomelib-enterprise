@@ -18,14 +18,12 @@ public class UserDataUiService {
     private final PortableUserDataService transfer;
     private final DialogService dialogs;
     private final LibraryOperationCoordinator operationCoordinator;
+    private final FileChooserService fileChooserService;
 
     public void exportData(Window owner) {
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle(UiText.text("ui.java.user_data_ui_service.e8ac5883ab"));
-        chooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter(UiText.text("ui.java.user_data_ui_service.02881246d2"), "*.mhluserdata.json", "*.json"));
-        chooser.setInitialFileName("myhomelib-user-data.mhluserdata.json");
-        File file = chooser.showSaveDialog(owner);
+        File file = fileChooserService.chooseFileToSave(owner, UiText.text("ui.java.user_data_ui_service.e8ac5883ab"),
+                "myhomelib-user-data.mhluserdata.json",
+                java.util.List.of(new FileChooser.ExtensionFilter(UiText.text("ui.java.user_data_ui_service.02881246d2"), "*.mhluserdata.json", "*.json")));
         if (file == null) return;
 
         LibraryOperationCoordinator.Lease lease = null;
@@ -47,11 +45,8 @@ public class UserDataUiService {
     }
 
     public void importData(Window owner) {
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle(UiText.text("ui.java.user_data_ui_service.560436e3f5"));
-        chooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter(UiText.text("ui.java.user_data_ui_service.02881246d2"), "*.mhluserdata.json", "*.json"));
-        File file = chooser.showOpenDialog(owner);
+        File file = fileChooserService.chooseFile(owner, UiText.text("ui.java.user_data_ui_service.560436e3f5"),
+                java.util.List.of(new FileChooser.ExtensionFilter(UiText.text("ui.java.user_data_ui_service.02881246d2"), "*.mhluserdata.json", "*.json")));
         if (file == null) return;
 
         LibraryOperationCoordinator.Lease lease = null;

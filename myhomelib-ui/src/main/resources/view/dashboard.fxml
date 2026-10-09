@@ -4,9 +4,13 @@
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
 
-<VBox xmlns:fx="http://javafx.com/fxml/1"
-      fx:controller="com.myhomelibcorp.ui.dashboard.DashboardController"
-      spacing="12" style="-fx-padding: 20; -fx-background-color: -mhl-background;">
+<StackPane xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="com.myhomelibcorp.ui.dashboard.DashboardController"
+           minHeight="0" minWidth="0">
+    <ScrollPane fitToWidth="true" fitToHeight="false" hbarPolicy="NEVER" vbarPolicy="AS_NEEDED"
+                pannable="true" minHeight="0" minWidth="0" StackPane.alignment="CENTER">
+        <content>
+            <VBox spacing="12" style="-fx-padding: 20; -fx-background-color: -mhl-background;">
 
     <!-- Заголовок -->
     <Label text="ui.fxml.dashboard.welcome" style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
@@ -15,6 +19,13 @@
     <VBox fx:id="continueReadingBox" spacing="8" style="-fx-background-color: -mhl-panel; -fx-padding: 15; -fx-border-color: -mhl-border; -fx-border-radius: 8; -fx-background-radius: 8;">
         <Label text="ui.fxml.dashboard.continue_reading" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
         <VBox fx:id="continueReadingItemsBox" spacing="8"/>
+    </VBox>
+
+
+    <!-- Блок "Далі у серіях" -->
+    <VBox fx:id="nextInSeriesBox" spacing="8" visible="false" managed="false" style="-fx-background-color: -mhl-panel; -fx-padding: 15; -fx-border-color: -mhl-border; -fx-border-radius: 8; -fx-background-radius: 8;">
+        <Label text="ui.fxml.dashboard.next_in_series" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+        <VBox fx:id="nextInSeriesItemsBox" spacing="8"/>
     </VBox>
 
     <!-- Блок "Останні відкриті" -->
@@ -44,3 +55,6 @@
         </GridPane>
     </VBox>
 </VBox>
+        </content>
+    </ScrollPane>
+</StackPane>

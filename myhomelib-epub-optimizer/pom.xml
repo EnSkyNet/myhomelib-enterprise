@@ -6,10 +6,15 @@
     <parent>
         <groupId>com.myhomelibcorp</groupId>
         <artifactId>myhomelib-enterprise</artifactId>
+
         <version>8.0.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>myhomelib-epub-optimizer</artifactId>
+
+    <properties>
+        <mhl.test.jvmArgs>${mhl.mockito.agentArg}</mhl.test.jvmArgs>
+    </properties>
     <name>MyHomeLib EPUB Optimizer</name>
     <dependencies>
         <dependency>

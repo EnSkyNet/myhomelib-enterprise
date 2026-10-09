@@ -6,11 +6,16 @@
     <parent>
         <groupId>com.myhomelibcorp</groupId>
         <artifactId>myhomelib-enterprise</artifactId>
+
         <version>8.0.0</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
     <artifactId>myhomelib-infrastructure</artifactId>
+
+    <properties>
+        <mhl.test.jvmArgs>${mhl.mockito.agentArg}</mhl.test.jvmArgs>
+    </properties>
 
     <dependencies>
         <dependency>
@@ -95,7 +100,7 @@
             <artifactId>spring-boot-starter-cache</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
+            <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
 

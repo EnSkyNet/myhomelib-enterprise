@@ -34,4 +34,37 @@ class LocalMetadataExtractionServiceTest {
         });
         assertThat(Files.readString(file)).isEqualTo("content");
     }
+    @Test
+    void truncationDoesNotSplitSurrogatePairInUserVisiblePluginMetadata() throws Exception {
+        Path file = temp.resolve("unicode.demo");
+        Files.writeString(file, "content");
+        String longTitle = "a".repeat(16_383) + "😀tail";
+        RuntimeExtensionRegistry registry = new RuntimeExtensionRegistry();
+        LocalMetadataExtractor extractor = new LocalMetadataExtractor() {
+            @Override public String id() { return "unicode"; }
+            @Override public boolean supports(Path source) { return true; }
+            @Override public Map<String, String> extract(Path source) { return Map.of("title", longTitle); }
+        };
+        registry.replacePlugin("metadata.unicode", new RuntimeExtensionRegistry.ExtensionBundle(
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(extractor)));
+
+        String displayed = new LocalMetadataExtractionService(registry).extract(file).getFirst().values().get("title");
+
+        assertThat(displayed).endsWith("…");
+        assertThat(hasUnpairedSurrogate(displayed)).isFalse();
+    }
+
+    private static boolean hasUnpairedSurrogate(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (Character.isHighSurrogate(ch)) {
+                if (i + 1 >= value.length() || !Character.isLowSurrogate(value.charAt(i + 1))) return true;
+                i++;
+            } else if (Character.isLowSurrogate(ch)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
 }

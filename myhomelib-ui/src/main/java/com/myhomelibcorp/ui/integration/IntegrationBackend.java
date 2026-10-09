@@ -103,6 +103,36 @@ public interface IntegrationBackend {
         }
     }
 
+
+    record KoboStatus(
+            String deviceId,
+            boolean enabled,
+            boolean secureStoreAvailable,
+            String secureStoreBackend,
+            String lastSyncAt,
+            String lastError
+    ) {
+        public KoboStatus {
+            deviceId = deviceId == null ? "" : deviceId;
+            secureStoreBackend = secureStoreBackend == null ? "" : secureStoreBackend;
+            lastSyncAt = lastSyncAt == null ? "" : lastSyncAt;
+            lastError = lastError == null ? "" : lastError;
+        }
+    }
+
+    record KoboCredential(Result result, String deviceId, String token) {
+        public KoboCredential {
+            result = result == null ? Result.fail("common.error.operation_failed") : result;
+            deviceId = deviceId == null ? "" : deviceId;
+            token = token == null ? "" : token;
+        }
+    }
+
+
+    record ReadwiseStatus(boolean configured, boolean secureStoreAvailable, String secureStoreBackend) {
+        public ReadwiseStatus { secureStoreBackend = secureStoreBackend == null ? "" : secureStoreBackend; }
+    }
+
     record AiConfiguration(
             String endpoint,
             String model,
@@ -133,6 +163,26 @@ public interface IntegrationBackend {
             errorKind = errorKind == null ? "" : errorKind;
         }
     }
+
+
+
+    default ReadwiseStatus readwiseStatus() { return new ReadwiseStatus(false, false, ""); }
+    default Result saveReadwiseToken(String token) { return Result.fail("ui.integration.readwise.unavailable"); }
+    default Result clearReadwiseToken() { return Result.fail("ui.integration.readwise.unavailable"); }
+    default Result testReadwise() { return Result.fail("ui.integration.readwise.unavailable"); }
+    default Result exportAnnotationsToReadwise() { return Result.fail("ui.integration.readwise.unavailable"); }
+
+    default KoboStatus koboStatus() {
+        return new KoboStatus("", false, false, "", "", "");
+    }
+
+    default KoboCredential enableOrRotateKobo() {
+        return new KoboCredential(Result.fail("ui.integration.kobo.unavailable"), "", "");
+    }
+
+    default Result revokeKobo() { return Result.fail("ui.integration.kobo.unavailable"); }
+
+    default Result synchronizeKoboNow() { return Result.fail("ui.integration.kobo.unavailable"); }
 
     WebDavConfiguration webDavConfiguration();
 

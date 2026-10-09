@@ -1,6 +1,10 @@
 package com.myhomelibcorp.reader.render.pdf;
 
 import com.myhomelibcorp.reader.api.ReaderPosition;
+import com.myhomelibcorp.reader.render.api.PagedReaderPosition;
+import com.myhomelibcorp.reader.render.javafx.ArgbFxImageSupport;
+import com.myhomelibcorp.reader.render.support.PagedRenderCoordinator;
+import com.myhomelibcorp.reader.render.support.TrackedTaskGroup;
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
 import javafx.collections.FXCollections;
@@ -10,8 +14,6 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.image.ImageView;
-import javafx.scene.image.PixelFormat;
-import javafx.scene.image.WritableImage;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
@@ -21,30 +23,16 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Future;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
 /** JavaFX PDF renderer adapter with lazy background rasterization and bounded session cache. */
 public final class PdfReaderView extends BorderPane implements AutoCloseable {
     private final Function<String, String> text;
-    private final ThreadPoolExecutor renderExecutor = new ThreadPoolExecutor(
-            1, 1, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), r -> {
-                Thread t = new Thread(r, "pdf-reader-render");
-                t.setDaemon(true);
-                return t;
-            });
-    private final AtomicLong generation = new AtomicLong();
-    private final AtomicLong singleRenderGeneration = new AtomicLong();
-    private final java.util.Set<Future<?>> renderTasks = ConcurrentHashMap.newKeySet();
-    private final java.util.Set<Future<?>> documentTasks = ConcurrentHashMap.newKeySet();
+    private final PagedRenderCoordinator renderCoordinator =
+            new PagedRenderCoordinator("pdf-reader-render");
+    private final TrackedTaskGroup documentTasks = renderCoordinator.newTaskGroup();
 
     private final Button back = new Button();
     private final Button previous = new Button("‹");
@@ -73,7 +61,6 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
     private int pageIndex;
     private double zoom = 1.0;
     private FitMode fitMode = FitMode.PAGE;
-    private Future<?> singleRenderTask;
     private Consumer<ReaderPosition> onPositionChanged = ignored -> { };
     private Runnable onBack = () -> { };
     private Runnable onAddBookmark = () -> { };
@@ -183,7 +170,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
         for (int i = 0; i < prepared.pageCount(); i++) pages.add(i);
         continuousList.setItems(FXCollections.observableArrayList(pages));
         thumbnails.setItems(FXCollections.observableArrayList(pages));
-        int restored = PdfPagePosition.restorePageIndex(savedPosition, prepared.pageCount());
+        int restored = PagedReaderPosition.restorePageIndex(savedPosition, prepared.pageCount());
         pageIndex = restored;
         updateState();
         renderSinglePage();
@@ -193,13 +180,13 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
     public boolean isOpen() { return session != null; }
     public int pageCount() { return session == null ? 0 : session.pageCount(); }
     public int currentPageIndex() { return pageIndex; }
-    public ReaderPosition currentPosition() { return PdfPagePosition.toReaderPosition(pageIndex); }
-    public double progressPercent() { return PdfPagePosition.progressPercent(pageIndex, pageCount()); }
+    public ReaderPosition currentPosition() { return PagedReaderPosition.toReaderPosition(pageIndex); }
+    public double progressPercent() { return PagedReaderPosition.progressPercent(pageIndex, pageCount()); }
     public List<PdfOutlineEntry> outlineEntries() { return session == null ? List.of() : session.outlineEntries(); }
 
     public void goToPosition(ReaderPosition position) {
         if (session == null) return;
-        goToPage(PdfPagePosition.restorePageIndex(position, session.pageCount()));
+        goToPage(PagedReaderPosition.restorePageIndex(position, session.pageCount()));
     }
 
     public Future<?> searchTextAsync(String query, int maxResults, Consumer<PdfSearchOutcome> onSuccess,
@@ -208,18 +195,18 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
         if (current == null) return null;
         Consumer<PdfSearchOutcome> success = onSuccess == null ? ignored -> { } : onSuccess;
         Consumer<Throwable> failure = onFailure == null ? ignored -> { } : onFailure;
-        long token = generation.get();
-        return submitTrackedDocumentTask(() -> {
+        long token = renderCoordinator.generation();
+        return documentTasks.submit(() -> {
             try {
                 PdfSearchOutcome outcome = current.searchText(query, maxResults);
                 Platform.runLater(() -> {
-                    if (session == current && token == generation.get()) success.accept(outcome);
+                    if (session == current && renderCoordinator.isCurrent(token)) success.accept(outcome);
                 });
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
             } catch (Exception error) {
                 Platform.runLater(() -> {
-                    if (session == current && token == generation.get()) {
+                    if (session == current && renderCoordinator.isCurrent(token)) {
                         failure.accept(error);
                     }
                 });
@@ -266,10 +253,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
     }
 
     private void switchContinuous(boolean enabled) {
-        generation.incrementAndGet();
-        singleRenderGeneration.incrementAndGet();
-        cancelOutstandingRenders();
-        cancelSingleRender();
+        renderCoordinator.invalidate();
         if (enabled) {
             progress.setVisible(false); progress.setManaged(false);
             setCenter(continuousList);
@@ -304,10 +288,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
 
     private void rerenderVisible() {
         if (session == null) return;
-        generation.incrementAndGet();
-        singleRenderGeneration.incrementAndGet();
-        cancelOutstandingRenders();
-        cancelSingleRender();
+        renderCoordinator.invalidate();
         if (continuous.isSelected()) {
             continuousList.refresh();
             thumbnails.refresh();
@@ -320,33 +301,31 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
     private void renderSinglePage() {
         PdfDocumentSession current = session;
         if (current == null || continuous.isSelected()) return;
-        cancelSingleRender();
-        long configToken = generation.get();
-        long token = singleRenderGeneration.incrementAndGet();
+        PagedRenderCoordinator.SingleRenderToken token = renderCoordinator.beginSingleRender();
         int requestedPage = pageIndex;
         double scale = scaleFor(requestedPage, false);
         progress.setVisible(true); progress.setManaged(true);
-        singleRenderTask = submitTrackedRender(() -> {
+        Future<?> task = renderCoordinator.submit(() -> {
             try {
                 PdfRenderedPage rendered = current.render(requestedPage, scale);
                 Platform.runLater(() -> {
-                    if (session != current || configToken != generation.get()
-                            || token != singleRenderGeneration.get() || requestedPage != pageIndex) return;
-                    singleImage.setImage(toFxImage(rendered));
+                    if (session != current || !renderCoordinator.isCurrent(token)
+                            || requestedPage != pageIndex) return;
+                    singleImage.setImage(ArgbFxImageSupport.toWritableImage(rendered));
                     progress.setVisible(false); progress.setManaged(false);
                 });
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
             } catch (Exception error) {
                 Platform.runLater(() -> {
-                    if (session == current && configToken == generation.get()
-                            && token == singleRenderGeneration.get()) {
+                    if (session == current && renderCoordinator.isCurrent(token)) {
                         progress.setVisible(false); progress.setManaged(false);
                         onError.accept(error);
                     }
                 });
             }
         });
+        renderCoordinator.trackSingle(task);
     }
 
     private Callback<ListView<Integer>, ListCell<Integer>> pdfPageCellFactory(boolean thumbnail) {
@@ -369,14 +348,14 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
                 if (empty || page == null || session == null) { setGraphic(null); return; }
                 setGraphic(image);
                 PdfDocumentSession current = session;
-                long token = generation.get();
+                long token = renderCoordinator.generation();
                 double scale = scaleFor(page, thumbnail);
-                task = submitTrackedRender(() -> {
+                task = renderCoordinator.submit(() -> {
                     try {
                         PdfRenderedPage rendered = current.render(page, scale);
                         Platform.runLater(() -> {
-                            if (session != current || token != generation.get() || requested != page || !Objects.equals(getItem(), page)) return;
-                            image.setImage(toFxImage(rendered));
+                            if (session != current || !renderCoordinator.isCurrent(token) || requested != page || !Objects.equals(getItem(), page)) return;
+                            image.setImage(ArgbFxImageSupport.toWritableImage(rendered));
                             if (thumbnail) image.setFitWidth(128);
                             else image.setFitWidth(0);
                         });
@@ -384,7 +363,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
                         Thread.currentThread().interrupt();
                     } catch (Exception error) {
                         Platform.runLater(() -> {
-                            if (session == current && token == generation.get() && requested == page) {
+                            if (session == current && renderCoordinator.isCurrent(token) && requested == page) {
                                 setGraphic(null);
                                 setContentDisplay(ContentDisplay.TEXT_ONLY);
                                 setText(t("ui.reader.pdf.render_error"));
@@ -414,12 +393,6 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
 
     private static double clampScale(double scale) { return Math.max(0.5, Math.min(4.0, scale)); }
 
-    private static WritableImage toFxImage(PdfRenderedPage rendered) {
-        WritableImage image = new WritableImage(rendered.width(), rendered.height());
-        image.getPixelWriter().setPixels(0, 0, rendered.width(), rendered.height(),
-                PixelFormat.getIntArgbInstance(), rendered.argb(), 0, rendered.width());
-        return image;
-    }
 
     private void updateState() {
         int count = pageCount();
@@ -429,65 +402,9 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
         zoomReset.setText(Math.round(zoom * 100) + "%");
     }
 
-    private Future<?> submitTrackedRender(Runnable action) {
-        renderExecutor.purge();
-        FutureTask<Void> task = new FutureTask<>(action, null) {
-            @Override protected void done() { renderTasks.remove(this); }
-        };
-        renderTasks.add(task);
-        try {
-            renderExecutor.execute(task);
-            return task;
-        } catch (RejectedExecutionException error) {
-            renderTasks.remove(task);
-            throw error;
-        }
-    }
-
-    private Future<?> submitTrackedDocumentTask(Runnable action) {
-        renderExecutor.purge();
-        FutureTask<Void> task = new FutureTask<>(action, null) {
-            @Override protected void done() { documentTasks.remove(this); }
-        };
-        documentTasks.add(task);
-        try {
-            renderExecutor.execute(task);
-            return task;
-        } catch (RejectedExecutionException error) {
-            documentTasks.remove(task);
-            throw error;
-        }
-    }
-
-    private void cancelOutstandingDocumentTasks() {
-        for (Future<?> task : List.copyOf(documentTasks)) {
-            if (!task.isDone()) task.cancel(true);
-        }
-        documentTasks.removeIf(Future::isDone);
-        renderExecutor.purge();
-    }
-
-    private void cancelOutstandingRenders() {
-        for (Future<?> task : List.copyOf(renderTasks)) {
-            if (!task.isDone()) task.cancel(true);
-        }
-        renderTasks.removeIf(Future::isDone);
-        renderExecutor.purge();
-    }
-
-    private void cancelSingleRender() {
-        Future<?> task = singleRenderTask;
-        singleRenderTask = null;
-        if (task != null && !task.isDone()) task.cancel(true);
-        renderExecutor.purge();
-    }
-
     public void closeDocument() {
-        generation.incrementAndGet();
-        singleRenderGeneration.incrementAndGet();
-        cancelOutstandingRenders();
-        cancelOutstandingDocumentTasks();
-        cancelSingleRender();
+        renderCoordinator.invalidate();
+        documentTasks.cancelOutstanding();
         PdfDocumentSession current = session;
         session = null;
         progress.setVisible(false); progress.setManaged(false);
@@ -500,15 +417,14 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
     }
 
     private void closeSessionAfterPendingRenders(PdfDocumentSession current) {
-        try {
-            renderExecutor.submit(() -> {
-                try {
-                    current.close();
-                } catch (IOException error) {
-                    if (!closed) Platform.runLater(() -> onError.accept(error));
-                }
-            });
-        } catch (RejectedExecutionException executorClosed) {
+        boolean queued = renderCoordinator.enqueueAfterPending(() -> {
+            try {
+                current.close();
+            } catch (IOException error) {
+                if (!closed) Platform.runLater(() -> onError.accept(error));
+            }
+        });
+        if (!queued) {
             try { current.close(); }
             catch (IOException ignored) { }
         }
@@ -524,7 +440,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
         if (closed) return;
         closed = true;
         closeDocument();
-        renderExecutor.shutdown();
+        renderCoordinator.close();
     }
 
     private enum FitMode { NONE, WIDTH, PAGE }

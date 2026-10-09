@@ -10,10 +10,12 @@ if 'getPercent(1000)' in persistence:
     raise SystemExit('FAIL: reader progress still uses fake 1000-char total')
 if 'savePosition(String bookId, ReaderPosition position, long totalTextLength)' not in persistence:
     raise SystemExit('FAIL: persistence must receive real document length')
-if 'start(String bookId, long totalTextLength)' not in autosaver:
+if ('start(String bookId, long totalTextLength)' not in autosaver
+        and 'start(String collectionId, String bookId, long totalTextLength)' not in autosaver):
     raise SystemExit('FAIL: autosaver must retain current document length')
-if 'positionAutosaver.start(currentBookId.asString(), totalTextLength)' not in controller:
-    raise SystemExit('FAIL: workspace must start autosave with actual document length')
+if ('positionAutosaver.start(currentBookId.asString(), totalTextLength)' not in controller
+        and 'positionAutosaver.start(currentBookCollectionId, currentBookId.asString(), totalTextLength)' not in controller):
+    raise SystemExit('FAIL: workspace must start collection-stable autosave with actual document length')
 
 src=ROOT/'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderPosition.java'
 with tempfile.TemporaryDirectory(prefix='mhl-reader-percent-') as td:

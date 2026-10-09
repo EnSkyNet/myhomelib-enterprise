@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.search;
 
+import com.myhomelibcorp.application.util.BookIdListSupport;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.port.out.search.SearchIndexLifecycle;
@@ -11,8 +12,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -38,7 +37,7 @@ public class SearchIndexSynchronizer {
     private final Object indexSyncMonitor = new Object();
 
     public void synchronizeAfterCommit(List<BookId> bookIds) {
-        List<BookId> ids = normalize(bookIds);
+        List<BookId> ids = BookIdListSupport.stableDistinctIgnoringNulls(bookIds);
         if (ids.isEmpty()) return;
 
         if (TransactionSynchronizationManager.isSynchronizationActive()
@@ -65,7 +64,7 @@ public class SearchIndexSynchronizer {
      * @return true when either the selective update or the fallback rebuild succeeded.
      */
     public boolean synchronizeSafelyNow(List<BookId> bookIds) {
-        List<BookId> ids = normalize(bookIds);
+        List<BookId> ids = BookIdListSupport.stableDistinctIgnoringNulls(bookIds);
         if (ids.isEmpty()) return true;
         synchronized (indexSyncMonitor) {
             searchIndexLifecycle.markCurrentIndexDirty();
@@ -106,7 +105,7 @@ public class SearchIndexSynchronizer {
 
     /** Immediate strict synchronization for orchestration that wants failures propagated. */
     void synchronizeNow(List<BookId> bookIds) {
-        List<BookId> ids = normalize(bookIds);
+        List<BookId> ids = BookIdListSupport.stableDistinctIgnoringNulls(bookIds);
         if (ids.isEmpty()) return;
         synchronized (indexSyncMonitor) {
             searchIndexLifecycle.markCurrentIndexDirty();
@@ -150,10 +149,4 @@ public class SearchIndexSynchronizer {
         }
     }
 
-    private static List<BookId> normalize(List<BookId> source) {
-        if (source == null || source.isEmpty()) return List.of();
-        LinkedHashSet<BookId> unique = new LinkedHashSet<>();
-        for (BookId id : source) if (id != null) unique.add(id);
-        return unique.isEmpty() ? List.of() : new ArrayList<>(unique);
-    }
 }

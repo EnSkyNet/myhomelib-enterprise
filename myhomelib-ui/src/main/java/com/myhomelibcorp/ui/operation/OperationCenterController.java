@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.operation;
 
 
+import com.myhomelibcorp.ui.service.OperationStageText;
 import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
@@ -9,6 +10,7 @@ import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.fxml.FXML;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableRow;
@@ -37,6 +39,7 @@ public class OperationCenterController implements WorkspaceLifecycle {
     private Timeline durationTicker;
 
     @FXML private Label summaryLabel;
+    @FXML private Button cancelButton;
     @FXML private TableView<OperationCenterEntry> operationsTable;
     @FXML private TableColumn<OperationCenterEntry, String> stateColumn;
     @FXML private TableColumn<OperationCenterEntry, String> titleColumn;
@@ -66,7 +69,11 @@ public class OperationCenterController implements WorkspaceLifecycle {
             row.getStyleClass().add("operation-center-row");
             return row;
         });
-        operationsTable.getSelectionModel().selectedItemProperty().addListener((obs, oldValue, selected) -> showDetails(selected));
+        operationsTable.getSelectionModel().selectedItemProperty().addListener((obs, oldValue, selected) -> {
+            showDetails(selected);
+            updateCancelButton(selected);
+        });
+        updateCancelButton(null);
 
         registration = operationCenter.addListener(snapshot -> UiExecutor.runOnUiThread(() -> applySnapshot(snapshot)));
         durationTicker = new Timeline(new KeyFrame(javafx.util.Duration.seconds(1), event -> {
@@ -89,6 +96,14 @@ public class OperationCenterController implements WorkspaceLifecycle {
         operationCenter.clearCompleted();
     }
 
+    @FXML
+    public void onCancelSelected() {
+        OperationCenterEntry selected = operationsTable.getSelectionModel().getSelectedItem();
+        if (selected == null) return;
+        operationCenter.requestCancellation(selected.operationId());
+        updateCancelButton(selected);
+    }
+
     private void applySnapshot(List<OperationCenterEntry> snapshot) {
         String selectedId = operationsTable.getSelectionModel().getSelectedItem() == null
                 ? null : operationsTable.getSelectionModel().getSelectedItem().operationId();
@@ -109,6 +124,12 @@ public class OperationCenterController implements WorkspaceLifecycle {
         }
         if (!rows.isEmpty()) operationsTable.getSelectionModel().selectFirst();
         else showDetails(null);
+    }
+
+    private void updateCancelButton(OperationCenterEntry entry) {
+        if (cancelButton == null) return;
+        cancelButton.setDisable(entry == null || !entry.active() || !entry.cancellable()
+                || !operationCenter.canRequestCancellation(entry.operationId()));
     }
 
     private void showDetails(OperationCenterEntry entry) {
@@ -191,33 +212,19 @@ public class OperationCenterController implements WorkspaceLifecycle {
     private static String stageText(OperationStage stage) {
         if (stage == null) return "";
         return switch (stage) {
-            case CHECKING_SERVER -> UiText.text("ui.import.stage.checking_server");
-            case DOWNLOADING -> UiText.text("ui.import.stage.downloading");
-            case CREATING_CHECKPOINT -> UiText.text("ui.import.stage.creating_checkpoint");
             case VALIDATING -> UiText.text("ui.java.operation_center_controller.d5cb0c3a91");
-            case READING_CATALOG -> UiText.text("ui.import.stage.reading_catalog");
             case IMPORTING -> UiText.text("ui.import.action.generic");
-            case UPDATING_AUTHORS -> UiText.text("ui.import.stage.updating_authors");
-            case APPLYING_DELETIONS -> UiText.text("ui.import.stage.applying_deletions");
-            case UPDATING_SEARCH_INDEX -> UiText.text("ui.import.stage.updating_index");
             case ROLLING_BACK -> UiText.text("ui.java.operation_center_controller.d0f715afcd");
             case REFRESHING_STATISTICS -> UiText.text("ui.java.operation_center_controller.7c96a35ead");
-            case INTEGRITY_CHECKS -> UiText.text("ui.import.stage.integrity_checks");
-            case SCANNING_DUPLICATES -> UiText.text("ui.import.stage.scanning_duplicates");
-            case SYNCHRONIZING_FILES -> UiText.text("ui.import.stage.synchronizing_files");
             case OPTIMIZING_DATABASE -> UiText.text("ui.java.operation_center_controller.bd69af2a4d");
             case BACKING_UP -> UiText.text("ui.backup.confirm.start.title");
-            case RESTORING -> UiText.text("ui.import.stage.restoring");
-            case CREATING_COLLECTION -> UiText.text("ui.import.stage.creating_collection");
-            case DELETING_COLLECTION -> UiText.text("ui.import.stage.deleting_collection");
             case FINALIZING -> UiText.text("ui.fxml.operation_center_workspace.finalizing");
-            case BOOK_DOWNLOAD -> UiText.text("ui.import.stage.book_download");
-            case CONVERTING -> UiText.text("ui.import.stage.converting");
             case COMPLETED -> UiText.text("ui.java.operation_center_controller.398c7d4f7b");
-            case CANCELLED -> UiText.text("ui.import.stage.cancelled");
             case FAILED -> UiText.text("common.error");
+            default -> OperationStageText.text(stage);
         };
     }
+
 
     @Override
     public void dispose() {

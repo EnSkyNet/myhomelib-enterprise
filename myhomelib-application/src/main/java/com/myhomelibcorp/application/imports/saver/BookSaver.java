@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.imports.saver;
 
+import static com.myhomelibcorp.application.operation.LibraryOperationLeaseSupport.withSharedLease;
 import com.myhomelibcorp.application.imports.duplicate.DuplicateDetector;
 import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
@@ -251,17 +252,7 @@ public class BookSaver {
     }
 
     private <T> T withEditLease(java.util.function.Supplier<T> action) {
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EDIT);
-        try {
-            T result = action.get();
-            lease.markCompleted("");
-            return result;
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        return withSharedLease(operationCoordinator, LibraryOperationType.EDIT, action);
     }
 
     public record BatchSaveResult(List<Book> insertedBooks,

@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.integration;
 
 import com.myhomelibcorp.ui.service.DialogLocalization;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
+import com.myhomelibcorp.ui.util.Utf16BoundarySupport;
 
 import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.ai.AiOperation;
@@ -136,12 +137,13 @@ public final class AiBookAssistantUiService {
             if (text == null || text.isBlank()) throw new IOException(UiText.text("ui.java.ai_book_assistant_ui_service.c2a5f2b7c9"));
             if (text.length() <= AiRequest.MAX_BOOK_CONTENT_CHARS) return new ExtractedBookContent(text, false, text.length());
             int limit = AiRequest.MAX_BOOK_CONTENT_CHARS;
-            int head = (int) (limit * 0.7);
-            int tail = limit - head - 120;
+            int head = Utf16BoundarySupport.safeCut(text, (int) (limit * 0.7));
+            int tail = limit - (int) (limit * 0.7) - 120;
+            int tailStart = Utf16BoundarySupport.safeCut(text, Math.max(head, text.length() - tail));
             String sampled = text.substring(0, head)
                     + UiText.text("ui.java.ai_book_assistant_ui_service.56e3f7d722")
-                    + text.substring(Math.max(head, text.length() - tail));
-            if (sampled.length() > limit) sampled = sampled.substring(0, limit);
+                    + text.substring(tailStart);
+            if (sampled.length() > limit) sampled = sampled.substring(0, Utf16BoundarySupport.safeCut(sampled, limit));
             return new ExtractedBookContent(sampled, true, text.length());
         }
     }

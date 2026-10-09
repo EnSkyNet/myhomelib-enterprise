@@ -2,7 +2,6 @@ package com.myhomelibcorp.startup;
 
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
-import com.myhomelibcorp.infrastructure.importer.inpx.InpxImporter;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -12,7 +11,6 @@ import org.springframework.stereotype.Component;
 public class MigrationStartupTask implements StartupTask {
     private final SwitchCollectionUseCase switchCollectionUseCase;
     private final ApplicationState applicationState;
-    private final InpxImporter inpxImporter;
     private final CollectionLifecycleService collectionLifecycleService;
 
     @Override public String id() { return "MigrationStartupTask"; }
@@ -26,7 +24,6 @@ public class MigrationStartupTask implements StartupTask {
             context.activeCollection(result.collection());
             context.reusableSearchIndex(result.reusableSearchIndex());
             applicationState.setCurrentLibraryCollection(result.collection());
-            inpxImporter.initialize();
             return StartupTaskResult.success(result.reusableSearchIndex()
                     ? "collection migrated; reusable search index detected"
                     : "collection migrated; search rebuild required");

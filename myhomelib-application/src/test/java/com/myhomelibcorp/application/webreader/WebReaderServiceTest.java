@@ -13,6 +13,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -70,6 +71,45 @@ class WebReaderServiceTest {
         ArgumentCaptor<ReadingProgressDto> captor = ArgumentCaptor.forClass(ReadingProgressDto.class);
         verify(progress).save(captor.capture());
         assertThat(captor.getValue().getAnchorId()).isEqualTo("1:17:0:6");
+    }
+
+
+    @Test void duplicateQueuedProgressReplayIsIdempotentAndDoesNotRewriteCanonicalState() throws Exception {
+        LoadBookByIdUseCase load = mock(LoadBookByIdUseCase.class);
+        ResolveBookContentUseCase resolve = mock(ResolveBookContentUseCase.class);
+        ContentExtractionService extraction = mock(ContentExtractionService.class);
+        ReadingProgressRepository progress = mock(ReadingProgressRepository.class);
+        ReadingProgressDto existing = ReadingProgressDto.builder()
+                .bookId(BOOK_ID).anchorId("1:15:0:4").chapterId("c2").percent(75)
+                .updatedAt(LocalDateTime.now().minusMinutes(1)).lastDevice("web").build();
+        when(progress.findByBookId(BOOK_ID)).thenReturn(Optional.of(existing));
+
+        WebProgressSaveResult result = new WebReaderService(load, resolve, extraction, progress).saveProgress(
+                BOOK_ID, new WebProgressUpdate(1, 15, Instant.now(), 12));
+
+        assertThat(result.accepted()).isTrue();
+        assertThat(result.canonical()).isSameAs(existing);
+        verify(progress, never()).save(any());
+        verifyNoInteractions(load, resolve, extraction);
+    }
+
+    @Test void staleQueuedProgressCannotOverwriteNewerCanonicalServerProgress() throws Exception {
+        LoadBookByIdUseCase load = mock(LoadBookByIdUseCase.class);
+        ResolveBookContentUseCase resolve = mock(ResolveBookContentUseCase.class);
+        ContentExtractionService extraction = mock(ContentExtractionService.class);
+        ReadingProgressRepository progress = mock(ReadingProgressRepository.class);
+        ReadingProgressDto existing = ReadingProgressDto.builder()
+                .bookId(BOOK_ID).anchorId("1:18:0:7").chapterId("c2").percent(90)
+                .updatedAt(LocalDateTime.now()).lastDevice("desktop").build();
+        when(progress.findByBookId(BOOK_ID)).thenReturn(Optional.of(existing));
+
+        WebProgressSaveResult result = new WebReaderService(load, resolve, extraction, progress).saveProgress(
+                BOOK_ID, new WebProgressUpdate(0, 5, Instant.now().minusSeconds(600), 99));
+
+        assertThat(result.accepted()).isFalse();
+        assertThat(result.canonical()).isSameAs(existing);
+        verify(progress, never()).save(any());
+        verifyNoInteractions(load, resolve, extraction);
     }
 
     @Test void unsupportedFormatOffersTypedFallbackWithoutExtraction() throws Exception {

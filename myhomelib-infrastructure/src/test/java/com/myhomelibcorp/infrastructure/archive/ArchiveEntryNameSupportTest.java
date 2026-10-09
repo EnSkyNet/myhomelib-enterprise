@@ -15,8 +15,34 @@ class ArchiveEntryNameSupportTest {
     }
 
     @Test
+    void logicalPathComparisonTreatsCanonicallyEquivalentUnicodeAsTheSameEntry() {
+        assertThat(ArchiveEntryNameSupport.sameLogicalPath(
+                "books/Caf\u00e9.fb2", "books/Cafe\u0301.fb2"))
+                .isTrue();
+    }
+
+    @Test
     void doesNotTreatAsciiHashEscapeAsPathSyntax() {
         assertThat(ArchiveEntryNameSupport.sameLogicalPath("books/#U002Fbook.fb2", "books//book.fb2"))
                 .isFalse();
     }
+    @Test
+    void delimitedTokenMatchesCanonicalUnicodeEquivalentInsideRenamedEntry() {
+        assertThat(ArchiveEntryNameSupport.containsDelimitedToken(
+                "server-Cafe\u0301.fb2", "Caf\u00e9"))
+                .isTrue();
+    }
+
+    @Test
+    void delimitedTokenUsesBoundariesFromOriginalUnicodeText() {
+        assertThat(ArchiveEntryNameSupport.containsDelimitedToken("İb.fb2", "b")).isFalse();
+        assertThat(ArchiveEntryNameSupport.containsDelimitedToken("İ-b.fb2", "b")).isTrue();
+    }
+
+    @Test
+    void delimitedTokenMatchingIsUnicodeCaseInsensitiveAndLiteral() {
+        assertThat(ArchiveEntryNameSupport.containsDelimitedToken("books/КНИГА-ABC.fb2", "abc")).isTrue();
+        assertThat(ArchiveEntryNameSupport.containsDelimitedToken("books/a.b.fb2", "a.b")).isTrue();
+    }
+
 }

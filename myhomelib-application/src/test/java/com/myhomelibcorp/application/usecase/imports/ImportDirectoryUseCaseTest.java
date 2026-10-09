@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.usecase.imports;
 
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationOutcome;
 
 import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.application.imports.scanner.LibraryScanner;
@@ -21,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -119,6 +121,48 @@ class ImportDirectoryUseCaseTest {
     }
 
     @Test
+    void cancellationBeforeFirstChildReportsCancelledLibraryOperationOutcome() throws Exception {
+        Fixture f = new Fixture();
+        Path root = Path.of("library");
+        AtomicReference<LibraryOperationOutcome> outcome = new AtomicReference<>();
+        f.operations.addCompletionListener(completion -> outcome.set(completion.outcome()));
+        when(f.scanner.streamSupportedFiles(root)).thenReturn(java.util.stream.Stream.of(root.resolve("a.fb2")));
+
+        ImportResult result = f.useCase.execute(ImportContext.builder()
+                .rootDirectory(root)
+                .cancelFlag(new AtomicBoolean(true))
+                .indexAfterSave(false)
+                .batchSize(1000)
+                .build());
+
+        assertThat(result.status()).isEqualTo(ImportStatus.CANCELLED);
+        assertThat(outcome.get()).isEqualTo(LibraryOperationOutcome.CANCELLED);
+        assertThat(f.operations.isBusy()).isFalse();
+        verify(f.importFile).assertExpectedCollection(any());
+        verify(f.importFile, never()).execute(any());
+    }
+
+    @Test
+    void fatalDirectoryFailureReportsFailedLibraryOperationOutcome() throws Exception {
+        Fixture f = new Fixture();
+        Path root = Path.of("library");
+        AtomicReference<LibraryOperationOutcome> outcome = new AtomicReference<>();
+        f.operations.addCompletionListener(completion -> outcome.set(completion.outcome()));
+        when(f.scanner.streamSupportedFiles(root)).thenThrow(new java.io.IOException("scan failed"));
+
+        RuntimeException failure = org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class, () ->
+                f.useCase.execute(ImportContext.builder()
+                        .rootDirectory(root)
+                        .indexAfterSave(false)
+                        .batchSize(1000)
+                        .build()));
+
+        assertThat(failure).hasMessageContaining("Помилка сканування каталогу");
+        assertThat(outcome.get()).isEqualTo(LibraryOperationOutcome.FAILED);
+        assertThat(f.operations.isBusy()).isFalse();
+    }
+
+    @Test
     void positiveImportWithoutExactIdsFallsBackToFullRebuild() throws Exception {
         Fixture f = new Fixture();
         Path root = Path.of("library");
@@ -211,8 +255,8 @@ class ImportDirectoryUseCaseTest {
         final SearchIndexSynchronizer searchSync = mock(SearchIndexSynchronizer.class);
         final BulkImportOptimizer bulk = mock(BulkImportOptimizer.class);
         final DatabaseInitializerPort dbInit = mock(DatabaseInitializerPort.class);
+        final LibraryOperationCoordinator operations = new LibraryOperationCoordinator();
         final ImportDirectoryUseCase useCase = new ImportDirectoryUseCase(
-                importFile, scanner, events, indexRebuilder, searchSync, bulk, dbInit,
-                new LibraryOperationCoordinator());
+                importFile, scanner, events, indexRebuilder, searchSync, bulk, dbInit, operations);
     }
 }

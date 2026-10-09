@@ -63,6 +63,15 @@ public interface BookQueryRepository {
     Stream<Book> streamAll();
 
     /**
+     * Candidate stream for metadata recommendations. Implementations may return a bounded,
+     * deterministic superset of strong metadata matches to avoid scanning an entire large catalog.
+     * The default preserves exact legacy behavior for alternate repositories.
+     */
+    default Stream<Book> streamSimilarityCandidates(Book source, int requestedResults) {
+        return streamAll();
+    }
+
+    /**
      * Memory-bounded projection dedicated to full-text indexing. Implementations may override
      * this method to avoid constructing full aggregate Book objects and loading fields that
      * Lucene never consumes. The default keeps compatibility with alternate repositories.

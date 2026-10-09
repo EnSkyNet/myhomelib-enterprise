@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.download.scenario;
 
+import com.myhomelibcorp.infrastructure.download.DownloadSpaceSupport;
 import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
 
 import com.myhomelibcorp.application.dto.BookDto;
@@ -27,7 +28,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.LinkOption;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -202,14 +202,14 @@ public final class ConnectionScriptExecutor {
                                Collection collection, AtomicBoolean cancel, DoubleConsumer progress) throws Exception {
         log.info("send() START: method={}, uri={}", method, SensitiveDataSanitizer.sanitizeUri(uri));
 
-        int retries = method.equals("GET") ? clamp(settings.getInt("online.retryCount", 3), 0, 6) : 0;
+        int retries = method.equals("GET") ? OnlineRetryPolicy.retryCount(settings) : 0;
         Exception last = null;
 
         for (int attempt = 0; attempt <= retries; attempt++) {
             log.debug("send() attempt {}/{}", attempt + 1, retries + 1);
             checkCancelled(cancel);
             HttpRequest.Builder request = HttpRequest.newBuilder(uri)
-                    .timeout(httpPolicy.requestTimeout())
+                    .timeout(connectionScriptRequestTimeout())
                     .header("User-Agent", httpPolicy.userAgent());
             addBasicAuth(request, collection, uri);
 
@@ -251,10 +251,16 @@ public final class ConnectionScriptExecutor {
                     }
 
                     IOException failure = new IOException(statusMessage(status));
-                    if (method.equals("GET") && OnlineRetryPolicy.isRetryableStatus(status) && attempt < retries) {
+                    boolean retryable = method.equals("GET") && OnlineRetryPolicy.isRetryableStatus(status);
+                    if (retryable && attempt < retries) {
                         last = failure;
+                        log.warn("  Retryable HTTP {}: attempt {}/{} failed; retrying", status, attempt + 1, retries + 1);
                         backoff(attempt + 1, cancel, retryAfter);
                         continue;
+                    }
+                    if (retryable) {
+                        throw new DownloadScenarioException(failure.getMessage()
+                                + " after " + (attempt + 1) + " attempts");
                     }
                     throw new NonRetryableRequestException(failure.getMessage());
                 }
@@ -308,7 +314,10 @@ public final class ConnectionScriptExecutor {
             } catch (IOException e) {
                 log.warn("  IO error: {}", e.getMessage());
                 last = e;
-                if (attempt >= retries || Thread.currentThread().isInterrupted() || (cancel != null && cancel.get())) {
+                if (!OnlineRetryPolicy.isRetryableIOException(e)
+                        || attempt >= retries
+                        || Thread.currentThread().isInterrupted()
+                        || (cancel != null && cancel.get())) {
                     throw new DownloadScenarioException("ConnectionScript network request failed ("
                             + e.getClass().getSimpleName() + ")");
                 }
@@ -316,6 +325,12 @@ public final class ConnectionScriptExecutor {
             }
         }
         throw new DownloadScenarioException("ConnectionScript network request failed");
+    }
+
+    private java.time.Duration connectionScriptRequestTimeout() {
+        java.time.Duration configured = httpPolicy.requestTimeout();
+        java.time.Duration cap = java.time.Duration.ofSeconds(30);
+        return configured.compareTo(cap) > 0 ? cap : configured;
     }
 
     private byte[] encodeMultipartBody(List<FormField> fields, String boundary) throws DownloadScenarioException {
@@ -444,19 +459,11 @@ public final class ConnectionScriptExecutor {
 
     private static void ensureDownloadSpace(Path directory, long minimumFreeBytes, long expectedAdditionalBytes)
             throws NonRetryableRequestException {
-        if (directory == null || minimumFreeBytes <= 0 && expectedAdditionalBytes <= 0) return;
         try {
-            long usable = Files.getFileStore(directory).getUsableSpace();
-            long required;
-            try {
-                required = Math.addExact(minimumFreeBytes, Math.max(0L, expectedAdditionalBytes));
-            } catch (ArithmeticException overflow) {
-                required = Long.MAX_VALUE;
-            }
-            if (usable < required) {
-                throw new NonRetryableRequestException("Недостатньо вільного місця для завантаження: доступно "
-                        + usable + " байт, потрібно щонайменше " + required + " байт");
-            }
+            DownloadSpaceSupport.requireAvailable(directory, minimumFreeBytes, expectedAdditionalBytes,
+                    (usable, required) -> new NonRetryableRequestException(
+                            "Недостатньо вільного місця для завантаження: доступно "
+                                    + usable + " байт, потрібно щонайменше " + required + " байт"));
         } catch (NonRetryableRequestException e) {
             throw e;
         } catch (IOException e) {

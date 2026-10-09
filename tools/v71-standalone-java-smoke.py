@@ -103,6 +103,57 @@ public final class EncryptionUtil {
 }
 """)
 
+        # DownloadPayloadValidator uses Commons Compress in production. The standalone smoke
+        # deliberately has no third-party classpath, so provide only the tiny ZIP API surface
+        # required by that validator and keep the validator's production logic itself real.
+        write(src / "org/apache/commons/compress/archivers/zip/ZipArchiveEntry.java", """
+package org.apache.commons.compress.archivers.zip;
+public final class ZipArchiveEntry {
+ final java.util.zip.ZipEntry delegate;
+ ZipArchiveEntry(java.util.zip.ZipEntry delegate){this.delegate=delegate;}
+ public String getName(){return delegate.getName();}
+ public boolean isDirectory(){return delegate.isDirectory();}
+ public long getSize(){return delegate.getSize();}
+ public long getCompressedSize(){return delegate.getCompressedSize();}
+ public long getCrc(){return delegate.getCrc();}
+}
+""")
+        write(src / "org/apache/commons/compress/archivers/zip/ZipFile.java", """
+package org.apache.commons.compress.archivers.zip;
+import java.io.*;
+import java.nio.charset.Charset;
+import java.nio.file.Path;
+import java.util.*;
+public final class ZipFile implements AutoCloseable {
+ private final java.util.zip.ZipFile delegate;
+ public ZipFile(Path path, Charset charset) throws IOException { delegate=new java.util.zip.ZipFile(path.toFile(), charset); }
+ public Enumeration<ZipArchiveEntry> getEntries(){
+   var entries=delegate.stream().map(ZipArchiveEntry::new).toList();
+   return Collections.enumeration(entries);
+ }
+ public InputStream getInputStream(ZipArchiveEntry entry) throws IOException { return delegate.getInputStream(entry.delegate); }
+ public void close() throws IOException { delegate.close(); }
+}
+""")
+        write(src / "com/myhomelibcorp/infrastructure/archive/SafeZipArchive.java", """
+package com.myhomelibcorp.infrastructure.archive;
+import com.myhomelibcorp.application.util.SafeFilePublication;
+import java.io.IOException;
+import java.nio.charset.Charset;
+import java.nio.file.Path;
+import org.apache.commons.compress.archivers.zip.ZipFile;
+public final class SafeZipArchive implements AutoCloseable {
+ private final ZipFile zip;
+ private SafeZipArchive(ZipFile zip){this.zip=zip;}
+ public static SafeZipArchive open(Path source, Charset charset, String role) throws IOException {
+   Path safe=SafeFilePublication.requireSafeRegularFile(source, role);
+   return new SafeZipArchive(new ZipFile(safe, charset));
+ }
+ public ZipFile zip(){return zip;}
+ public void close() throws IOException { zip.close(); }
+}
+""")
+
         harness = write(src / "V71StandaloneSmoke.java", r'''
 import com.myhomelibcorp.application.catalog.collectioninfo.*;
 import com.myhomelibcorp.application.dto.BookDto;
@@ -263,7 +314,7 @@ public class V71StandaloneSmoke {
       Path dir=Files.createTempDirectory("mhl-v71-script-");
       try {
         BookDto b=new BookDto(); b.fileName="book.fb2"; b.archiveEntry=null;
-        Collection c=new Collection("Online","http://127.0.0.1:"+port,"reader");
+        Collection c=new Collection("Online","http://127.0.0.1:"+port,"");
         MapSettings settings=new MapSettings(); settings.values.put("online.retryCount","0"); settings.values.put("online.proxy.mode","DIRECT");
         DownloadPayloadValidator validator=new DownloadPayloadValidator(new SimpleArchiveReader(),settings);
         ConnectionScriptExecutor executor=new ConnectionScriptExecutor(settings,validator);
@@ -369,8 +420,15 @@ public class V71StandaloneSmoke {
             ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/catalog/collectioninfo/CollectionSourceProperties.java",
             ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/cover/ArchiveReader.java",
             ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/settings/ApplicationSettingsPort.java",
+            ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/util/SafeFilePublication.java",
+            ROOT / "myhomelib-shared/src/main/java/com/myhomelibcorp/shared/archive/ArchiveSafetyLimits.java",
+            ROOT / "myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/FileNameSupport.java",
+            ROOT / "myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/NoLinkPathSafety.java",
+            ROOT / "myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/SafeFilePrimitives.java",
             ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/archive/ArchiveEntryNameSupport.java",
+            ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/CredentialTransportPolicy.java",
             ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/DownloadPayloadValidator.java",
+            ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/DownloadSpaceSupport.java",
             ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/OnlineHttpPolicy.java",
             ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/OnlineRequestLimiter.java",
             ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/OnlineProgressThrottle.java",

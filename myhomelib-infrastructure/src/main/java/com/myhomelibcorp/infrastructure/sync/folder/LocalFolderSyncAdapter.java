@@ -98,7 +98,12 @@ public final class LocalFolderSyncAdapter implements SyncTransportPort {
                 out.force(true);
             }
             partHash = SafeFilePublication.sha256(part, "Local sync staged bundle");
-            SafeFilePublication.moveNoReplace(part, target, "Local sync bundle publication");
+            // Publish only the exact bytes we hashed above. A plain path move would still leave
+            // a check-to-move race if another process replaced the staging pathname with a
+            // different regular file. The guarded publisher verifies the staged fingerprint
+            // before destination mutation and the final target again after publication.
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    part, target, null, partHash, "Local sync bundle publication");
         } catch (IOException e) {
             throw new IllegalStateException("Could not publish local sync bundle", e);
         } finally {

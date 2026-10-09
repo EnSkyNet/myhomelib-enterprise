@@ -145,16 +145,65 @@ final class ReaderSelectionController {
     /** Keyboard selection uses source-text offsets and therefore survives pagination/layout changes. */
     boolean extendByCharacters(int delta) {
         if (!engine.isOpen() || engine.getCurrentDocument() == null || delta == 0) return false;
-        int length = engine.getCurrentDocument().text().length();
+        var text = engine.getCurrentDocument().text();
+        int length = text.length();
         if (length <= 0) return false;
         if (anchorOffset < 0 || focusOffset < 0) {
             long current = engine.getCurrentPosition() == null ? 0 : engine.getCurrentPosition().textOffset();
             anchorOffset = clamp(current, 0, length);
             focusOffset = anchorOffset;
         }
-        focusOffset = clamp(focusOffset + delta, 0, length);
+        int cursor = (int) clamp(focusOffset, 0, length);
+        long steps = Math.abs((long) delta);
+        for (long step = 0; step < steps; step++) {
+            cursor = delta > 0
+                    ? nextCharacterBoundary(text, cursor, length)
+                    : previousCharacterBoundary(text, cursor);
+        }
+        focusOffset = cursor;
         selecting = false;
         return hasSelection();
+    }
+
+    private static int nextCharacterBoundary(com.myhomelibcorp.reader.api.TextStorage text, int offset, int length) {
+        if (offset >= length) return length;
+        int next = offset + codePointLengthAt(text, offset, length);
+        while (next < length && isCombiningMark(codePointAt(text, next, length))) {
+            next += codePointLengthAt(text, next, length);
+        }
+        return Math.min(next, length);
+    }
+
+    private static int previousCharacterBoundary(com.myhomelibcorp.reader.api.TextStorage text, int offset) {
+        if (offset <= 0) return 0;
+        int previous = previousCodePointStart(text, offset);
+        while (previous > 0 && isCombiningMark(codePointAt(text, previous, offset))) {
+            previous = previousCodePointStart(text, previous);
+        }
+        return previous;
+    }
+
+    private static int previousCodePointStart(com.myhomelibcorp.reader.api.TextStorage text, int offset) {
+        int probeStart = Math.max(0, offset - 2);
+        String probe = text.getText(probeStart, offset);
+        int codePoint = probe.codePointBefore(probe.length());
+        return offset - Character.charCount(codePoint);
+    }
+
+    private static int codePointLengthAt(com.myhomelibcorp.reader.api.TextStorage text, int offset, int length) {
+        return Character.charCount(codePointAt(text, offset, length));
+    }
+
+    private static int codePointAt(com.myhomelibcorp.reader.api.TextStorage text, int offset, int length) {
+        String probe = text.getText(offset, Math.min(length, offset + 2));
+        return probe.codePointAt(0);
+    }
+
+    private static boolean isCombiningMark(int codePoint) {
+        int type = Character.getType(codePoint);
+        return type == Character.NON_SPACING_MARK
+                || type == Character.COMBINING_SPACING_MARK
+                || type == Character.ENCLOSING_MARK;
     }
 
     Optional<ReaderSelection> snapshot() {

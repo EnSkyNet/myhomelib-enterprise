@@ -11,10 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
-import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -111,16 +108,7 @@ final class WindowsDpapiSecretStore implements SecretStore {
     static String blobFileNameFor(String key) {
         String validated = requireLogicalKey(key);
         if (CredentialMasterKeyManager.SECRET_NAME.equals(validated)) return LEGACY_MASTER_KEY_FILE;
-        return KEYED_FILE_PREFIX + sha256(validated) + ".dpapi";
-    }
-
-    private static String sha256(String value) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
-        } catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException("SHA-256 is unavailable", impossible);
-        }
+        return KEYED_FILE_PREFIX + Utf8HashSupport.sha256(validated) + ".dpapi";
     }
 
     private static String requireLogicalKey(String key) {

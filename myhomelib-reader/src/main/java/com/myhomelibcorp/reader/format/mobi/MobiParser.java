@@ -108,6 +108,10 @@ public final class MobiParser implements BookParser {
             if (container.textLength > 0 && out.size() >= container.textLength) break;
         }
         byte[] result = out.toByteArray();
+        if (container.textLength > 0 && result.length < container.textLength) {
+            throw new IOException("MOBI text is truncated: expected " + container.textLength
+                    + " bytes, decoded " + result.length);
+        }
         if (container.textLength > 0 && result.length > container.textLength) {
             return java.util.Arrays.copyOf(result, (int) Math.min(container.textLength, Integer.MAX_VALUE));
         }
@@ -464,12 +468,12 @@ public final class MobiParser implements BookParser {
             if (start + 12 > record0.length || !ascii(record0, start, "EXTH")) return result;
             int length = safeInt(u32(record0, start + 4));
             int count = safeInt(u32(record0, start + 8));
-            int end = Math.min(record0.length, start + Math.max(12, length));
+            int end = (int) Math.min(record0.length, (long) start + Math.max(12, length));
             int pos = start + 12;
             for (int i = 0; i < count && i < 10_000 && pos + 8 <= end; i++) {
                 int type = safeInt(u32(record0, pos));
                 int len = safeInt(u32(record0, pos + 4));
-                if (len < 8 || pos + len > end) break;
+                if (len < 8 || len > end - pos) break;
                 byte[] data = java.util.Arrays.copyOfRange(record0, pos + 8, pos + len);
                 result.computeIfAbsent(type, ignored -> new ArrayList<>()).add(data);
                 pos += len;
@@ -513,7 +517,7 @@ public final class MobiParser implements BookParser {
 
     private static String slice(byte[] data, int offset, int length, Charset charset) {
         if (offset < 0 || length <= 0 || offset >= data.length) return "";
-        int end = Math.min(data.length, offset + length);
+        int end = (int) Math.min(data.length, (long) offset + length);
         return clean(new String(data, offset, end - offset, charset));
     }
 }

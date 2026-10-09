@@ -15,6 +15,8 @@ import com.myhomelibcorp.converter.toolchain.metadata.CanonicalBookMetadata;
 import com.myhomelibcorp.converter.toolchain.metadata.Fb2MetadataPatcher;
 import com.myhomelibcorp.converter.toolchain.workspace.ConversionWorkspace;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -32,6 +34,7 @@ import java.util.concurrent.CancellationException;
  */
 @Component
 public class ToolchainBookConverter implements BookConverter {
+    private static final Logger log = LoggerFactory.getLogger(ToolchainBookConverter.class);
     private final Map<ConversionEngineId, ConversionEngine> engines;
     private final ConversionRoutePlanner planner;
     private static final String EPUB_OPTIMIZATION_PROFILE = "converter.epubOptimizationProfile";
@@ -108,6 +111,9 @@ public class ToolchainBookConverter implements BookConverter {
         ConversionRoute route = planner.plan(context.sourceFormat(), context.targetFormat())
                 .orElseThrow(() -> new ConversionToolchainException(ConversionFailureKind.UNSUPPORTED,
                         "No toolchain route for " + context.sourceFormat() + " -> " + context.targetFormat()));
+        log.info("CONVERSION_ROUTE bookId={} source={} target={} steps={}",
+                context.book().getId(), context.sourceFormat(), context.targetFormat(),
+                route.steps().stream().map(step -> step.engineId() + ":" + step.sourceFormat() + "->" + step.targetFormat()).toList());
 
         CanonicalBookMetadata metadataSnapshot = CanonicalBookMetadata.from(context.book());
         try (ConversionWorkspace workspace = ConversionWorkspace.create()) {
@@ -125,7 +131,14 @@ public class ToolchainBookConverter implements BookConverter {
                 Path output = workspace.outputPath(i + 1, step.targetExtension());
                 if (Files.exists(output, LinkOption.NOFOLLOW_LINKS))
                     throw new java.nio.file.FileAlreadyExistsException(output.toString());
+                long stepStarted = System.nanoTime();
+                log.info("CONVERSION_STEP_START bookId={} engine={} source={} target={}",
+                        context.book().getId(), step.engineId(), step.sourceFormat(), step.targetFormat());
                 engine.convert(step, current, output, context.cancelled(), context.maxOutputBytes());
+                log.info("CONVERSION_STEP_DONE bookId={} engine={} durationMs={} outputBytes={}",
+                        context.book().getId(), step.engineId(),
+                        Math.max(0L, (System.nanoTime() - stepStarted) / 1_000_000L),
+                        Files.size(output));
                 if (step.engineId() == ConversionEngineId.PANDOC
                         && "fb2".equals(BookConversionCapability.normalizeFormat(step.targetFormat()))) {
                     fb2MetadataPatcher.patchMissing(output, metadataSnapshot, context.cancelled());
@@ -135,12 +148,27 @@ public class ToolchainBookConverter implements BookConverter {
             }
             context.checkCancelled();
             if (context.postProcessEpub() && "epub".equals(BookConversionCapability.normalizeFormat(context.targetFormat()))) {
+                long optimizeStarted = System.nanoTime();
+                log.info("CONVERSION_EPUB_POST_START bookId={}", context.book().getId());
                 Path optimized = workspace.outputPath(99, ".optimized.epub");
                 if (Files.exists(optimized, LinkOption.NOFOLLOW_LINKS))
                     throw new java.nio.file.FileAlreadyExistsException(optimized.toString());
                 try {
-                    epubOptimizer.optimize(current, optimized, epubOptimizationProfile(),
+                    var optimizationReport = epubOptimizer.optimize(current, optimized, epubOptimizationProfile(),
                             epubReadingSystemProfile(), epubAcceptanceMode());
+                    log.info("CONVERSION_EPUB_POST_REPORT bookId={} profile={} sourceBytes={} resultBytes={} "
+                                    + "savedBytes={} savedPercent={} removedOrphans={} deduplicated={} optimizedImages={} "
+                                    + "subsetFonts={} imagesBeforeBytes={} imagesAfterBytes={} markupBeforeBytes={} "
+                                    + "markupAfterBytes={} epubCheck={} readerReopen={} semantic={} warnings={}",
+                            context.book().getId(), optimizationReport.profile(), optimizationReport.sourceSize(),
+                            optimizationReport.resultSize(), optimizationReport.savedBytes(),
+                            String.format(java.util.Locale.ROOT, "%.2f", optimizationReport.savedPercent()),
+                            optimizationReport.removedOrphans(), optimizationReport.deduplicatedResources(),
+                            optimizationReport.imagesConverted(), optimizationReport.fontsSubset(),
+                            optimizationReport.imagesBeforeBytes(), optimizationReport.imagesAfterBytes(),
+                            optimizationReport.markupBeforeBytes(), optimizationReport.markupAfterBytes(),
+                            optimizationReport.epubCheckStatus(), optimizationReport.readerReopenStatus(),
+                            optimizationReport.semanticVerificationStatus(), optimizationReport.warnings().size());
                 } catch (CancellationException cancelled) {
                     throw cancelled;
                 } catch (ConversionToolchainException classified) {
@@ -150,6 +178,9 @@ public class ToolchainBookConverter implements BookConverter {
                             "EPUB post-processing or acceptance validation failed", invalidEpub);
                 }
                 validators.forFormat("epub").validate(optimized, context.maxOutputBytes());
+                log.info("CONVERSION_EPUB_POST_DONE bookId={} durationMs={} outputBytes={}",
+                        context.book().getId(), Math.max(0L, (System.nanoTime() - optimizeStarted) / 1_000_000L),
+                        Files.size(optimized));
                 current = optimized;
             }
             publishValidated(current, context.targetFile(), context.targetFormat(), context.maxOutputBytes(), context.cancelled());

@@ -153,9 +153,14 @@ public class SessionService {
 
     public double[] getWindowState() {
         return new double[]{
-                prefs.getDouble("windowWidth", 1200),
-                prefs.getDouble("windowHeight", 800)
+                finitePositivePreference("windowWidth", 1200),
+                finitePositivePreference("windowHeight", 800)
         };
+    }
+
+    private double finitePositivePreference(String key, double fallback) {
+        double value = prefs.getDouble(key, fallback);
+        return Double.isFinite(value) && value > 0.0 ? value : fallback;
     }
 
     public record WorkspaceState(String type, String id) {

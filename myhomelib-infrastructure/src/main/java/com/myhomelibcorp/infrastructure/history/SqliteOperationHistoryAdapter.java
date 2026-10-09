@@ -1,7 +1,7 @@
 package com.myhomelibcorp.infrastructure.history;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.bulkedit.BatchMetadataChange;
 import com.myhomelibcorp.application.bulkedit.BatchMetadataEditRule;
 import com.myhomelibcorp.application.bulkedit.BatchMetadataEditableSnapshot;
@@ -166,7 +166,7 @@ public class SqliteOperationHistoryAdapter implements OperationHistoryPort {
     private String encode(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
-        } catch (JsonProcessingException failed) {
+        } catch (JacksonException failed) {
             throw new IllegalStateException("Cannot serialize operation history", failed);
         }
     }
@@ -174,7 +174,7 @@ public class SqliteOperationHistoryAdapter implements OperationHistoryPort {
     private <T> T decode(String value, Class<T> type) {
         try {
             return objectMapper.readValue(value, type);
-        } catch (JsonProcessingException failed) {
+        } catch (JacksonException failed) {
             throw new IllegalStateException("Cannot deserialize operation history", failed);
         }
     }

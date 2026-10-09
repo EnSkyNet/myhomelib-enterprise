@@ -158,8 +158,6 @@ class LibraryOperationCoordinatorTest {
         LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
         try (var ignored = coordinator.acquireDetachedShared(LibraryOperationType.EDIT)) {
             assertThrows(LibraryOperationConflictException.class,
-                    () -> coordinator.acquireDetachedShared(LibraryOperationType.DOWNLOAD));
-            assertThrows(LibraryOperationConflictException.class,
                     () -> coordinator.acquireDetachedShared(LibraryOperationType.READER_STATE));
         }
     }
@@ -201,13 +199,11 @@ class LibraryOperationCoordinatorTest {
     }
 
     @Test
-    void mutationCannotJoinQueryRootAndQueryCannotJoinCollectionSwitchingRoots() {
+    void destructiveMutationCannotJoinQueryRootAndQueryCannotJoinCollectionSwitchingRoots() {
         LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
         try (var ignored = coordinator.acquireDetachedShared(LibraryOperationType.QUERY)) {
             assertThrows(LibraryOperationConflictException.class,
                     () -> coordinator.acquireDetachedShared(LibraryOperationType.EDIT));
-            assertThrows(LibraryOperationConflictException.class,
-                    () -> coordinator.acquireDetachedShared(LibraryOperationType.DOWNLOAD));
         }
 
         try (var ignored = coordinator.acquireDetachedShared(LibraryOperationType.COPY)) {
@@ -260,5 +256,165 @@ class LibraryOperationCoordinatorTest {
         second.close();
         assertFalse(coordinator.isBusy());
     }
+
+    @Test
+    void concurrentCloseOfOneSharedLeaseCannotReleaseSiblingLease() throws Exception {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        var first = coordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        var second = coordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+
+        int callers = 12;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(callers);
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        try {
+            java.util.List<java.util.concurrent.Future<?>> closes = new java.util.ArrayList<>();
+            for (int i = 0; i < callers; i++) {
+                closes.add(pool.submit(() -> {
+                    start.await();
+                    first.close();
+                    return null;
+                }));
+            }
+            start.countDown();
+            for (var close : closes) close.get(2, TimeUnit.SECONDS);
+
+            assertTrue(coordinator.isBusy(), "closing one shared lease repeatedly must not release its sibling");
+            assertEquals(LibraryOperationType.QUERY, coordinator.activeOperation());
+        } finally {
+            pool.shutdownNow();
+            second.close();
+        }
+        assertFalse(coordinator.isBusy());
+    }
+
+    @Test
+    void sharedFailureDetailIsNotOverwrittenByLaterSuccessfulSibling() {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        java.util.List<LibraryOperationCompletion> completions = new java.util.ArrayList<>();
+        coordinator.addCompletionListener(completions::add);
+
+        var failed = coordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        var successful = coordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        failed.markFailed("primary failure").close();
+        successful.markCompleted("later success").close();
+
+        assertEquals(1, completions.size());
+        assertEquals(LibraryOperationOutcome.FAILED, completions.getFirst().outcome());
+        assertEquals("primary failure", completions.getFirst().detail());
+    }
+
+    @Test
+    void sharedCancellationDetailIsNotOverwrittenByLaterSuccessfulSibling() {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        java.util.List<LibraryOperationCompletion> completions = new java.util.ArrayList<>();
+        coordinator.addCompletionListener(completions::add);
+
+        var cancelled = coordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        var successful = coordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        cancelled.markCancelled("cancel requested").close();
+        successful.markCompleted("later success").close();
+
+        assertEquals(1, completions.size());
+        assertEquals(LibraryOperationOutcome.CANCELLED, completions.getFirst().outcome());
+        assertEquals("cancel requested", completions.getFirst().detail());
+    }
+
+    @Test
+    void executeDetachedSharedClosesLeaseAndPublishesCompletion() {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        java.util.List<LibraryOperationCompletion> completions = new java.util.ArrayList<>();
+        coordinator.addCompletionListener(completions::add);
+
+        String result = coordinator.executeDetachedShared(LibraryOperationType.QUERY, () -> "ok");
+
+        assertEquals("ok", result);
+        assertFalse(coordinator.isBusy());
+        assertEquals(1, completions.size());
+        assertEquals(LibraryOperationOutcome.COMPLETED, completions.getFirst().outcome());
+    }
+
+    @Test
+    void executeDetachedSharedMarksFailureAndRethrowsOriginalException() {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        java.util.List<LibraryOperationCompletion> completions = new java.util.ArrayList<>();
+        coordinator.addCompletionListener(completions::add);
+        IllegalStateException expected = new IllegalStateException("boom");
+
+        IllegalStateException actual = assertThrows(IllegalStateException.class,
+                () -> coordinator.executeDetachedShared(LibraryOperationType.QUERY, () -> {
+                    throw expected;
+                }));
+
+        assertSame(expected, actual);
+        assertFalse(coordinator.isBusy());
+        assertEquals(1, completions.size());
+        assertEquals(LibraryOperationOutcome.FAILED, completions.getFirst().outcome());
+        assertEquals("boom", completions.getFirst().detail());
+    }
+
+    @Test
+    void backgroundIndexAllowsUserDownloadWithoutOpeningSwitchRace() {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        var index = coordinator.acquireDetachedShared(LibraryOperationType.INDEX);
+
+        var download = assertDoesNotThrow(
+                () -> coordinator.acquireDetachedShared(LibraryOperationType.DOWNLOAD));
+        assertEquals(LibraryOperationType.INDEX, coordinator.activeOperation());
+        assertThrows(LibraryOperationConflictException.class,
+                () -> coordinator.acquire(LibraryOperationType.SWITCH));
+
+        download.close();
+        index.close();
+        assertFalse(coordinator.isBusy());
+    }
+
+    @Test
+    void runningConversionDoesNotBlockReaderStateOrBookDownload() {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        var conversion = coordinator.acquireDetachedShared(LibraryOperationType.CONVERSION);
+
+        var readerState = assertDoesNotThrow(
+                () -> coordinator.acquireDetachedShared(LibraryOperationType.READER_STATE));
+        var download = assertDoesNotThrow(
+                () -> coordinator.acquireDetachedShared(LibraryOperationType.DOWNLOAD));
+        assertEquals(LibraryOperationType.CONVERSION, coordinator.activeOperation());
+        assertThrows(LibraryOperationConflictException.class,
+                () -> coordinator.acquire(LibraryOperationType.SWITCH));
+
+        download.close();
+        readerState.close();
+        conversion.close();
+        assertFalse(coordinator.isBusy());
+    }
+
+    @Test
+    void queuedQueryRootDoesNotBlockDownloadConversionOrIndexInSameCollection() {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        var query = coordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+
+        var download = assertDoesNotThrow(() -> coordinator.acquireDetachedShared(LibraryOperationType.DOWNLOAD));
+        var conversion = assertDoesNotThrow(() -> coordinator.acquireDetachedShared(LibraryOperationType.CONVERSION));
+        var index = assertDoesNotThrow(() -> coordinator.acquireDetachedShared(LibraryOperationType.INDEX));
+        assertEquals(LibraryOperationType.QUERY, coordinator.activeOperation());
+        assertTrue(coordinator.isOperationActive(LibraryOperationType.QUERY));
+        assertTrue(coordinator.isOperationActive(LibraryOperationType.DOWNLOAD));
+        assertTrue(coordinator.isOperationActive(LibraryOperationType.CONVERSION));
+        assertTrue(coordinator.isOperationActive(LibraryOperationType.INDEX));
+        assertThrows(LibraryOperationConflictException.class,
+                () -> coordinator.acquire(LibraryOperationType.SWITCH));
+
+        index.close();
+        assertFalse(coordinator.isOperationActive(LibraryOperationType.INDEX));
+        assertTrue(coordinator.isOperationActive(LibraryOperationType.CONVERSION));
+        conversion.close();
+        assertFalse(coordinator.isOperationActive(LibraryOperationType.CONVERSION));
+        download.close();
+        assertFalse(coordinator.isOperationActive(LibraryOperationType.DOWNLOAD));
+        assertTrue(coordinator.isOperationActive(LibraryOperationType.QUERY));
+        query.close();
+        assertFalse(coordinator.isBusy());
+        assertFalse(coordinator.isOperationActive(LibraryOperationType.QUERY));
+    }
+
 
 }

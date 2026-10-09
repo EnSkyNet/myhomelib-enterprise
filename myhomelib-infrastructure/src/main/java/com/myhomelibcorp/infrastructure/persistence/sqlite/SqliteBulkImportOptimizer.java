@@ -6,45 +6,65 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import javax.sql.DataSource;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
+/**
+ * Applies connection-scoped SQLite import tuning only while a collection transaction is active.
+ *
+ * <p>SQLite PRAGMA values such as {@code cache_size} and {@code mmap_size} belong to a JDBC
+ * connection. Executing them through {@link JdbcTemplate} outside a transaction is unsafe with a
+ * pool because consecutive calls are not guaranteed to use the same connection. During an active
+ * Spring JDBC transaction the connection is bound to the current thread, so both tuning and the
+ * import use the same physical connection.</p>
+ *
+ * <p>{@code synchronous=NORMAL} and {@code temp_store=FILE} are intentionally not toggled here:
+ * they are stable per-connection defaults configured by {@code DataSourceConfig}. In particular,
+ * changing {@code synchronous} after a SQLite transaction has started is rejected by SQLite.</p>
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class SqliteBulkImportOptimizer implements BulkImportOptimizer {
 
+    private static final long BULK_CACHE_SIZE_KIB = -32768L; // 32 MiB, negative value means KiB.
+    private static final long BULK_MMAP_SIZE_BYTES = 67108864L; // 64 MiB virtual mapping ceiling.
+
     private final CollectionManager collectionManager;
 
-    /** Supports properly nested enable/disable calls without losing the caller's original PRAGMA values. */
+    /** Supports nested enable/disable calls on the same transaction-bound connection. */
     private final ThreadLocal<Deque<PragmaState>> previousStates = ThreadLocal.withInitial(ArrayDeque::new);
-
-    private JdbcTemplate getJdbcTemplate() {
-        return collectionManager.getCurrentJdbcTemplate();
-    }
 
     @Override
     public void enableBulkInsertMode() {
-        JdbcTemplate jt = getJdbcTemplate();
+        DataSource dataSource = collectionManager.getCurrentDataSource();
+        if (!hasTransactionBoundConnection(dataSource)) {
+            log.debug("SQLite bulk PRAGMA tuning skipped: no transaction-bound collection connection");
+            return;
+        }
+
+        JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
         PragmaState previous;
         try {
-            previous = readState(jt);
-        } catch (RuntimeException e) {
-            log.warn("Не вдалося зчитати поточні SQLite PRAGMA; bulk-оптимізацію пропущено: {}", e.getMessage());
+            previous = readState(jdbc);
+        } catch (RuntimeException error) {
+            log.warn("Не вдалося зчитати SQLite PRAGMA для transaction-bound bulk mode; оптимізацію пропущено: {}",
+                    error.getMessage());
             return;
         }
 
         try {
-            jt.execute("PRAGMA synchronous = NORMAL");
-            jt.execute("PRAGMA temp_store = MEMORY");
-            jt.execute("PRAGMA cache_size = -262144");
-            jt.execute("PRAGMA mmap_size = 2147483648");
+            jdbc.execute("PRAGMA cache_size = " + BULK_CACHE_SIZE_KIB);
+            jdbc.execute("PRAGMA mmap_size = " + BULK_MMAP_SIZE_BYTES);
             previousStates.get().push(previous);
-            log.debug("PRAGMA встановлено для швидкого імпорту; попередній стан збережено");
-        } catch (RuntimeException e) {
-            restoreState(jt, previous, "після помилки ввімкнення bulk mode");
-            log.warn("Помилка при встановленні PRAGMA для імпорту; попередні значення відновлено: {}", e.getMessage());
+            log.debug("SQLite bulk PRAGMA applied to the transaction-bound connection");
+        } catch (RuntimeException error) {
+            restoreState(jdbc, previous, "після помилки ввімкнення bulk mode");
+            log.warn("Не вдалося встановити SQLite bulk PRAGMA; попередні значення відновлено: {}",
+                    error.getMessage());
         }
     }
 
@@ -53,55 +73,66 @@ public class SqliteBulkImportOptimizer implements BulkImportOptimizer {
         Deque<PragmaState> stack = previousStates.get();
         if (stack.isEmpty()) {
             previousStates.remove();
-            log.debug("Немає збереженого SQLite PRAGMA state для відновлення");
             return;
         }
 
-        JdbcTemplate jt = getJdbcTemplate();
+        DataSource dataSource = collectionManager.getCurrentDataSource();
+        if (!hasTransactionBoundConnection(dataSource)) {
+            // Never restore through an arbitrary pooled connection. This should only be reachable
+            // if a caller violates the enable/disable contract by ending the transaction first.
+            stack.clear();
+            previousStates.remove();
+            log.warn("SQLite bulk PRAGMA state could not be restored safely because the transaction-bound connection is gone");
+            return;
+        }
+
+        JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
         PragmaState previous = stack.pop();
         try {
-            restoreState(jt, previous, "після bulk import");
-            log.debug("SQLite PRAGMA відновлено до фактичних попередніх значень");
+            restoreState(jdbc, previous, "після bulk import");
+            log.debug("SQLite bulk PRAGMA restored on the transaction-bound connection");
         } finally {
             if (stack.isEmpty()) previousStates.remove();
         }
     }
 
-    private static PragmaState readState(JdbcTemplate jt) {
-        return new PragmaState(
-                requireLong(jt, "PRAGMA synchronous"),
-                requireLong(jt, "PRAGMA temp_store"),
-                requireLong(jt, "PRAGMA cache_size"),
-                requireLong(jt, "PRAGMA mmap_size"));
+    private static boolean hasTransactionBoundConnection(DataSource dataSource) {
+        return dataSource != null
+                && TransactionSynchronizationManager.isActualTransactionActive()
+                && TransactionSynchronizationManager.hasResource(dataSource);
     }
 
-    private static long requireLong(JdbcTemplate jt, String sql) {
-        Long value = jt.queryForObject(sql, Long.class);
+    private static PragmaState readState(JdbcTemplate jdbc) {
+        return new PragmaState(
+                requireLong(jdbc, "PRAGMA cache_size"),
+                requireLong(jdbc, "PRAGMA mmap_size"));
+    }
+
+    private static long requireLong(JdbcTemplate jdbc, String sql) {
+        Long value = jdbc.queryForObject(sql, Long.class);
         if (value == null) throw new IllegalStateException("SQLite returned NULL for " + sql);
         return value;
     }
 
-    private static void restoreState(JdbcTemplate jt, PragmaState state, String context) {
+    private static void restoreState(JdbcTemplate jdbc, PragmaState state, String context) {
         RuntimeException failure = null;
-        failure = restoreOne(jt, "PRAGMA synchronous = " + state.synchronous(), failure);
-        failure = restoreOne(jt, "PRAGMA temp_store = " + state.tempStore(), failure);
-        failure = restoreOne(jt, "PRAGMA cache_size = " + state.cacheSize(), failure);
-        failure = restoreOne(jt, "PRAGMA mmap_size = " + state.mmapSize(), failure);
+        failure = restoreOne(jdbc, "PRAGMA cache_size = " + state.cacheSize(), failure);
+        failure = restoreOne(jdbc, "PRAGMA mmap_size = " + state.mmapSize(), failure);
         if (failure != null) {
             log.warn("Не всі SQLite PRAGMA вдалося відновити {}", context, failure);
         }
     }
 
-    private static RuntimeException restoreOne(JdbcTemplate jt, String sql, RuntimeException previousFailure) {
+    private static RuntimeException restoreOne(JdbcTemplate jdbc, String sql, RuntimeException previousFailure) {
         try {
-            jt.execute(sql);
+            jdbc.execute(sql);
             return previousFailure;
-        } catch (RuntimeException e) {
-            if (previousFailure == null) return e;
-            previousFailure.addSuppressed(e);
+        } catch (RuntimeException error) {
+            if (previousFailure == null) return error;
+            previousFailure.addSuppressed(error);
             return previousFailure;
         }
     }
 
-    private record PragmaState(long synchronous, long tempStore, long cacheSize, long mmapSize) { }
+    private record PragmaState(long cacheSize, long mmapSize) { }
 }

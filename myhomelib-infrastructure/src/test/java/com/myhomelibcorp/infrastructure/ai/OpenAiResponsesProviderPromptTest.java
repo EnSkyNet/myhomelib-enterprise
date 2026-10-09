@@ -1,7 +1,7 @@
 package com.myhomelibcorp.infrastructure.ai;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 import com.myhomelibcorp.application.ai.AiOperation;
 import com.myhomelibcorp.application.ai.AiRequest;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
@@ -22,8 +22,8 @@ class OpenAiResponsesProviderPromptTest {
                 "Summarize this chapter in concise English.", "Chapter text");
 
         ObjectNode body = requestBody(provider, request);
-        String developerText = body.path("input").path(0).path("content").path(0).path("text").asText();
-        String userText = body.path("input").path(1).path("content").path(0).path("text").asText();
+        String developerText = body.path("input").path(0).path("content").path(0).path("text").asString();
+        String userText = body.path("input").path(1).path("content").path(0).path("text").asString();
 
         assertThat(developerText)
                 .contains("Answer in the language of the user's request")
@@ -43,7 +43,7 @@ class OpenAiResponsesProviderPromptTest {
                 "Отговори кратко: кой е главният герой?", "Текст на книгата");
 
         ObjectNode body = requestBody(provider, request);
-        String userText = body.path("input").path(1).path("content").path(0).path("text").asText();
+        String userText = body.path("input").path(1).path("content").path(0).path("text").asString();
 
         assertThat(userText)
                 .contains("Отговори кратко: кой е главният герой?")

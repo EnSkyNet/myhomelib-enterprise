@@ -75,10 +75,12 @@ class Iteration84UxContractTest {
     void readerAnnotationSidebarSupportsTypeTagSearchAndChapterGrouping() throws Exception {
         String fxml = resource("/view/new-reader-workspace.fxml");
         String controller = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java"));
+        String filter = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/reader/ReaderAnnotationSidebarFilter.java"));
 
         assertThat(fxml).contains("annotationSidebarSearch", "annotationSidebarTypeFilter", "annotationSidebarTagFilter");
         assertThat(controller).contains("buildAnnotationSidebarRows", "AnnotationSidebarRow.header",
-                "annotationMatches(item, query)", "item.tags().contains(tag)");
+                "ReaderAnnotationSidebarFilter.select", "ReaderAnnotationSidebarFilter.tags");
+        assertThat(filter).contains("item.tags().contains(tag)", "matches(item, normalizedQuery)");
     }
 
     private static String resource(String path) throws Exception {

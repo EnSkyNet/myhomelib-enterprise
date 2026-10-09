@@ -13,7 +13,7 @@ class TtsVoicePresentationTest {
     void rendersHumanReadableVoiceNamesInsteadOfObjectIdentity() {
         TtsVoice voice = new TtsVoice("Microsoft Irina Desktop", "Microsoft Irina Desktop", "ru-RU");
 
-        assertThat(NewReaderWorkspaceController.ttsVoiceLabel(voice))
+        assertThat(ReaderTtsCoordinator.voiceLabel(voice))
                 .isEqualTo("Microsoft Irina Desktop (ru-RU)")
                 .doesNotContain("@")
                 .doesNotContain("SystemTtsProvider$");
@@ -21,7 +21,7 @@ class TtsVoicePresentationTest {
 
     @Test
     void makesDuplicateVoiceLabelsUnambiguousWithoutExposingObjectIdentity() {
-        List<String> labels = NewReaderWorkspaceController.ttsVoiceLabels(List.of(
+        List<String> labels = ReaderTtsCoordinator.voiceLabels(List.of(
                 new TtsVoice("voice-a", "Microsoft Voice", "en-US"),
                 new TtsVoice("voice-b", "Microsoft Voice", "en-US")
         ));

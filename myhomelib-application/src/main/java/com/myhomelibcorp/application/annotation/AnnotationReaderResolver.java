@@ -41,32 +41,31 @@ public final class AnnotationReaderResolver {
         if (item == null || item.anchor() == null || text == null) return Optional.empty();
         AnnotationAnchorData anchor = item.anchor();
         String quote = anchor.quote();
-        if (quote == null || quote.isEmpty() || quote.length() > text.length()) return Optional.empty();
+        if (quote == null || quote.isEmpty()) return Optional.empty();
 
-        int from = 0;
         int occurrences = 0;
         int bestStart = -1;
+        int bestEnd = -1;
         int bestContext = Integer.MIN_VALUE;
         int secondContext = Integer.MIN_VALUE;
         long expected = Math.round(Math.max(0, text.length() - quote.length()) * anchor.position());
         long bestDistance = Long.MAX_VALUE;
 
-        while (from <= text.length() - quote.length()) {
-            int hit = text.indexOf(quote, from);
-            if (hit < 0) break;
+        for (AnnotationAnchorRelocator.TextMatch hit : AnnotationAnchorRelocator.findQuoteMatches(text, quote)) {
             occurrences++;
-            int score = AnnotationAnchorRelocator.scoreContext(text, hit, quote.length(), anchor.prefix(), anchor.suffix());
-            long distance = Math.abs((long) hit - expected);
+            int score = AnnotationAnchorRelocator.scoreContext(
+                    text, hit.startOffset(), hit.endOffset() - hit.startOffset(), anchor.prefix(), anchor.suffix());
+            long distance = Math.abs((long) hit.startOffset() - expected);
 
             if (score > bestContext || (score == bestContext && distance < bestDistance)) {
                 secondContext = bestContext;
                 bestContext = score;
                 bestDistance = distance;
-                bestStart = hit;
+                bestStart = hit.startOffset();
+                bestEnd = hit.endOffset();
             } else if (score > secondContext) {
                 secondContext = score;
             }
-            from = hit + 1;
         }
         if (bestStart < 0) return Optional.empty();
 
@@ -75,7 +74,7 @@ public final class AnnotationReaderResolver {
                 && (secondContext == Integer.MIN_VALUE || bestContext - secondContext >= SAFE_CONTEXT_MARGIN);
         return Optional.of(new RebindCandidate(
                 bestStart,
-                (long) bestStart + quote.length(),
+                bestEnd,
                 occurrences,
                 Math.max(0, bestContext),
                 uniqueQuote || strongContext));

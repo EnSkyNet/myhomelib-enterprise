@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -53,7 +54,10 @@ public class ContentIndexingQueueService implements DisposableBean {
     private final Set<String> failedArtifactKeys = ConcurrentHashMap.newKeySet();
     private final Set<String> supersededTaskIds = ConcurrentHashMap.newKeySet();
     private final Set<String> rebuildRequiredCollections = ConcurrentHashMap.newKeySet();
-    private final Set<String> staleHolds = ConcurrentHashMap.newKeySet();
+    // A Set is insufficient here: an authoritative rebuild and a concurrent committed mutation
+    // can both hold the index stale. One completion must never clear the other's protection.
+    // Access is serialized by enqueueLock, so a small ref-count map is enough.
+    private final Map<String, Integer> staleHolds = new HashMap<>();
     private final Set<String> restoredCollections = ConcurrentHashMap.newKeySet();
     private final CopyOnWriteArrayList<Consumer<ContentIndexingQueueSnapshot>> listeners = new CopyOnWriteArrayList<>();
     private final AtomicBoolean paused = new AtomicBoolean(false);
@@ -64,6 +68,7 @@ public class ContentIndexingQueueService implements DisposableBean {
     private volatile String lastError = "";
 
     private final ScheduledExecutorService coordinator;
+    private final AtomicBoolean coordinatorStarted = new AtomicBoolean(false);
     private final ExecutorService workers;
     private final ExecutorService checkpointExecutor;
 
@@ -117,7 +122,6 @@ public class ContentIndexingQueueService implements DisposableBean {
                 new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
         this.checkpointExecutor = Executors.newSingleThreadExecutor(r -> daemon(r, "mhl-content-index-checkpoint"));
         this.coordinator = Executors.newSingleThreadScheduledExecutor(r -> daemon(r, "mhl-content-index-coordinator"));
-        this.coordinator.scheduleWithFixedDelay(this::dispatchSafely, 0L, 50L, TimeUnit.MILLISECONDS);
     }
 
     /** Restores unfinished work. Tasks that were active at process termination are intentionally re-queued. */
@@ -182,6 +186,7 @@ public class ContentIndexingQueueService implements DisposableBean {
                 }
             }
         }
+        if (restored > 0 && !paused.get()) startCoordinatorIfNeeded();
         notifyListeners();
         return restored;
     }
@@ -196,6 +201,7 @@ public class ContentIndexingQueueService implements DisposableBean {
         synchronized (enqueueLock) {
             enqueueInternal(task, true);
         }
+        if (!paused.get()) startCoordinatorIfNeeded();
         notifyListeners();
     }
 
@@ -222,6 +228,7 @@ public class ContentIndexingQueueService implements DisposableBean {
             }
         }
         collections.forEach(this::requestCheckpoint);
+        if (!paused.get()) startCoordinatorIfNeeded();
         notifyListeners();
         return acceptedTasks.size();
     }
@@ -285,6 +292,7 @@ public class ContentIndexingQueueService implements DisposableBean {
     public void resume() {
         paused.set(false);
         requestCheckpointAllCollections();
+        if (!pending.isEmpty()) startCoordinatorIfNeeded();
         notifyListeners();
         dispatchSafely();
     }
@@ -388,7 +396,7 @@ public class ContentIndexingQueueService implements DisposableBean {
     public void holdStale(String collectionId) {
         if (collectionId == null || collectionId.isBlank()) return;
         synchronized (enqueueLock) {
-            staleHolds.add(collectionId);
+            staleHolds.merge(collectionId, 1, Integer::sum);
             contentIndex.markStale(collectionId);
         }
     }
@@ -396,7 +404,11 @@ public class ContentIndexingQueueService implements DisposableBean {
     public void releaseStaleHold(String collectionId) {
         if (collectionId == null || collectionId.isBlank()) return;
         synchronized (enqueueLock) {
-            staleHolds.remove(collectionId);
+            Integer count = staleHolds.get(collectionId);
+            if (count != null) {
+                if (count <= 1) staleHolds.remove(collectionId);
+                else staleHolds.put(collectionId, count - 1);
+            }
             markFreshIfDrained(collectionId);
         }
     }
@@ -419,7 +431,8 @@ public class ContentIndexingQueueService implements DisposableBean {
 
     public ContentIndexingQueueSnapshot snapshot() {
         IndexingPerformanceSettings settings = performanceSettings.load();
-        boolean batteryPause = settings.pauseOnBattery() && safeOnBattery();
+        boolean hasWork = !pending.isEmpty() || !active.isEmpty();
+        boolean batteryPause = hasWork && settings.pauseOnBattery() && safeOnBattery();
         return new ContentIndexingQueueSnapshot(paused.get(), batteryPause, settings.profile(),
                 pending.size(), active.size(), completed.get(), failed.get(), lastError);
     }
@@ -450,8 +463,15 @@ public class ContentIndexingQueueService implements DisposableBean {
         return activeTasks.values().stream().anyMatch(task -> task != null && id.equals(task.collectionId()));
     }
 
+    private void startCoordinatorIfNeeded() {
+        if (closed.get() || !coordinatorStarted.compareAndSet(false, true)) return;
+        // The OS power-state probe is cached for 30 seconds, so a 50 ms idle poll only burns CPU.
+        // Worker completion also triggers dispatch directly; this cadence is only a safety/power wake-up.
+        coordinator.scheduleWithFixedDelay(this::dispatchSafely, 0L, 1L, TimeUnit.SECONDS);
+    }
+
     private void dispatchSafely() {
-        if (closed.get() || paused.get()) return;
+        if (closed.get() || paused.get() || pending.isEmpty()) return;
         try {
             IndexingPerformanceSettings settings = performanceSettings.load();
             if (settings.pauseOnBattery() && safeOnBattery()) {
@@ -617,10 +637,11 @@ public class ContentIndexingQueueService implements DisposableBean {
         synchronized (enqueueLock) {
             failedArtifactKeys.removeIf(key -> key.startsWith(id + "\u0000"));
             rebuildRequiredCollections.remove(id);
-            staleHolds.remove(id);
             // Durable queue/rebuild state must be cleared before the public freshness marker.
             // Otherwise a crash can resurrect already-completed work on the next start. Use the
             // normal drained check as a final guard in case unexpected work appeared concurrently.
+            // Do not clear staleHolds here: the caller releases its own hold explicitly, while a
+            // concurrent download/index scheduling flow may still own another hold.
             markFreshIfDrained(id);
         }
     }
@@ -631,7 +652,7 @@ public class ContentIndexingQueueService implements DisposableBean {
             boolean hasOutstanding = outstanding.values().stream().anyMatch(task -> collectionId.equals(task.collectionId()));
             boolean hasFailure = failedArtifactKeys.stream().anyMatch(key -> key.startsWith(collectionId + "\u0000"));
             boolean rebuildRequired = rebuildRequiredCollections.contains(collectionId);
-            boolean heldStale = staleHolds.contains(collectionId);
+            boolean heldStale = staleHolds.getOrDefault(collectionId, 0) > 0;
             if (!hasOutstanding && !hasFailure && !rebuildRequired && !heldStale) {
                 // Seal the durable queue state before exposing the index as fresh. Sharing the
                 // enqueue lock with markStale/enqueue/rebuild transitions prevents READY from

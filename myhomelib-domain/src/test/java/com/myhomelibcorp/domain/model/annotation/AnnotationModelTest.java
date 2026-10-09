@@ -76,6 +76,35 @@ class AnnotationModelTest {
     }
 
     @Test
+    void relocatorMatchesCanonicallyEquivalentQuoteAndReturnsCurrentTextOffsets() {
+        String original = "before café after";
+        int start = original.indexOf("café");
+        AnnotationAnchor anchor = new AnnotationAnchor("book", "artifact", null, null, null,
+                start, start + "café".length(), 0.5, "café", "before ", " after");
+        String canonicallyEquivalent = "before cafe\u0301 after";
+
+        var range = AnnotationAnchorRelocator.resolve(anchor, "artifact", canonicallyEquivalent).orElseThrow();
+
+        assertThat(range.relocated()).isTrue();
+        assertThat(range.startOffset()).isEqualTo(start);
+        assertThat(canonicallyEquivalent.substring((int) range.startOffset(), (int) range.endOffset()))
+                .isEqualTo("cafe\u0301");
+    }
+
+    @Test
+    void relocatorMatchesLongDecomposedStoredQuoteAgainstComposedCurrentText() {
+        String composed = "é".repeat(12);
+        String decomposed = "e\u0301".repeat(12);
+        String current = composed;
+        AnnotationAnchor anchor = new AnnotationAnchor("book", "artifact", null, null, null,
+                0, decomposed.length(), 0.5, decomposed, "", "");
+
+        var range = AnnotationAnchorRelocator.resolve(anchor, "artifact", current).orElseThrow();
+
+        assertThat(current.substring((int) range.startOffset(), (int) range.endOffset())).isEqualTo(composed);
+    }
+
+    @Test
     void contextualMatchWinsWhenQuoteOccursMoreThanOnce() {
         String text = "A target Z ... before target after ... target end";
         AnnotationAnchor anchor = new AnnotationAnchor("book", null, null, null, null,

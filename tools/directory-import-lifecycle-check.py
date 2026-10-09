@@ -19,7 +19,7 @@ file_src = FILE_USECASE.read_text(encoding='utf-8')
 scanner = SCANNER.read_text(encoding='utf-8')
 test = TEST.read_text(encoding='utf-8') if TEST.exists() else ''
 
-need('Files.walk(directory, depth)' in scanner, 'LibraryScanner must keep a lazy Files.walk traversal')
+need('Files.walk(safeRoot, depth)' in scanner, 'LibraryScanner must keep a lazy Files.walk traversal from the validated root')
 need(src.count('libraryScanner.streamSupportedFiles(directory)') == 1,
      'directory import must perform exactly one supported-file stream traversal')
 need('.progressListener(null)' in src and '.indexAfterSave(false)' in src and '.publishFinishedEvent(false)' in src,

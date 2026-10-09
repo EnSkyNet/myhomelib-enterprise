@@ -1,87 +1,67 @@
 # MyHomeLib Enterprise 8.0.0
 
-Current source checkpoint: **MyHomeLib 8.0.0 FINAL AUDITED local candidate, 2026-09-18**. After the Iteration 85 baseline, the tree received an additional deep audit across localization, import/export semantics, backup/restore crash safety, external-process lifecycle, bounded I/O/HTTP, filename portability, collection switching, full-text indexing durability, SQLite migrations and Spring wiring. One uninterrupted final `clean verify -Pproduction` on the final code state completed with **17/17 modules BUILD SUCCESS**, **400 test suites / 1,189 tests / 0 failures / 0 errors / 12 skipped**. The same audited state has **3,352 synchronized desktop localization keys in UK/EN/BG**, **74 synchronized Web/OPDS keys**, and **1,125 production Java files** with the implementation-completeness guard passing. Linux validation uses the exact production **JavaFX 21.0.12** artifacts without the earlier 21.0.2 test override. The six live external gates MHL-010/011/012/017/018/019 remain `OPEN_EXTERNAL`; Windows-native, connected GitHub, real Calibre/external-integration and signing acceptance are not inferred from the local Linux/offline PASS.
+Поточний source checkpoint: **V34, 2026-10-02**. Після стабілізованого V29 послідовно додано V30 Kobo native sync, V31 fail-closed application updater, V32 Readwise annotation export, V33 локальні metadata recommendations і V34 exact duplicate comic-page diagnostics. Live/device/provider acceptance навмисно відокремлено від локальних deterministic gates.
 
-The chronological development record is consolidated in [docs/history/HISTORY.md](docs/history/HISTORY.md). Original iteration/task/continuation records are kept under `docs/history/records/`. The six external backlog items MHL-010/011/012/017/018/019 remain OPEN until real GitHub/Windows acceptance evidence exists.
+Exact-current локальна перевірка: **2076 tests / 0 failures / 0 errors / 22 skipped; 21/21 reactor projects SUCCESS** на JDK 21 + Maven 3.9.16, UTF-8 locale та Xvfb. UI-модуль: **366 tests**, Reader: **150**, E2E: **15**, Architecture: **20**. User-action contract: **484/484** — **483 automated action-specific + 1 justified exclusion**, 273 FXML + 205 programmatic + 6 Web actions.
+
+Канонічна історія розвитку українською: [docs/history/HISTORY-UA.md](docs/history/HISTORY-UA.md). Історичні checkpoint/task/audit матеріали зберігаються під `docs/history/`; активні специфікації — під `docs/current/` і `docs/release/`.
 
 ## Quick start
 
-Requirements:
-
-- JDK 21;
-- this **DEVELOPER-SOURCE** handoff includes `mvnw`/`mvnw.cmd` and bundled Maven 3.9.6; the separately generated formal source-release archive intentionally excludes that Maven payload and requires Maven 3.9.6+ externally;
-- dependency access, or a populated Maven cache/offline dependency repository;
-- a JavaFX-compatible desktop environment.
-
-Build:
+Вимоги: JDK 21, Maven 3.9.6+ або наявний Maven Wrapper у developer-source handoff, dependency access чи підготовлений offline repository, JavaFX-compatible desktop environment.
 
 ```bash
 ./build.sh
+./run.sh
+./package.sh
 ```
 
 Windows PowerShell:
 
 ```powershell
 .\build.ps1
-```
-
-Run:
-
-```bash
-./run.sh
-```
-
-Windows:
-
-```powershell
 .\run.ps1
-```
-
-Package the executable Boot JAR:
-
-```bash
-./package.sh
-```
-
-or:
-
-```powershell
 .\package.ps1
 ```
 
-Expected JAR: `myhomelib-bootstrap/target/myhomelib-bootstrap-8.0.0.jar`.
+Очікуваний executable Boot JAR: `myhomelib-bootstrap/target/myhomelib-bootstrap-8.0.0.jar`.
 
-## What is included
+## Основні можливості
 
-The project supports multiple SQLite collections, local and online catalogues, INPX and directory import, Lucene search, navigation facets, reading history/user data, backup/restore, online book download through MyHomeLib-compatible `ConnectionScript`, OPDS, MCP, export/device actions, external file-based localization, the integrated Reader and a versioned plugin SPI core with a provider-neutral AI extension point plus an optional built-in OpenAI Responses adapter that remains inactive until credentials and explicit user consent are supplied.
+MyHomeLib підтримує кілька SQLite-колекцій, INPX і directory import, локальні/online каталоги, Lucene search, integrated Reader, PDF/comic/audio paths, annotations, Organizer, conversion, export/device actions, backup/restore, folder/WebDAV sync, OPDS/Web, MCP, plugins та provider-neutral AI integration boundary.
 
-For the current feature contract, see [MYHOMELIB-FEATURES.md](MYHOMELIB-FEATURES.md).
+Повний end-user каталог з форматами, передумовами, обмеженнями й рівнем перевірки: [docs/current/USER-FUNCTIONS-UA.md](docs/current/USER-FUNCTIONS-UA.md).
 
-## Data location
+## Дані
 
-Normal installed mode stores runtime data under `${user.home}/.myhomelibcorp`.
-Portable mode is enabled by `myhomelib2.ini` beside the launcher or `-Dmyhomelib.portable=true` and stores data under `<launch-dir>/data`.
-Both can be overridden with JVM properties documented in [MYHOMELIB-OPERATIONS.md](MYHOMELIB-OPERATIONS.md).
+Звичайний installed mode використовує `${user.home}/.myhomelibcorp`. Portable mode активується `myhomelib2.ini` біля launcher або `-Dmyhomelib.portable=true` і використовує `<launch-dir>/data`. Деталі й overrides: [docs/current/OPERATIONS.md](docs/current/OPERATIONS.md).
 
-## Documentation
+## Документація
 
-Active documentation is intentionally small:
+- [ARCHITECTURE.md](ARCHITECTURE.md) — актуальна модульна архітектура, dependency graph і hard boundaries;
+- [docs/current/ARCHITECTURE-AUDIT-UA.md](docs/current/ARCHITECTURE-AUDIT-UA.md) — останній архітектурний аудит;
+- [docs/current/FEATURES.md](docs/current/FEATURES.md) — поточний feature contract;
+- [docs/current/USER-FUNCTIONS-UA.md](docs/current/USER-FUNCTIONS-UA.md) — повний опис функцій користувача;
+- [docs/current/UI-ACTION-COVERAGE-UA.md](docs/current/UI-ACTION-COVERAGE-UA.md) — inventory 484 user actions;
+- [docs/current/UI-ACTION-BEHAVIOR-COVERAGE-UA.md](docs/current/UI-ACTION-BEHAVIOR-COVERAGE-UA.md) — action-specific behavioral evidence 484/484;
+- [docs/current/TASK-CLOSURE-AUDIT-UA.md](docs/current/TASK-CLOSURE-AUDIT-UA.md) — консолідований аудит усіх попередніх task/handoff документів;
+- [docs/current/OPERATIONS.md](docs/current/OPERATIONS.md) — експлуатація, data paths, recovery і troubleshooting;
+- [docs/current/DEVELOPMENT.md](docs/current/DEVELOPMENT.md) — build/test/development guardrails;
+- [docs/current/RELEASE.md](docs/current/RELEASE.md) — release/upgrade contract;
+- [docs/release/CURRENT-VALIDATION.md](docs/release/CURRENT-VALIDATION.md) — exact-current validation evidence;
+- [docs/release/DEEP-PROJECT-AUDIT-V34-2026-10-02-UA.md](docs/release/DEEP-PROJECT-AUDIT-V34-2026-10-02-UA.md) — фінальний deep source/docs/hygiene audit перед зовнішнім тестуванням;
+- [docs/release/REAL-DATA-ACCEPTANCE-V34-2026-10-02.md](docs/release/REAL-DATA-ACCEPTANCE-V34-2026-10-02.md) — large real-data acceptance: 707 154-record INPX, migration/search/restart/V33/V34 probes;
+- [docs/release/WHAT-REMAINS-UA.md](docs/release/WHAT-REMAINS-UA.md) — лише справді незакриті external/live gates;
+- [docs/history/HISTORY-UA.md](docs/history/HISTORY-UA.md) — загальна історія робіт українською;
+- [docs/README.md](docs/README.md) — карта документації.
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — current module/layer architecture and dependency rules;
-- [MYHOMELIB-FEATURES.md](MYHOMELIB-FEATURES.md) — supported functionality and deliberate limits;
-- [MYHOMELIB-OPERATIONS.md](MYHOMELIB-OPERATIONS.md) — data paths, collections, online download, backup/restore, upgrades and troubleshooting;
-- [MYHOMELIB-DEVELOPMENT.md](MYHOMELIB-DEVELOPMENT.md) — build, tests, performance and contribution/release gates;
-- [MYHOMELIB-RELEASE.md](MYHOMELIB-RELEASE.md) — v8.0 release/upgrade summary and current validation boundary;
-- `docs/README.md` — documentation map;
-- `docs/history/HISTORY.md` — consolidated human-readable development history;
-- `docs/history/source-notes/` and `docs/history/records/` — archived source evidence.
+Runtime help/localization assets (`Lang/`, `myhomelib-ui/src/main/resources/help/`) не змішуються з project documentation.
 
-`Lang/README.md` and the Markdown files under `myhomelib-ui/src/main/resources/help/` are runtime localization/help assets and are intentionally kept separate from project documentation.
+## Validation boundary
 
-## Validation note
+`tools/build-check-v7.py` fail-closed перевіряє migrations/source invariants, 100% UI action inventory, **action-specific behavioral coverage**, native chooser ownership і зв'язок кожної JavaFX action з канонічним user-function flow. `tools/architecture-check.py` і ArchUnit контролюють 17 production/runtime modules, включно зі standalone updater helper. Source/release tooling також перевіряє supply-chain policy, archive safety, static invariants і cleanliness.
 
-The repository contains offline architecture/static/regression gates and GitHub Actions workflows for JDK 21 on Windows, Linux and macOS. Critical JavaFX localization is also guarded by stable-key and UK/EN/BG catalogue consistency checks. Repository-side 8.0 acceptance for PR enforcement/timing, SBOM, Dependency-Check and CodeQL can be collected with the manually dispatched **GitHub connected acceptance** workflow; it writes machine-readable JSON plus a reviewer Markdown summary. A connected `mvn clean verify -Pproduction` and real CI run remain the authoritative compiled/tested release gate. Runtime startup itself does not require Maven or dependency downloads.
+Локальний Linux/Xvfb PASS **не замінює** реальну Windows x64 acceptance для Calibre/process teardown, installer/portable/DPI, device/system integrations і candidate-bound GitHub/SBOM/SCA/CodeQL/signing evidence. Актуальний перелік: `docs/release/WHAT-REMAINS-UA.md`.
 
-The canonical six-gate external acceptance handoff is `docs/release/EXTERNAL-ACCEPTANCE-RUNBOOK.md`; `tools/external-acceptance-readiness.py` validates repository readiness but never closes an external gate.
 
-Release supply-chain gates additionally generate CycloneDX JSON/XML SBOMs (`-Psbom`), run OWASP Dependency-Check with CVSS >= 7.0 blocking policy (`-Pdependency-check`), and run CodeQL on pull requests, main branches and a schedule. A release is fail-closed unless the exact candidate commit already has a successful CodeQL analysis; connected acceptance verifies GitHub-declared SHA-256 digests for the downloaded supply-chain and Windows Actions artifacts and extracts the exact MSI/EXE/portable candidates. Final Windows acceptance should start with `tools/v71-windows-acceptance-start.ps1`, which re-downloads the connected-acceptance artifact by run id, verifies its GitHub Actions digest, verifies the local Windows acceptance harness against the exact candidate-bound `acceptance-harness.sha256`, creates one clean candidate-bound Windows host/user/session record, binds real-previous MSI/portable testing and the interactive EXE/data-migration desktop smoke to that session, and leaves only the four DPI passes on the same host/user/session before finalization. Artifact types are intentionally different. The audited **DEVELOPER-SOURCE** handoff includes `mvnw`, `mvnw.cmd`, the wrapper payload and bundled Maven 3.9.6 so the audited build entrypoint is reproducible; it does **not** include the large local dependency cache, so Maven still needs dependency access or the prepared offline repository. The separately generated **formal source-release ZIP** produced by the source packager remains Maven-payload-free by policy: `mvnw`, `mvnw.cmd` and the complete `.mvn/` directory are excluded and Maven 3.9.6+ must be supplied externally. `pom.xml` is authoritative in both artifact types.
+Для Windows bootstrap-portable див. [docs/current/WINDOWS-PORTABLE-NEXT-UA.md](docs/current/WINDOWS-PORTABLE-NEXT-UA.md).

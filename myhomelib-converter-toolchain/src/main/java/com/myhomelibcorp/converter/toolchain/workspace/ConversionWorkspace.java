@@ -6,6 +6,7 @@ import com.myhomelibcorp.shared.util.AppPaths;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.UUID;
 
 public final class ConversionWorkspace implements AutoCloseable {
@@ -45,7 +46,7 @@ public final class ConversionWorkspace implements AutoCloseable {
     }
 
     private static String safeExtension(String extension) {
-        String ext = extension == null ? ".book" : extension.trim().toLowerCase();
+        String ext = extension == null ? ".book" : extension.trim().toLowerCase(Locale.ROOT);
         if (!ext.startsWith(".")) ext = "." + ext;
         if (!ext.matches("\\.[a-z0-9][a-z0-9._-]{0,20}")) return ".book";
         return ext;

@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -41,6 +42,8 @@ REQUIRED_FILES = (
     "tools/windows-bound-packaging-acceptance.ps1",
     "tools/windows-installer-acceptance.ps1",
     "tools/windows-release-desktop-acceptance.ps1",
+    "tools/windows-post-r5-functional-acceptance.ps1",
+    "tools/windows-target-memory-soak.ps1",
     "tools/windows-ui-acceptance.ps1",
     "tools/windows-acceptance-evidence-check.py",
     "tools/windows-final-evidence-pack.ps1",
@@ -58,6 +61,7 @@ REGRESSION_SCRIPTS = (
     "tools/github-acceptance-artifact-ingest-test.py",
     "tools/windows-acceptance-evidence-check-test.py",
     "tools/windows-acceptance-harness-binding-test.py",
+    "tools/post-r5-live-acceptance-check-test.py",
     "tools/zip-evidence-safety-test.py",
     "tools/v71-final-external-acceptance-check-test.py",
     "tools/v71-final-evidence-bundle-check-test.py",
@@ -96,6 +100,82 @@ def require_tokens(root: Path, rel: str, tokens: Iterable[str]) -> Check:
     missing = [token for token in tokens if token not in text]
     need(not missing, f"{rel}: missing required token(s): {', '.join(missing)}")
     return Check(rel, "PASS", "required acceptance structure present", {"requiredTokens": list(tokens)})
+
+
+def _metric_from_validation(text: str, label: str) -> int:
+    match = re.search(rf"\*\*(\d+)\s+{re.escape(label)}\*\*", text, re.IGNORECASE)
+    need(match is not None, f"current evidence document: cannot find bold {label} metric")
+    return int(match.group(1))
+
+
+def validate_current_validation(root: Path) -> Check:
+    """Validate the *current* release summary, not incidental historical tokens.
+
+    CURRENT-VALIDATION intentionally contains historical checkpoints.  A token-only
+    search over the whole document can therefore pass even when the current header
+    or exact-current metrics are stale.  Bind the top-level candidate revision to
+    its detailed evidence document and compare the current Maven aggregate.
+    """
+    rel = "docs/release/CURRENT-VALIDATION.md"
+    text = read(root, rel)
+    header = text.split("## Implemented scope", 1)[0]
+
+    candidate = re.search(r"\*\*Current source candidate:\*\*.*?V34 External Test R(\d+)\b", header)
+    need(candidate is not None, f"{rel}: current V34 External Test R<revision> candidate missing from header")
+    revision = int(candidate.group(1))
+
+    date = re.search(r"\*\*Date:\*\*\s*(\d{4}-\d{2}-\d{2})", header)
+    need(date is not None, f"{rel}: current validation date missing from header")
+
+    status = re.search(r"\*\*Status:\*\*\s*\*\*(.+?)\*\*", header, re.IGNORECASE)
+    need(status is not None, f"{rel}: current status line missing from header")
+    status_text = status.group(1)
+    need("BUILD SUCCESS" in status_text, f"{rel}: current status must record BUILD SUCCESS")
+    status_upper = status_text.upper()
+    explicit_external_status = (
+        "REMAIN EXTERNAL" in status_upper
+        or "REMAINS EXTERNAL" in status_upper
+        or "LIVE ACCEPTANCE REMAINS REQUIRED" in status_upper
+        or "LIVE ACCEPTANCE REMAIN REQUIRED" in status_upper
+    )
+    need(explicit_external_status, f"{rel}: current status must explicitly keep live/platform acceptance external or required")
+
+    current_aggregate = re.search(
+        r"(?:current Maven baseline aggregate(?:[^:]*):|exact-current R\d+ root Maven `?clean verify`?:)"
+        r"\s*\*\*(\d+) tests / (\d+) failures / (\d+) errors / (\d+) skipped\*\*",
+        text, re.IGNORECASE,
+    )
+    need(current_aggregate is not None, f"{rel}: current Maven baseline aggregate missing")
+    current_counts = tuple(int(current_aggregate.group(i)) for i in range(1, 5))
+
+    detailed = re.search(r"Detailed exact-current evidence:\s*`([^`]+)`", text)
+    need(detailed is not None, f"{rel}: detailed exact-current evidence path missing")
+    detailed_rel = detailed.group(1)
+    expected_fragment = f"POST-R{revision - 1}-R{revision}-VALIDATION-"
+    need(expected_fragment in Path(detailed_rel).name,
+         f"{rel}: detailed evidence {detailed_rel!r} does not match current candidate R{revision}")
+    detailed_text = read(root, detailed_rel)
+    detailed_counts = (
+        _metric_from_validation(detailed_text, "tests"),
+        _metric_from_validation(detailed_text, "failures"),
+        _metric_from_validation(detailed_text, "errors"),
+        _metric_from_validation(detailed_text, "skipped"),
+    )
+    need(current_counts == detailed_counts,
+         f"{rel}: current Maven aggregate {current_counts} does not match {detailed_rel} {detailed_counts}")
+
+    return Check(
+        rel, "PASS", "current validation header and exact-current evidence are synchronized",
+        {
+            "candidateRevision": revision,
+            "date": date.group(1),
+            "currentEvidence": detailed_rel,
+            "mavenAggregate": {
+                "tests": current_counts[0], "failures": current_counts[1],
+                "errors": current_counts[2], "skipped": current_counts[3],
+            },
+        },
+    )
 
 
 def project_version(root: Path) -> str:
@@ -171,6 +251,23 @@ def structural_checks(root: Path) -> list[Check]:
             "render_final_markdown", "Final external acceptance Markdown",
             "human-readable Markdown does not exactly match machine-readable JSON evidence",
         )),
+        require_tokens(root, "tools/windows-release-desktop-acceptance.ps1", (
+            "launcherSha256", "Installed launcher SHA-256",
+            "Desktop acceptance cannot PASS without a SHA-256-bound installed launcher",
+        )),
+        require_tokens(root, "tools/windows-post-r5-functional-acceptance.ps1", (
+            "DesktopAcceptancePath", "launcherSha256", "desktopAcceptanceEvidence",
+            "desktopAcceptanceSha256", "Installed launcher SHA-256 does not match",
+        )),
+        require_tokens(root, "tools/windows-target-memory-soak.ps1", (
+            "FunctionalAcceptancePath", "processPath", "processSha256",
+            "functionalAcceptanceSha256", "Process executable SHA-256 does not match",
+        )),
+        require_tokens(root, "tools/post-r5-live-acceptance-check.py", (
+            "evidenceSha256", "validate_mem10_raw_evidence", "actual wall-clock soak",
+            "raw sample count", "workingSetDeltaBytes", "desktopAcceptanceSha256",
+            "processSha256", "functionalAcceptanceSha256",
+        )),
         require_tokens(root, ".github/workflows/codeql.yml", (
             "github/codeql-action/init@", "github/codeql-action/analyze@", "pull_request:", "schedule:",
         )),
@@ -178,9 +275,7 @@ def structural_checks(root: Path) -> list[Check]:
             "workflow_dispatch:", "--expected-sha", "github-connected-acceptance.py",
             "MHL-010 / 017 / 018 / 019 connected acceptance",
         )),
-        require_tokens(root, "docs/release/CURRENT-VALIDATION.md", (
-            "2026-09-18", "17/17", "1189", "3352", "MHL-010", "MHL-019", "OPEN_EXTERNAL",
-        )),
+        validate_current_validation(root),
         require_tokens(root, "docs/release/EXTERNAL-ACCEPTANCE-RUNBOOK.md", (
             "MHL-010", "MHL-011", "MHL-012", "MHL-017", "MHL-018", "MHL-019",
             "GitHub connected acceptance", "v71-windows-acceptance-start.ps1",

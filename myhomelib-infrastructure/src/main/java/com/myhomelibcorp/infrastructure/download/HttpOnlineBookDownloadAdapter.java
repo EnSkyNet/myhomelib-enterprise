@@ -33,6 +33,7 @@ import java.nio.file.Path;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -60,26 +61,34 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
 
     /** Backward-compatible constructor used by existing unit tests. */
     public HttpOnlineBookDownloadAdapter(ApplicationSettingsPort settings, ArchiveReader archiveReader) {
-        this(settings, archiveReader, new DownloadPayloadValidator(archiveReader), new OnlineRequestLimiter(settings));
+        this(settings, archiveReader, new DownloadPayloadValidator(archiveReader),
+                new OnlineRequestLimiter(settings), new OnlineHttpClientProvider(settings));
     }
 
-    /** Compatibility constructor for focused tests. Spring uses the shared-limiter constructor below. */
+    /** Compatibility constructor for focused tests. Spring uses the shared-client constructor below. */
     public HttpOnlineBookDownloadAdapter(ApplicationSettingsPort settings, ArchiveReader archiveReader,
                                          DownloadPayloadValidator payloadValidator) {
-        this(settings, archiveReader, payloadValidator, new OnlineRequestLimiter(settings));
+        this(settings, archiveReader, payloadValidator,
+                new OnlineRequestLimiter(settings), new OnlineHttpClientProvider(settings));
+    }
+
+    public HttpOnlineBookDownloadAdapter(ApplicationSettingsPort settings, ArchiveReader archiveReader,
+                                         DownloadPayloadValidator payloadValidator, OnlineRequestLimiter requestLimiter) {
+        this(settings, archiveReader, payloadValidator, requestLimiter, new OnlineHttpClientProvider(settings));
     }
 
     @Autowired
     public HttpOnlineBookDownloadAdapter(ApplicationSettingsPort settings, ArchiveReader archiveReader,
-                                         DownloadPayloadValidator payloadValidator, OnlineRequestLimiter requestLimiter) {
-        this.settings = settings;
-        this.archiveReader = archiveReader;
-        this.payloadValidator = payloadValidator;
-        this.requestLimiter = requestLimiter;
+                                         DownloadPayloadValidator payloadValidator, OnlineRequestLimiter requestLimiter,
+                                         OnlineHttpClientProvider httpClients) {
+        this.settings = Objects.requireNonNull(settings, "settings");
+        this.archiveReader = Objects.requireNonNull(archiveReader, "archiveReader");
+        this.payloadValidator = Objects.requireNonNull(payloadValidator, "payloadValidator");
+        this.requestLimiter = Objects.requireNonNull(requestLimiter, "requestLimiter");
         this.httpPolicy = new OnlineHttpPolicy(settings);
         this.sourceResolver = new DownloadSourceResolver();
-        // Reuse a client so HTTP/2 connections, TCP/TLS sessions and proxy pools survive between books.
-        this.client = httpPolicy.create(null);
+        // Stateless online calls share one JVM HttpClient/selector/connection pool.
+        this.client = Objects.requireNonNull(httpClients, "httpClients").shared();
     }
 
     public DownloadedBook download(BookDto book, Collection collection, AtomicBoolean cancelFlag, DoubleConsumer progress) throws Exception {
@@ -215,7 +224,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
             resume = null;
         }
 
-        int retries = clamp(settings.getInt("online.retryCount", 3), 0, 6);
+        int retries = OnlineRetryPolicy.retryCount(settings);
         int attempts = retries + 1;
         Exception last = null;
 
@@ -223,6 +232,13 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
             checkCancelled(cancel);
             try (OnlineRequestLimiter.Permit ignored = requestLimiter.acquire(uri, cancel)) {
                 long existing = partSnapshot.size();
+                if (existing > 0 && (resume == null || resume.validator().isBlank())) {
+                    removeOwnedPartial(part, partSnapshot, "Unvalidated retry partial cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "Unvalidated retry metadata cleanup");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                    resume = null;
+                    existing = 0L;
+                }
                 HttpResponse<InputStream> response = client.send(
                         buildRequest(uri, collection, existing, resume), HttpResponse.BodyHandlers.ofInputStream());
                 int status = response.statusCode();
@@ -235,7 +251,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                 if (status == 416 && existing > 0) {
                     try (InputStream responseBody = response.body()) { }
                     removeOwnedPartial(part, partSnapshot, "HTTP 416 partial cleanup");
-                    removeOwnedResumeMeta(partMeta, resume, "HTTP 416 resume-metadata cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "HTTP 416 resume-metadata cleanup");
                     partSnapshot = OwnedDownloadFile.Snapshot.absent();
                     resume = null;
                     if (attempt < attempts) continue;
@@ -256,48 +272,57 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
 
                 if (status == 206 && existing <= 0) {
                     try (InputStream responseBody = response.body()) { }
-                    removeOwnedResumeMeta(partMeta, resume, "Unexpected HTTP 206 metadata cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "Unexpected HTTP 206 metadata cleanup");
                     throw new NonRetryableHttpException("Сервер повернув часткову відповідь HTTP 206 без Range request: "
                             + SensitiveDataSanitizer.sanitizeUri(uri));
                 }
                 boolean resumed = status == 206 && existing > 0;
                 if (resumed) {
                     try {
-                        HttpResumeSupport.validateContentRange(response, existing, uri);
+                        HttpResumeSupport.validateResumeResponse(response, existing, resume.validator(), uri);
                     } catch (IOException invalidRange) {
                         try (InputStream responseBody = response.body()) { }
                         removeOwnedPartial(part, partSnapshot, "Invalid Content-Range partial cleanup");
-                        removeOwnedResumeMeta(partMeta, resume, "Invalid Content-Range metadata cleanup");
+                        ResumeMetadataFiles.removeOwned(partMeta, resume, "Invalid Content-Range metadata cleanup");
                         partSnapshot = OwnedDownloadFile.Snapshot.absent();
                         resume = null;
                         throw invalidRange;
                     }
                 } else if (existing > 0) {
                     removeOwnedPartial(part, partSnapshot, "Restarted download partial cleanup");
-                    removeOwnedResumeMeta(partMeta, resume, "Restarted download metadata cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "Restarted download metadata cleanup");
                     partSnapshot = OwnedDownloadFile.Snapshot.absent();
                     resume = null;
                     existing = 0L;
                 }
 
                 long responseLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+                long expectedPartialBodyLength = resumed ? HttpResumeSupport.expectedPartialBodyLength(response) : -1L;
                 long maxDownloadBytes = maxDownloadBytes();
                 long minFreeSpaceBytes = minFreeSpaceBytes();
                 if (existing > maxDownloadBytes
                         || (responseLength >= 0 && responseLength > maxDownloadBytes - existing)) {
                     try (InputStream responseBody = response.body()) { }
                     removeOwnedPartial(part, partSnapshot, "Oversized partial cleanup");
-                    removeOwnedResumeMeta(partMeta, resume, "Oversized metadata cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "Oversized metadata cleanup");
                     partSnapshot = OwnedDownloadFile.Snapshot.absent();
                     resume = null;
                     throw new NonRetryableHttpException(downloadLimitMessage(maxDownloadBytes));
                 }
 
-                ensureDownloadSpace(target.getParent(), minFreeSpaceBytes,
-                        responseLength > 0 ? responseLength : 0L);
+                try {
+                    DownloadSpaceSupport.requireAvailable(target.getParent(), minFreeSpaceBytes,
+                            responseLength > 0 ? responseLength : 0L,
+                            (usable, required) -> new NonRetryableHttpException(
+                                    "Недостатньо вільного місця для завантаження: доступно "
+                                            + usable + " байт, потрібно щонайменше " + required + " байт"));
+                } catch (NonRetryableHttpException noSpace) {
+                    try (InputStream responseBody = response.body()) { }
+                    throw noSpace;
+                }
                 resume = HttpResumeSupport.write(partMeta, uri, response,
                         resume == null ? null : resume.ownershipHash());
-                long total = responseLength > 0 ? existing + responseLength : -1L;
+                long total = HttpResumeSupport.expectedTotal(response, existing);
                 long done = existing;
 
                 OwnedDownloadFile.Session session = OwnedDownloadFile.open(
@@ -318,7 +343,10 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                         out.write(buffer, 0, n);
                         done += n;
                         if (done >= nextSpaceCheck) {
-                            ensureDownloadSpace(target.getParent(), minFreeSpaceBytes, 0L);
+                            DownloadSpaceSupport.requireAvailable(target.getParent(), minFreeSpaceBytes, 0L,
+                                    (usable, required) -> new NonRetryableHttpException(
+                                            "Недостатньо вільного місця для завантаження: доступно "
+                                                    + usable + " байт, потрібно щонайменше " + required + " байт"));
                             nextSpaceCheck = done + SPACE_RECHECK_BYTES;
                         }
                         if (total > 0 && progressThrottle.shouldEmit(done, total)) {
@@ -341,6 +369,23 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                 }
                 if (bodyFailure != null) throw bodyFailure;
 
+                long actual = partSnapshot.size();
+                if (expectedPartialBodyLength >= 0 && actual - existing != expectedPartialBodyLength) {
+                    throw new IOException("Неповне завантаження: отримано " + (actual - existing)
+                            + " з " + expectedPartialBodyLength + " байт поточної HTTP-відповіді для "
+                            + SensitiveDataSanitizer.sanitizeUri(uri));
+                }
+                if (total > 0 && actual != total) {
+                    if (actual > total) {
+                        removeOwnedPartial(part, partSnapshot, "Oversized resumed payload cleanup");
+                        ResumeMetadataFiles.removeOwned(partMeta, resume, "Oversized resumed payload metadata cleanup");
+                        partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                        resume = null;
+                    }
+                    throw new IOException("Неповне завантаження: " + actual + " з " + total
+                            + " байт для " + SensitiveDataSanitizer.sanitizeUri(uri));
+                }
+
                 checkCancelled(cancel);
                 String resolvedArchiveEntry;
                 try {
@@ -351,7 +396,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                             book.getId(), partSnapshot.size(), archived, resolvedArchiveEntry);
                 } catch (IOException semanticFailure) {
                     removeOwnedPartial(part, partSnapshot, "Invalid payload partial cleanup");
-                    removeOwnedResumeMeta(partMeta, resume, "Invalid payload metadata cleanup");
+                    ResumeMetadataFiles.removeOwned(partMeta, resume, "Invalid payload metadata cleanup");
                     partSnapshot = OwnedDownloadFile.Snapshot.absent();
                     resume = null;
                     throw new NonRetryableHttpException(semanticFailure.getMessage());
@@ -365,7 +410,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                     throw new NonRetryableHttpException("Файл призначення змінився під час завантаження: "
                             + target.getFileName(), publicationFailure);
                 }
-                removeOwnedResumeMeta(partMeta, resume, "Online-book resume metadata cleanup");
+                ResumeMetadataFiles.removeOwned(partMeta, resume, "Online-book resume metadata cleanup");
                 resume = null;
                 progress.accept(1.0);
 
@@ -377,7 +422,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
             } catch (NonRetryableHttpException e) {
                 try { removeOwnedPartial(part, partSnapshot, "Non-retryable partial cleanup"); }
                 catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
-                try { removeOwnedResumeMeta(partMeta, resume, "Non-retryable metadata cleanup"); }
+                try { ResumeMetadataFiles.removeOwned(partMeta, resume, "Non-retryable metadata cleanup"); }
                 catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
                 throw e;
             } catch (InterruptedException e) {
@@ -385,7 +430,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                 throw new DownloadCancelledException();
             } catch (IOException e) {
                 last = e;
-                if (attempt >= attempts) {
+                if (!OnlineRetryPolicy.isRetryableIOException(e) || attempt >= attempts) {
                     throw OnlineRetryPolicy.safeNetworkFailure("Не вдалося завантажити книгу", uri, e);
                 }
                 log.warn("Тимчасова помилка завантаження (спроба {}/{}): {}", attempt, attempts,
@@ -404,13 +449,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         }
     }
 
-    private static void removeOwnedResumeMeta(
-            Path partMeta, HttpResumeSupport.ResumeMetadata resume, String role) throws IOException {
-        if (resume != null && resume.ownershipHash() != null && !resume.ownershipHash().isBlank()
-                && Files.exists(partMeta, LinkOption.NOFOLLOW_LINKS)) {
-            SafeFilePublication.removeIfOwned(partMeta, resume.ownershipHash(), role);
-        }
-    }
+
 
     /**
      * Завантаження через ConnectionScript.
@@ -767,21 +806,6 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
             return Math.max(min, Math.min(max, value));
         } catch (Exception ignored) {
             return fallback;
-        }
-    }
-
-    private static void ensureDownloadSpace(Path directory, long minimumFreeBytes, long expectedAdditionalBytes) throws IOException {
-        if (directory == null || minimumFreeBytes <= 0 && expectedAdditionalBytes <= 0) return;
-        long usable = Files.getFileStore(directory).getUsableSpace();
-        long required;
-        try {
-            required = Math.addExact(minimumFreeBytes, Math.max(0L, expectedAdditionalBytes));
-        } catch (ArithmeticException overflow) {
-            required = Long.MAX_VALUE;
-        }
-        if (usable < required) {
-            throw new NonRetryableHttpException("Недостатньо вільного місця для завантаження: доступно "
-                    + usable + " байт, потрібно щонайменше " + required + " байт");
         }
     }
 

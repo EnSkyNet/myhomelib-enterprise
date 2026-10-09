@@ -1,6 +1,12 @@
 package com.myhomelibcorp.infrastructure.metadata;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.myhomelibcorp.application.metadata.MetadataCandidate;
+import com.myhomelibcorp.application.metadata.MetadataQuery;
 import com.myhomelibcorp.application.metadata.MetadataProviderException;
 import com.myhomelibcorp.application.metadata.MetadataProviderErrorKind;
 import com.myhomelibcorp.application.metadata.MetadataRequestContext;
@@ -32,11 +38,63 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.IntPredicate;
 
 /** Shared stateless mechanics for remote metadata adapters; no vendor-specific policy belongs here. */
 final class MetadataProviderSupport {
     private static final int MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
     private MetadataProviderSupport() {}
+
+    static Cache<MetadataQuery, List<MetadataCandidate>> candidateCache(int cacheMinutes) {
+        return Caffeine.newBuilder()
+                .maximumSize(500)
+                .expireAfterWrite(clamp(cacheMinutes, 1, 24 * 60), TimeUnit.MINUTES)
+                .build();
+    }
+
+    static void requireSuccessfulResponse(
+            HttpResponse<?> response,
+            String providerName,
+            IntPredicate authenticationStatus) throws MetadataProviderException {
+        Objects.requireNonNull(response, "response");
+        Objects.requireNonNull(providerName, "providerName");
+        Objects.requireNonNull(authenticationStatus, "authenticationStatus");
+
+        int status = response.statusCode();
+        if (status == 429) throw MetadataProviderException.rateLimited(parseRetryAfter(response));
+        if (status == 408 || status == 504) throw MetadataProviderException.timeout();
+        if (authenticationStatus.test(status)) {
+            throw new MetadataProviderException(
+                    MetadataProviderErrorKind.AUTHENTICATION,
+                    providerName + " request was rejected");
+        }
+        if (status >= 500) {
+            throw new MetadataProviderException(
+                    MetadataProviderErrorKind.UNAVAILABLE,
+                    providerName + " is unavailable");
+        }
+        if (status < 200 || status >= 300) {
+            throw new MetadataProviderException(
+                    MetadataProviderErrorKind.FAILED,
+                    providerName + " request failed with HTTP " + status);
+        }
+    }
+
+    static JsonNode parseJson(
+            ObjectMapper objectMapper, HttpResponse<String> response, String providerName)
+            throws MetadataProviderException {
+        Objects.requireNonNull(objectMapper, "objectMapper");
+        Objects.requireNonNull(response, "response");
+        Objects.requireNonNull(providerName, "providerName");
+        try {
+            return objectMapper.readTree(response.body() == null ? "" : response.body());
+        } catch (JacksonException invalidJson) {
+            throw new MetadataProviderException(
+                    MetadataProviderErrorKind.INVALID_RESPONSE,
+                    providerName + " returned invalid JSON",
+                    invalidJson);
+        }
+    }
 
     /** nanoTime has an arbitrary signed origin; only differences represent durations. */
     static long reserveRequestSlot(AtomicLong nextRequestNanos, long intervalNanos, long now) {
@@ -136,11 +194,11 @@ final class MetadataProviderSupport {
         Set<String> values = new LinkedHashSet<>();
         if (node.isArray()) {
             for (JsonNode value : node) {
-                String text = clean(value.asText(""));
+                String text = clean(value.asString(""));
                 if (!text.isBlank()) values.add(text);
             }
         } else {
-            String text = clean(node.asText(""));
+            String text = clean(node.asString(""));
             if (!text.isBlank()) values.add(text);
         }
         return List.copyOf(values);
@@ -176,6 +234,25 @@ final class MetadataProviderSupport {
                 .replaceAll("[^\\p{L}\\p{N}]+", " ")
                 .trim();
         return normalized.replaceAll("\\s+", " ");
+    }
+
+    static double rankedMatchConfidence(
+            com.myhomelibcorp.application.metadata.MetadataQuery query,
+            String title,
+            List<String> authors,
+            boolean exactIsbn,
+            int rank,
+            double baseScore) {
+        if (exactIsbn) return 0.99;
+        double score = baseScore + Math.max(0.0, 0.20 - (Math.min(rank, 20) * 0.01));
+        if (query.hasTitle() && normalizeForMatch(title).equals(normalizeForMatch(query.title()))) score += 0.12;
+        if (query.hasAuthor()) {
+            String expected = normalizeForMatch(query.author());
+            if (authors.stream().map(MetadataProviderSupport::normalizeForMatch).anyMatch(expected::equals)) {
+                score += 0.10;
+            }
+        }
+        return Math.min(0.98, roundConfidence(score));
     }
 
     static double roundConfidence(double value) {

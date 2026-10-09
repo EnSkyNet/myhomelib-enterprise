@@ -12,7 +12,7 @@ import java.nio.file.Path;
  */
 public interface UserDataTransferPort {
     String FILE_NAME = "user-data.json";
-    int CURRENT_SCHEMA_VERSION = 4;
+    int CURRENT_SCHEMA_VERSION = 6;
 
     ExportResult exportTo(Path targetFile) throws IOException;
 

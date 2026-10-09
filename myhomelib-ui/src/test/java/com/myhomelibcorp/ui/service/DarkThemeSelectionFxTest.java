@@ -74,6 +74,11 @@ class DarkThemeSelectionFxTest {
                         -mhl-border: #4a4d52;
                         -mhl-book-row: #25272b;
                         -mhl-on-accent: #111111;
+                        -fx-accent: #8ab4f8;
+                        -fx-focus-color: #8ab4f8;
+                        -fx-selection-bar: #8ab4f8;
+                        -fx-selection-bar-non-focused: #8ab4f8;
+                        -fx-selection-bar-text: #111111;
                         """);
                 stage = new Stage();
                 Scene scene = new Scene(root, 560, 420);

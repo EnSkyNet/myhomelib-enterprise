@@ -77,7 +77,7 @@ public final class EpubParser implements BookParser {
                 }
                 long end = text.length();
                 if (end <= start) continue;
-                String title = firstNonBlank(detectedTitle, fileTitle(path), "#" + (++chapterNumber));
+                String title = firstNonBlank(detectedTitle, fileTitle(stripFragment(path)), "#" + (++chapterNumber));
                 chapters.add(new ChapterIndex("epub-" + chapters.size(), title, start, end,
                         text.getParagraphCount() - paragraphsBefore));
             }
@@ -111,7 +111,7 @@ public final class EpubParser implements BookParser {
         List<String> spineIds = new ArrayList<>();
         List<String> authors = new ArrayList<>();
         List<String> genres = new ArrayList<>();
-        String title = null, language = "und", publisher = "", year = "", isbn = null;
+        String title = null, language = "und", publisher = "", year = "", isbn = null, annotation = "";
         String series = null;
         Integer sequence = null;
         String tocId = null;
@@ -158,6 +158,7 @@ public final class EpubParser implements BookParser {
                         case "creator" -> { String v = readMetadataText(r); if (!v.isBlank()) authors.add(v); }
                         case "language" -> language = firstNonBlank(readMetadataText(r), language);
                         case "publisher" -> publisher = firstNonBlank(readMetadataText(r), publisher);
+                        case "description" -> { String v = readMetadataText(r); if (!v.isBlank()) annotation = v; }
                         case "subject" -> { String v = readMetadataText(r); if (!v.isBlank()) genres.add(v); }
                         case "date" -> {
                             String v = readMetadataText(r);
@@ -207,7 +208,7 @@ public final class EpubParser implements BookParser {
 
         String effectiveTitle = firstNonBlank(title, fileTitle(source.name()), source.id(), "");
         BookMetadata metadata = new BookMetadata(source.id(), effectiveTitle, List.copyOf(authors), language,
-                series, sequence, List.copyOf(genres), "", publisher, year, isbn, source.size().orElse(0));
+                series, sequence, List.copyOf(genres), annotation, publisher, year, isbn, source.size().orElse(0));
         return new PackageData(metadata, Map.copyOf(manifest), List.copyOf(spine), navPath, ncxPath, base);
     }
 
@@ -437,11 +438,18 @@ public final class EpubParser implements BookParser {
 
     private void validateArchive(ZipFile zip) throws IOException {
         int count = 0;
+        long totalDeclared = 0L;
         Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         while (entries.hasMoreElements()) {
             ZipArchiveEntry e = entries.nextElement();
             if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("EPUB contains too many ZIP entries");
             checkEntry(e, "EPUB entry");
+            long size = e.getSize();
+            if (!e.isDirectory() && size > 0L) {
+                if (size > ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES - totalDeclared)
+                    throw new IOException("EPUB cumulative declared size exceeds Reader safety limit");
+                totalDeclared += size;
+            }
         }
     }
 
@@ -553,8 +561,29 @@ public final class EpubParser implements BookParser {
     private static String lower(String v) { return v == null ? "" : v.toLowerCase(Locale.ROOT); }
     private static String normalize(String v) { return v == null ? "" : v.replace('\r', ' ').replaceAll("\\s+", " ").trim(); }
     private static String firstNonBlank(String... values) { for (String v : values) if (v != null && !v.isBlank()) return v.trim(); return null; }
-    private static Integer parseSequence(String value, Integer fallback) { try { return value == null || value.isBlank() ? fallback : (int) Math.round(Double.parseDouble(value)); } catch (NumberFormatException e) { return fallback; } }
-    private static String fileTitle(String path) { if (path == null || path.isBlank()) return null; String n = Path.of(norm(stripFragment(path))).getFileName().toString(); int dot = n.lastIndexOf('.'); return dot > 0 ? n.substring(0, dot) : n; }
+    private static Integer parseSequence(String value, Integer fallback) {
+        try {
+            if (value == null || value.isBlank()) return fallback;
+            double parsed = Double.parseDouble(value);
+            if (!Double.isFinite(parsed) || parsed < Integer.MIN_VALUE || parsed > Integer.MAX_VALUE) return fallback;
+            return (int) Math.round(parsed);
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+    private static String fileTitle(String path) {
+        if (path == null || path.isBlank()) return null;
+        // Do not pass a display/source name through Path.of(). On Windows a legal EPUB
+        // filename may contain '#', and stripping it as if it were an URI fragment can
+        // leave a trailing space (for example "Title #01-18.epub" -> "Title "), which
+        // WindowsPathParser rejects. Callers that handle EPUB hrefs strip fragments before
+        // invoking this helper; physical source names are treated literally.
+        String n = norm(path);
+        int slash = n.lastIndexOf('/');
+        if (slash >= 0) n = n.substring(slash + 1);
+        int dot = n.lastIndexOf('.');
+        return dot > 0 ? n.substring(0, dot) : n;
+    }
     private static String parentZipPath(String path) { String n = norm(path); int slash = n.lastIndexOf('/'); return slash < 0 ? "" : n.substring(0, slash); }
     private static String resolveNavigationTarget(String base, String href) {
         String raw = href == null ? "" : href;
@@ -566,7 +595,7 @@ public final class EpubParser implements BookParser {
 
     private static String decodeFragment(String value) {
         if (value == null || value.isBlank()) return "";
-        try { return URLDecoder.decode(value, StandardCharsets.UTF_8); }
+        try { return URLDecoder.decode(value.replace("+", "%2B"), StandardCharsets.UTF_8); }
         catch (Exception ignored) { return value; }
     }
 
@@ -574,7 +603,7 @@ public final class EpubParser implements BookParser {
     private static String norm(String path) { return path == null ? "" : path.replace('\\', '/').replaceAll("^/+", ""); }
     private static String resolveZipPath(String base, String href) {
         String raw = stripFragment(href == null ? "" : href); int query = raw.indexOf('?'); if (query >= 0) raw = raw.substring(0, query);
-        try { raw = URLDecoder.decode(raw, StandardCharsets.UTF_8); } catch (IllegalArgumentException ignored) { }
+        try { raw = URLDecoder.decode(raw.replace("+", "%2B"), StandardCharsets.UTF_8); } catch (IllegalArgumentException ignored) { }
         String combined = base == null || base.isBlank() ? raw : base + "/" + raw;
         Deque<String> parts = new ArrayDeque<>();
         for (String part : combined.replace('\\', '/').split("/")) {

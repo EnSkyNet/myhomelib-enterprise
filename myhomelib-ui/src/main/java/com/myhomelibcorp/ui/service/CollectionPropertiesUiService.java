@@ -10,7 +10,6 @@ import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
-import javafx.stage.DirectoryChooser;
 import javafx.stage.Window;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -24,6 +23,7 @@ public class CollectionPropertiesUiService {
     private final UpdateCollectionPropertiesUseCase updateUseCase;
     private final ApplicationSettingsPort settings;
     private final CollectionUiCommitGuard collectionUiCommitGuard;
+    private final FileChooserService fileChooserService;
 
     public Collection show(Window owner) {
         Collection c = state.getCurrentLibraryCollection();
@@ -56,25 +56,15 @@ public class CollectionPropertiesUiService {
         });
         type.setValue(CollectionType.fromCode(c.getType()));
         Button browse=new Button(UiText.text("ui.export.destination.choose")); browse.setOnAction(e->{
-            DirectoryChooser dc=new DirectoryChooser();
-            dc.setTitle(UiText.text("ui.java.collection_properties_ui_service.00ad58e3df"));
+            java.io.File initial = null;
             try {
                 if (root.getText()!=null && !root.getText().isBlank()) {
-                    Path initial=Path.of(root.getText()).toAbsolutePath().normalize();
-                    if (java.nio.file.Files.isDirectory(initial) && java.nio.file.Files.isReadable(initial)) {
-                        dc.setInitialDirectory(initial.toFile());
-                    }
+                    Path path=Path.of(root.getText()).toAbsolutePath().normalize();
+                    if (java.nio.file.Files.isDirectory(path) && java.nio.file.Files.isReadable(path)) initial=path.toFile();
                 }
             } catch (Exception ignored) { }
-            java.io.File f;
-            try {
-                f=dc.showDialog(owner);
-            } catch (IllegalArgumentException invalidInitialDirectory) {
-                // Native JavaFX chooser can reject a path that disappears or becomes unavailable.
-                DirectoryChooser fallback=new DirectoryChooser();
-                fallback.setTitle(UiText.text("ui.java.collection_properties_ui_service.00ad58e3df"));
-                f=fallback.showDialog(owner);
-            }
+            java.io.File f=fileChooserService.chooseDirectory(owner,
+                    UiText.text("ui.java.collection_properties_ui_service.00ad58e3df"), initial);
             if(f!=null)root.setText(f.toPath().toString());
         });
         GridPane g=new GridPane();g.setHgap(8);g.setVgap(8);g.setPadding(new Insets(12));int r=0;

@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-10-03T17:56:52.941248188Z",
+  "java": "21.0.11+10-1-deb13u2-Debian",
+  "catalogues": [
+    {
+      "books": 100000,
+      "migrationMs": 658.180481,
+      "authorsInitialMs": 8.152817,
+      "firstPageMs": 20.257118,
+      "libIdMs": 0.009474,
+      "importProbeBooksPerSec": 59531.85252513505
+    }
+  ],
+  "reader": {
+    "fixtureMb": 8,
+    "fb2FixtureBytes": 8388787,
+    "epubFixtureBytes": 8389511,
+    "fb2ParseMs": 174.679302,
+    "fb2Chars": 5197269,
+    "fb2PeakHeapDeltaBytes": 37052008,
+    "epubParseMs": 267.829579,
+    "epubChars": 7816578,
+    "epubPeakHeapDeltaBytes": 30939064,
+    "peakHeapDeltaBytes": 37052008,
+    "openClose20RetainedBytes": 144,
+    "gcCollectionsDelta": 58
+  },
+  "lucene": [
+    {
+      "documents": 100000,
+      "fullIndexMs": 858.192439,
+      "fullDocsPerSec": 116523.98163344806,
+      "selectiveDocuments": 1000,
+      "selectiveIndexMs": 61.378748,
+      "selectiveDocsPerSec": 16292.28409807251,
+      "queryMs": 11.720933,
+      "peakHeapDeltaBytes": 26312424,
+      "gcCollectionsDelta": 11,
+      "indexSizeBytes": 1885977,
+      "segmentCount": 1
+    }
+  ],
+  "gc": {
+    "G1 Young Generation": {
+      "timeMs": 106,
+      "count": 52
+    },
+    "G1 Concurrent GC": {
+      "timeMs": 8,
+      "count": 4
+    },
+    "G1 Old Generation": {
+      "timeMs": 255,
+      "count": 18
+    }
+  }
+}

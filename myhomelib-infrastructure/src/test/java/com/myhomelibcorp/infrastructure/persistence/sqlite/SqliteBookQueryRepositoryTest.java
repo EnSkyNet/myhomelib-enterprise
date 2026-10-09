@@ -204,6 +204,69 @@ public class SqliteBookQueryRepositoryTest {
         assertThat(book.getPreferredArtifact().orElseThrow().getMetadata().get("quality")).isEqualTo("proofread");
     }
 
+    @Test
+    void similarityCandidatesAreBoundedAndPreferIndexedMetadataSignals() {
+        String sourceId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1";
+        String seriesId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2";
+        String authorId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3";
+        String genreId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa4";
+        String weakId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa5";
+        String deletedId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa6";
+        String sharedAuthor = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+        jdbc.update("INSERT INTO authors(id, first_name, middle_name, last_name, search_name) VALUES (?,?,?,?,?)",
+                sharedAuthor, "A", "", "Author", "author a");
+        jdbc.update("INSERT INTO genres(code, name) VALUES (?,?)", "sf", "Science Fiction");
+
+        insertRecommendationBook(sourceId, "Source", "Saga", "en", 5, 0);
+        insertRecommendationBook(seriesId, "Series", "Saga", "en", 0, 0);
+        insertRecommendationBook(authorId, "Author", "Other", "fr", 0, 0);
+        insertRecommendationBook(genreId, "Genre", "Other", "de", 0, 0);
+        insertRecommendationBook(weakId, "Language", "Other", "en", 4, 0);
+        insertRecommendationBook(deletedId, "Deleted", "Saga", "en", 5, 1);
+        jdbc.update("INSERT INTO book_authors(book_id, author_id) VALUES (?,?)", sourceId, sharedAuthor);
+        jdbc.update("INSERT INTO book_authors(book_id, author_id) VALUES (?,?)", authorId, sharedAuthor);
+        jdbc.update("INSERT INTO book_genres(book_id, genre_code) VALUES (?,?)", sourceId, "sf");
+        jdbc.update("INSERT INTO book_genres(book_id, genre_code) VALUES (?,?)", genreId, "sf");
+
+        var source = repository.findById(com.myhomelibcorp.domain.model.valueobject.BookId.fromString(sourceId)).orElseThrow();
+        var candidates = repository.streamSimilarityCandidates(source, 8).toList();
+
+        assertThat(candidates).extracting(book -> book.getId().asString())
+                .contains(seriesId, authorId, genreId, weakId)
+                .doesNotContain(sourceId, deletedId);
+        assertThat(candidates.size()).isLessThanOrEqualTo(1_000);
+    }
+
+    @Test
+    void similarityCandidatesIncludeKeywordOnlyMatchesAndNormalizeSeriesIdentity() {
+        String sourceId = "cccccccc-cccc-cccc-cccc-ccccccccccc1";
+        String keywordId = "cccccccc-cccc-cccc-cccc-ccccccccccc2";
+        String seriesId = "cccccccc-cccc-cccc-cccc-ccccccccccc3";
+
+        insertRecommendationBook(sourceId, "Source", "  Mixed Case Saga ", "und", 0, 0);
+        insertRecommendationBook(keywordId, "Keyword", "Other", "und", 0, 0);
+        insertRecommendationBook(seriesId, "Series", "mixed case saga", "und", 0, 0);
+        jdbc.update("UPDATE books SET keywords=? WHERE id=?", "Space Opera", sourceId);
+        jdbc.update("UPDATE books SET keywords=? WHERE id=?", "space opera", keywordId);
+        jdbc.update("INSERT INTO keywords(normalized_name, display_name) VALUES (?,?)", "space opera", "Space Opera");
+        jdbc.update("INSERT INTO keyword_books(normalized_name, book_id) VALUES (?,?)", "space opera", sourceId);
+        jdbc.update("INSERT INTO keyword_books(normalized_name, book_id) VALUES (?,?)", "space opera", keywordId);
+
+        var source = repository.findById(com.myhomelibcorp.domain.model.valueobject.BookId.fromString(sourceId)).orElseThrow();
+        var candidates = repository.streamSimilarityCandidates(source, 8).toList();
+
+        assertThat(candidates).extracting(book -> book.getId().asString())
+                .contains(keywordId, seriesId);
+    }
+
+    private void insertRecommendationBook(String id, String title, String series, String language, int rate, int deleted) {
+        jdbc.update("""
+                INSERT INTO books(id,title,series,file_name,language,rate,deleted,local)
+                VALUES (?,?,?,?,?,?,?,0)
+                """, id, title, series, id + ".fb2", language, rate, deleted);
+    }
+
     private void insertArtifact(String bookId, String artifactId, String fileName, String format,
                                 int local, int remote, String state) {
         jdbc.update("""

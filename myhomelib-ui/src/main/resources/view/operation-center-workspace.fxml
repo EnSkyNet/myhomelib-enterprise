@@ -14,6 +14,7 @@
                 <Label text="ui.fxml.operation_center_workspace.operations" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
                 <Region HBox.hgrow="ALWAYS"/>
                 <Button text="ui.fxml.operation_center_workspace.refresh" onAction="#onRefresh"/>
+                <Button fx:id="cancelButton" text="common.cancel" onAction="#onCancelSelected" disable="true"/>
                 <Button text="ui.fxml.operation_center_workspace.clear_completed" onAction="#onClearCompleted"/>
             </HBox>
             <Label fx:id="summaryLabel" text="ui.fxml.operation_center_workspace.no_active_operations"/>

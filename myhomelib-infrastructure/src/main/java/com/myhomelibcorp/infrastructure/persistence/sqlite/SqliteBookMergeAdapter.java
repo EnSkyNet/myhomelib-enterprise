@@ -1,7 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.duplicate.merge.BookMergeJournalEntry;
 import com.myhomelibcorp.application.duplicate.merge.BookMergeMutationResult;
 import com.myhomelibcorp.application.duplicate.merge.BookMergePlan;
@@ -9,6 +9,7 @@ import com.myhomelibcorp.application.port.out.duplicate.BookMergePort;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.cache.BookCache;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookDenormalizedValues;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -169,6 +170,7 @@ public class SqliteBookMergeAdapter implements BookMergePort {
             restoreSingleRow("reading_history", survivor, snapshot.survivorReadingHistory());
             restoreSingleRow("reading_stats", survivor, snapshot.survivorReadingStats());
             restoreSingleRow("reader_book_preferences", survivor, snapshot.survivorReaderPreferences());
+            syncScopedBookPreferenceFromLegacy(survivor);
 
             restoreBook(snapshot.survivorBook());
             restoreBook(snapshot.mergedBook());
@@ -377,11 +379,28 @@ public class SqliteBookMergeAdapter implements BookMergePort {
 
     private void copyReaderPreferencesIfMissing(String survivor, String merged) {
         Integer count = jdbc().queryForObject("SELECT COUNT(*) FROM reader_book_preferences WHERE book_id = ?", Integer.class, survivor);
-        if (count != null && count > 0) return;
+        if (count == null || count == 0) {
+            jdbc().update("""
+                    INSERT OR IGNORE INTO reader_book_preferences(book_id, preferences_json, updated_at)
+                    SELECT ?, preferences_json, updated_at FROM reader_book_preferences WHERE book_id = ?
+                    """, survivor, merged);
+        }
+        syncScopedBookPreferenceFromLegacy(survivor);
+    }
+
+    /**
+     * V28 keeps the released V42 BOOK-preference row as a backward-compatible
+     * projection. Merge/undo historically snapshots that row, so rebuilding the
+     * generic BOOK scope from it preserves old journal compatibility without
+     * changing the serialized merge snapshot format.
+     */
+    private void syncScopedBookPreferenceFromLegacy(String bookId) {
+        jdbc().update("DELETE FROM reader_preference_overrides WHERE scope_type='BOOK' AND scope_key=?", bookId);
         jdbc().update("""
-                INSERT OR IGNORE INTO reader_book_preferences(book_id, preferences_json, updated_at)
-                SELECT ?, preferences_json, updated_at FROM reader_book_preferences WHERE book_id = ?
-                """, survivor, merged);
+                INSERT INTO reader_preference_overrides(scope_type,scope_key,preferences_json,updated_at)
+                SELECT 'BOOK', book_id, preferences_json, updated_at
+                  FROM reader_book_preferences WHERE book_id=?
+                """, bookId);
     }
 
     private void ensureSurvivorArtifactPreference(String survivor,
@@ -429,15 +448,19 @@ public class SqliteBookMergeAdapter implements BookMergePort {
                        local = COALESCE((SELECT ba.local FROM book_artifact_preferences p JOIN book_artifacts ba
                                          ON ba.artifact_id = p.preferred_artifact_id AND ba.book_id = p.book_id
                                         WHERE p.book_id = books.id), local),
-                       format = COALESCE((SELECT upper(NULLIF(ba.file_format, '')) FROM book_artifact_preferences p JOIN book_artifacts ba
-                                          ON ba.artifact_id = p.preferred_artifact_id AND ba.book_id = p.book_id
-                                         WHERE p.book_id = books.id), format),
                        missing_since = CASE WHEN COALESCE((SELECT ba.local FROM book_artifact_preferences p JOIN book_artifacts ba
                                                            ON ba.artifact_id = p.preferred_artifact_id AND ba.book_id = p.book_id
                                                           WHERE p.book_id = books.id), 0) = 1
                                             THEN NULL ELSE missing_since END
                  WHERE id = ?
                 """, bookId);
+        List<String> projectedFiles = jdbc().query(
+                "SELECT file_name FROM books WHERE id = ?",
+                (rs, rowNum) -> rs.getString(1), bookId);
+        if (!projectedFiles.isEmpty()) {
+            jdbc().update("UPDATE books SET format = ? WHERE id = ?",
+                    BookDenormalizedValues.format(projectedFiles.getFirst()), bookId);
+        }
     }
 
     private void recomputeAuthorSort(String bookId) {
@@ -474,7 +497,7 @@ public class SqliteBookMergeAdapter implements BookMergePort {
     private String encode(Snapshot snapshot) {
         try {
             return objectMapper.writeValueAsString(snapshot);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Cannot serialize merge snapshot", e);
         }
     }
@@ -482,7 +505,7 @@ public class SqliteBookMergeAdapter implements BookMergePort {
     private Snapshot decode(String json) {
         try {
             return objectMapper.readValue(json, Snapshot.class);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Cannot read merge snapshot", e);
         }
     }

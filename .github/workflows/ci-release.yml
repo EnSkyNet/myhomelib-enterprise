@@ -132,7 +132,10 @@ jobs:
       - name: Source/static release validation
         if: matrix.platform == 'linux'
         shell: bash
-        run: python3 tools/static_release_check.py
+        run: |
+          python3 tools/static_release_check.py
+          python3 tools/static-release-source-count-test.py
+          python3 tools/empty-catch-growth-check.py
 
       - name: Windows acceptance harness structure
         if: matrix.platform == 'windows'
@@ -296,6 +299,7 @@ jobs:
         with:
           name: myhomelib-${{ matrix.platform }}
           path: |
+            dist/MyHomeLib-R18-*-portable-windows-*.zip
             dist/myhomelib-*.zip
             dist/myhomelib-*.tar.gz
             dist/MyHomeLib-*.exe

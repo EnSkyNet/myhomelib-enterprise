@@ -40,10 +40,10 @@ require('OperationStage.ROLLING_BACK' in usecase and 'OperationStage.CREATING_CH
 require('keepCheckpoint = rollback.attempted() && !rollback.succeeded()' in usecase,
         'failed rollback must preserve recovery checkpoint')
 
-require('AtomicFileSupport.moveReplacing' in adapter,
-        'database restore must use atomic replacing moves')
+require('SafeFilePublication.detachIfOwned' in adapter and 'SafeFilePublication.moveNoReplace' in adapter,
+        'database restore must use verified detach + no-replace atomic publication')
 require('validateRecoveryCheckpoint(staged)' in adapter
-        and 'validateDatabaseFile(snapshotFile)' in adapter
+        and 'validateDatabaseFile(safeSnapshot)' in adapter
         and 'validateDatabaseFile(staged)' in adapter,
         'checkpoint creation and staged restore candidate must be validated')
 require('collectionManager.closeCurrentCollection()' in adapter and 'collectionManager.switchToCollection(collection)' in adapter,

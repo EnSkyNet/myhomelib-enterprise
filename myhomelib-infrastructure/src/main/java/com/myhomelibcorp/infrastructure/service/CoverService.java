@@ -51,6 +51,11 @@ public class CoverService implements CoverExtractor {
         if (imageData != null && imageData.length > 0) coverCache.put(cacheKey, imageData);
         return imageData;
     }
+
+    @Override
+    public void invalidateCover(BookDto book) {
+        if (book != null) coverCache.invalidate(cacheKey(book));
+    }
     /**
      * The underlying cache is also collection-scoped by the currently active collection, but a
      * background request can outlive the UI state that created its DTO. Include the captured storage

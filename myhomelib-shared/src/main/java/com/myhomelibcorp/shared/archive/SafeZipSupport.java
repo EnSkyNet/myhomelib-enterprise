@@ -19,8 +19,8 @@ import java.util.Objects;
 /**
  * Opens external ZIP files through a single already-open {@code NOFOLLOW_LINKS} channel.
  *
- * <p>The legacy {@link ZipCharsetSupport} API is path based and therefore cannot prevent a
- * check/detect/reopen race. New security-sensitive code should use this helper instead. The
+ * <p>Archive decoding and charset detection stay on one already-open file descriptor to prevent
+ * check/detect/reopen races. The
  * returned Commons Compress {@link ZipFile} owns the underlying channel and closes it when the
  * archive is closed.</p>
  */
@@ -115,7 +115,7 @@ public final class SafeZipSupport {
                 .get();
     }
 
-    private static boolean sampledRawNamesAreUtf8(ZipFile zip) {
+    public static boolean sampledRawNamesAreUtf8(ZipFile zip) {
         int inspected = 0;
         var entries = zip.getEntries();
         while (entries.hasMoreElements() && inspected++ < MAX_SAMPLED_ENTRIES) {
@@ -136,7 +136,7 @@ public final class SafeZipSupport {
         return true;
     }
 
-    private static long scoreEntryNames(ZipFile zip) {
+    public static long scoreEntryNames(ZipFile zip) {
         long score = 0L;
         int inspected = 0;
         var entries = zip.getEntries();

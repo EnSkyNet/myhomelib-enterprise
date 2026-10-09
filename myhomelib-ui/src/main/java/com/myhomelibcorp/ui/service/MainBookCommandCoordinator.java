@@ -39,6 +39,11 @@ public class MainBookCommandCoordinator {
         return currentBook();
     }
 
+    /** Checkbox-selected books for batch-capable actions; empty means use the current row. */
+    public java.util.List<BookId> selectedBookIds() {
+        return selection.snapshot();
+    }
+
     /** Canonical current-book observable used by menu/shortcut context refresh across all workspaces. */
     public ObjectProperty<BookDto> selectedBookProperty() {
         return appState.getBookDetails().currentBookProperty();

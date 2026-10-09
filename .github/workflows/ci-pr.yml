@@ -131,6 +131,10 @@ jobs:
         shell: bash
         run: python3 tools/secret-store-policy-check.py
 
+      - name: Empty catch growth ratchet
+        shell: bash
+        run: python3 tools/empty-catch-growth-check.py
+
       - name: Architecture boundaries
         shell: bash
         run: >-

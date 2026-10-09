@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.sync.webdav;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.domain.model.sync.ChangeSet;
 import com.myhomelibcorp.domain.model.sync.SyncEntityType;
 import com.myhomelibcorp.domain.model.sync.SyncRecord;

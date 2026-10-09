@@ -2,7 +2,6 @@ package com.myhomelibcorp.infrastructure.download;
 
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
-import com.myhomelibcorp.shared.util.BoundedIoSupport;
 import com.myhomelibcorp.shared.util.Sha256Support;
 
 import java.io.IOException;
@@ -13,7 +12,6 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.LinkOption;
-import java.nio.file.StandardOpenOption;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -26,9 +24,7 @@ final class HttpResumeSupport {
     private HttpResumeSupport() { }
 
     static ResumeMetadata write(Path meta, URI uri, HttpResponse<?> response, String expectedMetaHash) throws IOException {
-        String validator = response.headers().firstValue("ETag")
-                .filter(value -> !value.isBlank())
-                .orElseGet(() -> response.headers().firstValue("Last-Modified").orElse(""));
+        String validator = resumeValidator(response);
         Properties properties = new Properties();
         properties.setProperty("sourceSha256", sourceHash(uri));
         properties.setProperty("validator", validator);
@@ -53,6 +49,27 @@ final class HttpResumeSupport {
         }
     }
 
+
+    private static String resumeValidator(HttpResponse<?> response) {
+        String etag = response.headers().firstValue("ETag")
+                .map(String::trim)
+                .orElse("");
+        if (isStrongEntityTag(etag)) {
+            return etag;
+        }
+        return response.headers().firstValue("Last-Modified")
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .orElse("");
+    }
+
+    private static boolean isStrongEntityTag(String value) {
+        return value != null
+                && value.length() >= 2
+                && value.charAt(0) == '"'
+                && value.charAt(value.length() - 1) == '"';
+    }
+
     static ResumeMetadata read(Path meta, URI uri) throws IOException {
         if (!Files.exists(meta, LinkOption.NOFOLLOW_LINKS)) return null;
         String ownershipHash = SafeFilePublication.snapshotExistingTarget(meta, "HTTP resume metadata");
@@ -70,6 +87,12 @@ final class HttpResumeSupport {
         }
     }
 
+    static void validateResumeResponse(
+            HttpResponse<?> response, long expectedStart, String expectedValidator, URI uri) throws IOException {
+        validateContentRange(response, expectedStart, uri);
+        validateEntityValidator(response, expectedValidator, uri);
+    }
+
     static void validateContentRange(HttpResponse<?> response, long expectedStart, URI uri) throws IOException {
         String value = response.headers().firstValue("Content-Range").orElse("").trim();
         Matcher matcher = CONTENT_RANGE.matcher(value);
@@ -78,11 +101,49 @@ final class HttpResumeSupport {
         }
         try {
             long actualStart = Long.parseLong(matcher.group(1));
-            if (actualStart != expectedStart) {
+            long actualEnd = Long.parseLong(matcher.group(2));
+            Long total = "*".equals(matcher.group(3)) ? null : Long.parseLong(matcher.group(3));
+            if (actualStart != expectedStart || actualEnd < actualStart
+                    || (total != null && (total <= actualEnd || actualStart >= total))) {
                 throw invalidContentRange(uri, value, expectedStart, actualStart);
+            }
+            long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+            if (contentLength >= 0) {
+                long rangeLength = actualEnd - actualStart + 1L;
+                if (rangeLength <= 0 || contentLength != rangeLength) {
+                    throw invalidContentRange(uri, value, expectedStart, actualStart);
+                }
             }
         } catch (NumberFormatException e) {
             throw invalidContentRange(uri, value, expectedStart, null);
+        }
+    }
+
+    private static void validateEntityValidator(
+            HttpResponse<?> response, String expectedValidator, URI uri) throws IOException {
+        if (expectedValidator == null || expectedValidator.isBlank()) return;
+        String expected = expectedValidator.trim();
+        boolean entityTag = expected.startsWith("\"") || expected.regionMatches(true, 0, "W/\"", 0, 3);
+        String actual = response.headers().firstValue(entityTag ? "ETag" : "Last-Modified")
+                .map(String::trim)
+                .orElse("");
+        if (!actual.isBlank() && !actual.equals(expected)) {
+            throw new IOException("Змінено HTTP validator під час resume "
+                    + SensitiveDataSanitizer.sanitizeUri(uri));
+        }
+    }
+
+    static long expectedPartialBodyLength(HttpResponse<?> response) {
+        if (response.statusCode() != 206) return -1L;
+        String value = response.headers().firstValue("Content-Range").orElse("").trim();
+        Matcher matcher = CONTENT_RANGE.matcher(value);
+        if (!matcher.matches()) return -1L;
+        try {
+            long start = Long.parseLong(matcher.group(1));
+            long end = Long.parseLong(matcher.group(2));
+            return end >= start ? end - start + 1L : -1L;
+        } catch (NumberFormatException ignored) {
+            return -1L;
         }
     }
 
@@ -99,7 +160,9 @@ final class HttpResumeSupport {
             }
         }
         long length = response.headers().firstValueAsLong("Content-Length").orElse(-1);
-        return length >= 0 ? offset + length : -1;
+        if (length < 0) return -1;
+        if (offset < 0 || offset > Long.MAX_VALUE - length) return Long.MAX_VALUE;
+        return offset + length;
     }
 
     private static IOException invalidContentRange(URI uri, String value, long expectedStart, Long actualStart) {

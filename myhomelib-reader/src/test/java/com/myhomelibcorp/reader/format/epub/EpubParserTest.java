@@ -2,17 +2,27 @@ package com.myhomelibcorp.reader.format.epub;
 
 import com.myhomelibcorp.reader.api.FileBookSource;
 import com.myhomelibcorp.reader.api.ReaderDocument;
+import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.io.OutputStream;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.Collections;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class EpubParserTest {
     @TempDir Path temp;
@@ -63,6 +73,24 @@ class EpubParserTest {
     }
 
     @Test
+    void treatsHashInPhysicalEpubFilenameAsLiteralText() throws Exception {
+        Path epub = temp.resolve("Demon Soul Eater #01-18.epub");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(epub))) {
+            put(zip, "META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>");
+            put(zip, "OPS/book.opf", """
+                    <package><metadata><language>uk</language></metadata><manifest>
+                    <item id="c" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                    </manifest><spine><itemref idref="c"/></spine></package>""");
+            put(zip, "OPS/chapter.xhtml", "<html><body><p>TEXT</p></body></html>");
+        }
+
+        ReaderDocument doc = new EpubParser().parse(new FileBookSource(epub));
+
+        assertThat(doc.metadata().title()).isEqualTo("Demon Soul Eater #01-18");
+        assertThat(doc.text().getFullText()).contains("TEXT");
+    }
+
+    @Test
     void supportsEpub2NcxWhenNavIsMissing() throws Exception {
         Path epub = temp.resolve("epub2.epub");
         try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(epub))) {
@@ -107,6 +135,31 @@ class EpubParserTest {
 
 
 
+
+    @Test
+    void preservesLiteralPlusInEpubInternalPathsAndFragments() throws Exception {
+        Path epub = temp.resolve("plus-path.epub");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(epub))) {
+            put(zip, "META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>");
+            put(zip, "OPS/book.opf", """
+                    <package><metadata><title>Plus Path</title></metadata><manifest>
+                    <item id="c" href="chapter+one.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+                    </manifest><spine><itemref idref="c"/></spine></package>""");
+            put(zip, "OPS/nav.xhtml", """
+                    <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
+                    <nav epub:type="toc"><ol><li><a href="chapter+one.xhtml#sec+1">Plus Chapter</a></li></ol></nav>
+                    </body></html>""");
+            put(zip, "OPS/chapter+one.xhtml", """
+                    <html xmlns="http://www.w3.org/1999/xhtml"><body><h1 id="sec+1">PLUS_ANCHOR</h1><p>PLUS_PATH_TEXT</p></body></html>""");
+        }
+
+        ReaderDocument doc = new EpubParser().parse(new FileBookSource(epub));
+        assertThat(doc.text().getFullText()).contains("PLUS_PATH_TEXT");
+        assertThat(doc.toc().entries()).extracting(e -> e.title()).containsExactly("Plus Chapter");
+        assertThat(doc.toc().entries().getFirst().textOffset()).isGreaterThanOrEqualTo(0L);
+    }
+
     @Test
     void acceptsIdentifierWithoutSchemeAttribute() throws Exception {
         Path epub = temp.resolve("identifier-without-scheme.epub");
@@ -146,6 +199,37 @@ class EpubParserTest {
         assertThat(doc.metadata().authors()).containsExactly("Іван Петренко");
     }
 
+
+    @Test
+    void rejectsArchiveWhoseDeclaredEntriesExceedCumulativeSafetyLimit() throws Exception {
+        ZipFile zip = mock(ZipFile.class);
+        long entryBytes = 400L * 1024L * 1024L;
+        long compressedBytes = 5L * 1024L * 1024L;
+        List<ZipArchiveEntry> entries = java.util.stream.IntStream.range(0, 3)
+                .mapToObj(i -> {
+                    ZipArchiveEntry entry = new ZipArchiveEntry("OPS/chapter-" + i + ".xhtml");
+                    entry.setSize(entryBytes);
+                    entry.setCompressedSize(compressedBytes);
+                    return entry;
+                })
+                .toList();
+        when(zip.getEntries()).thenAnswer(call -> Collections.enumeration(entries));
+
+        var validateArchive = EpubParser.class.getDeclaredMethod("validateArchive", ZipFile.class);
+        validateArchive.setAccessible(true);
+        EpubParser parser = new EpubParser();
+
+        assertThatThrownBy(() -> {
+            try {
+                validateArchive.invoke(parser, zip);
+            } catch (InvocationTargetException reflected) {
+                throw reflected.getCause();
+            }
+        })
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("cumulative")
+                .hasMessageContaining("safety limit");
+    }
 
     @Test
     void refusesEpubThroughSymlinkedParentDirectory() throws Exception {
@@ -191,4 +275,24 @@ class EpubParserTest {
         zip.write(content.getBytes(StandardCharsets.UTF_8));
         zip.closeEntry();
     }
+    @Test
+    void ignoresNonFiniteSeriesIndexMetadata() throws Exception {
+        Path epub = temp.resolve("non-finite-series.epub");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(epub))) {
+            put(zip, "META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>");
+            put(zip, "OPS/book.opf", """
+                    <package><metadata><title>Series Test</title>
+                    <meta name="calibre:series" content="Series"/>
+                    <meta name="calibre:series_index" content="Infinity"/>
+                    </metadata><manifest><item id="c" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest>
+                    <spine><itemref idref="c"/></spine></package>""");
+            put(zip, "OPS/chapter.xhtml", "<html><body><p>TEXT</p></body></html>");
+        }
+
+        ReaderDocument doc = new EpubParser().parse(new FileBookSource(epub));
+
+        assertThat(doc.metadata().series()).isEqualTo("Series");
+        assertThat(doc.metadata().sequenceNumber()).isNull();
+    }
+
 }

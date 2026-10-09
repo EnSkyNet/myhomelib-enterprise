@@ -1,8 +1,8 @@
 package com.myhomelibcorp.integration;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 import com.myhomelibcorp.application.sync.conflict.SyncConflictReviewItem;
 import com.myhomelibcorp.application.sync.conflict.SyncConflictReviewSelection;
 
@@ -138,8 +138,8 @@ final class PortableSnapshotConflictService {
 
     private static List<String> unionUserFields(ObjectNode local, ObjectNode remote) {
         LinkedHashSet<String> fields = new LinkedHashSet<>();
-        local.fieldNames().forEachRemaining(fields::add);
-        remote.fieldNames().forEachRemaining(fields::add);
+        fields.addAll(local.propertyNames());
+        fields.addAll(remote.propertyNames());
         fields.removeAll(STRUCTURAL_FIELDS);
         return List.copyOf(fields);
     }
@@ -166,8 +166,8 @@ final class PortableSnapshotConflictService {
         if (node.isNull()) {
             return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.no_value", hash);
         }
-        String text = node.asText();
-        if (text.length() > 160) text = text.substring(0, 160) + "…";
+        String text = node.asString();
+        if (text.length() > 160) text = text.substring(0, DesktopIntegrationSupport.safeTextCut(text, 160)) + "…";
         return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.value", text, hash);
     }
 

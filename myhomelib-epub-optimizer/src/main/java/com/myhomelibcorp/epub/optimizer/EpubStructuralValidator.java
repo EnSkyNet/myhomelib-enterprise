@@ -3,18 +3,17 @@ package com.myhomelibcorp.epub.optimizer;
 import com.myhomelibcorp.epub.optimizer.fs.EpubPathSafety;
 import com.myhomelibcorp.epub.optimizer.graph.EpubResourceGraphAnalyzer;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
+import com.myhomelibcorp.shared.archive.ZipLocalHeaderInspector;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import java.util.zip.ZipInputStream;
 
 /** Minimal always-on OCF/archive-safety validation before any EPUB transformation. */
 @Component
@@ -43,19 +42,19 @@ public class EpubStructuralValidator {
     }
 
     private void validateMimetype(Path epub) throws Exception {
-        try (ZipInputStream in = new ZipInputStream(Files.newInputStream(epub, LinkOption.NOFOLLOW_LINKS), StandardCharsets.UTF_8)) {
-            ZipEntry first = in.getNextEntry();
-            if (first == null || !"mimetype".equals(first.getName())) {
-                throw new IllegalArgumentException("EPUB mimetype is not first");
-            }
-            if (first.getMethod() != ZipEntry.STORED) throw new IllegalArgumentException("EPUB mimetype must be stored");
-            if (first.getExtra() != null && first.getExtra().length > 0) {
-                throw new IllegalArgumentException("EPUB mimetype must not have ZIP extra fields");
-            }
-            byte[] payload = in.readNBytes(MIMETYPE.length() + 1);
-            String value = new String(payload, StandardCharsets.US_ASCII);
-            if (payload.length != MIMETYPE.length() || !MIMETYPE.equals(value)) {
-                throw new IllegalArgumentException("EPUB mimetype content is invalid");
+        var first = ZipLocalHeaderInspector.inspectFirstEntry(epub, "EPUB validation source");
+        if (!"mimetype".equals(first.name())) throw new IllegalArgumentException("EPUB mimetype is not first");
+        if (first.method() != ZipEntry.STORED) throw new IllegalArgumentException("EPUB mimetype must be stored");
+        if (first.extraLength() > 0) throw new IllegalArgumentException("EPUB mimetype must not have ZIP extra fields");
+        try (ZipFile zip = new ZipFile(epub.toFile(), StandardCharsets.UTF_8)) {
+            ZipEntry mimetype = zip.getEntry("mimetype");
+            if (mimetype == null || mimetype.isDirectory()) throw new IllegalArgumentException("EPUB mimetype entry is missing");
+            try (var in = zip.getInputStream(mimetype)) {
+                byte[] payload = in.readNBytes(MIMETYPE.length() + 1);
+                String value = new String(payload, StandardCharsets.US_ASCII);
+                if (payload.length != MIMETYPE.length() || !MIMETYPE.equals(value)) {
+                    throw new IllegalArgumentException("EPUB mimetype content is invalid");
+                }
             }
         }
     }

@@ -61,8 +61,10 @@ require('fx:id="selectionToolbar"' in main_fxml and 'onAction="#handleDownloadBo
 require('onAction="#handleCancelDownload"' in main_fxml,
         'download cancellation action is no longer reachable')
 main_controller = read('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/MainController.java')
-require('batchOperationsController.handleBatchDownload(' in main_controller,
-        'selection download no longer dispatches checkbox-selected books')
+deferred_actions = read('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/DeferredMainLibraryActions.java')
+require('deferredLibraryActions.batchDownload(' in main_controller
+        and 'batchOperationsController.getObject().handleBatchDownload(' in deferred_actions,
+        'selection download no longer dispatches checkbox-selected books through the lazy action boundary')
 
 require('PauseTransition' in progress and 'stage.close()' in progress,
         'download completion window does not auto-close')

@@ -169,6 +169,18 @@ def check_source_release_contract() -> None:
             need("org/apache/maven/wrapper/MavenWrapperMain.class" in zf.namelist(), "invalid Maven wrapper JAR")
         props = wrapper_props.read_text(encoding="utf-8")
         need("distributionUrl=" in props, "Maven wrapper properties missing distributionUrl")
+        need("apache-maven-3.9.16-bin.zip" in props,
+             "repository Maven wrapper must resolve the pinned Maven 3.9.16 distribution")
+        unix_launcher = mvnw.read_text(encoding="utf-8")
+        windows_launcher = mvnw_cmd.read_text(encoding="utf-8")
+        need("org.apache.maven.wrapper.MavenWrapperMain" in unix_launcher,
+             "Unix mvnw must bootstrap through the checked-in Maven Wrapper JAR")
+        need("org.apache.maven.wrapper.MavenWrapperMain" in windows_launcher,
+             "Windows mvnw.cmd must bootstrap through the checked-in Maven Wrapper JAR")
+        need(".mvn/maven/apache-maven-" not in unix_launcher.replace("\\", "/"),
+             "Unix mvnw must not depend on an absent bundled Maven runtime")
+        need(".mvn\\maven\\apache-maven-" not in windows_launcher.lower(),
+             "Windows mvnw.cmd must not depend on an absent bundled Maven runtime")
         import hashlib
         expected = checksum_file.read_text(encoding="ascii").split()[0].lower()
         actual = hashlib.sha256(wrapper_jar.read_bytes()).hexdigest()

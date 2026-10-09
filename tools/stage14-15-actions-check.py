@@ -56,6 +56,11 @@ try:
         (src/'com/myhomelibcorp/shared/util').mkdir(parents=True)
         shutil.copy(ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/util/CommandTemplate.java', src/'com/myhomelibcorp/application/util/CommandTemplate.java')
         shutil.copy(ROOT/'myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/ProcessExecutionSupport.java', src/'com/myhomelibcorp/shared/util/ProcessExecutionSupport.java')
+        shutil.copy(ROOT/'myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/AtomicFileSupport.java', src/'com/myhomelibcorp/shared/util/AtomicFileSupport.java')
+        shutil.copy(ROOT/'myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/ExecutablePathSafety.java', src/'com/myhomelibcorp/shared/util/ExecutablePathSafety.java')
+        shutil.copy(ROOT/'myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/NoLinkPathSafety.java', src/'com/myhomelibcorp/shared/util/NoLinkPathSafety.java')
+        shutil.copy(ROOT/'myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/SafeFilePrimitives.java', src/'com/myhomelibcorp/shared/util/SafeFilePrimitives.java')
+        shutil.copy(ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/util/SafeFilePublication.java', src/'com/myhomelibcorp/application/util/SafeFilePublication.java')
         for name in ['BookActionCommand.java','BookActionProfile.java','BookActionPreview.java','BookActionRunResult.java','BookActionExecutionService.java']:
             shutil.copy(ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/action'/name, src/'com/myhomelibcorp/application/action'/name)
         (src/'org/springframework/stereotype/Component.java').write_text('package org.springframework.stereotype; public @interface Component {}',encoding='utf-8')

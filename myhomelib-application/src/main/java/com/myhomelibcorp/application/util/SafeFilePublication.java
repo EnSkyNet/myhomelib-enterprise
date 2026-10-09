@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.util;
 
+import com.myhomelibcorp.shared.util.NoLinkPathSafety;
+import com.myhomelibcorp.shared.util.SafeFilePrimitives;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,7 +16,6 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.UUID;
@@ -30,28 +31,11 @@ public final class SafeFilePublication {
     public record FileSnapshot(String sha256, long size) { }
 
     public static Path createDirectoriesNoLinks(Path directory, String role) throws IOException {
-        Objects.requireNonNull(directory, "directory");
-        Path absolute = directory.toAbsolutePath().normalize();
-        Path current = absolute.getRoot();
-        for (Path component : absolute) {
-            current = current == null ? component : current.resolve(component);
-            if (Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
-                requireSafeDirectory(current, role);
-            } else {
-                try {
-                    Files.createDirectory(current);
-                } catch (FileAlreadyExistsException race) {
-                    requireSafeDirectory(current, role);
-                }
-            }
-        }
-        return absolute;
+        return NoLinkPathSafety.createDirectories(directory, role);
     }
 
     public static Path createPrivateWorkspace(Path parent, String prefix, String role) throws IOException {
-        Path safeParent = createDirectoriesNoLinks(parent, role + " parent");
-        Path workspace = Files.createTempDirectory(safeParent, prefix).toAbsolutePath().normalize();
-        return requireSafeDirectoryPath(workspace, role);
+        return NoLinkPathSafety.createPrivateWorkspace(parent, prefix, role);
     }
 
 
@@ -142,51 +126,15 @@ public final class SafeFilePublication {
     }
 
     public static Path prepareTarget(Path target, String role) throws IOException {
-        Objects.requireNonNull(target, "target");
-        Path absolute = target.toAbsolutePath().normalize();
-        Path parent = absolute.getParent();
-        if (parent == null) throw new IOException(role + " has no parent directory: " + absolute);
-        createDirectoriesNoLinks(parent, role + " parent");
-        if (Files.exists(absolute, LinkOption.NOFOLLOW_LINKS)) {
-            requireSafeRegularFile(absolute, role);
-        }
-        return absolute;
+        return NoLinkPathSafety.prepareTarget(target, role);
     }
 
     public static Path requireSafeRegularFile(Path file, String role) throws IOException {
-        Objects.requireNonNull(file, "file");
-        Path absolute = file.toAbsolutePath().normalize();
-        Path current = absolute.getRoot();
-        for (Path component : absolute) {
-            current = current == null ? component : current.resolve(component);
-            if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
-                throw new IOException(role + " does not exist: " + absolute);
-            }
-            if (Files.isSymbolicLink(current)) {
-                throw new IOException(role + " contains a symbolic link: " + current);
-            }
-            BasicFileAttributes attrs = Files.readAttributes(current, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-            if (attrs.isOther()) {
-                throw new IOException(role + " contains a special/reparse filesystem entry: " + current);
-            }
-        }
-        if (!Files.isRegularFile(absolute, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IOException(role + " is not a regular file: " + absolute);
-        }
-        return absolute;
+        return NoLinkPathSafety.requireRegularFile(file, role);
     }
 
     public static OutputStream openFreshOutputStream(Path target, String role) throws IOException {
-        Path absolute = prepareTarget(target, role);
-        if (Files.exists(absolute, LinkOption.NOFOLLOW_LINKS)) {
-            throw new FileAlreadyExistsException(absolute.toString());
-        }
-        try {
-            return Files.newOutputStream(absolute, StandardOpenOption.CREATE_NEW,
-                    StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
-        } catch (FileAlreadyExistsException race) {
-            throw new IOException(role + " appeared while opening a fresh output: " + absolute, race);
-        }
+        return NoLinkPathSafety.openFreshOutputStream(target, role);
     }
 
     public static Path copyFresh(InputStream source, Path target, String role) throws IOException {
@@ -341,13 +289,8 @@ public final class SafeFilePublication {
     }
 
     public static Path moveNoReplace(Path source, Path target, String role) throws IOException {
-        Path safeSource = requireSafeRegularFile(source, role + " source");
-        Path safeTarget = prepareTarget(target, role + " target");
-        if (Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
-            throw new FileAlreadyExistsException(safeTarget.toString());
-        }
-        Files.move(safeSource, safeTarget);
-        return requireSafeRegularFile(safeTarget, role + " target");
+        return SafeFilePrimitives.moveNoReplace(
+                source, target, role, SafeFilePublication::requireSafeRegularFile, SafeFilePublication::prepareTarget);
     }
 
     /**
@@ -448,20 +391,7 @@ public final class SafeFilePublication {
     }
 
     public static String sha256(Path file, String role) throws IOException {
-        Path safe = requireSafeRegularFile(file, role);
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException("SHA-256 is unavailable", impossible);
-        }
-        try (InputStream in = Files.newInputStream(safe, LinkOption.NOFOLLOW_LINKS)) {
-            byte[] buffer = new byte[64 * 1024];
-            for (int read; (read = in.read(buffer)) >= 0; ) {
-                if (read > 0) digest.update(buffer, 0, read);
-            }
-        }
-        return HexFormat.of().formatHex(digest.digest());
+        return SafeFilePrimitives.sha256(file, role, SafeFilePublication::requireSafeRegularFile);
     }
 
     /**
@@ -530,46 +460,10 @@ public final class SafeFilePublication {
     }
 
     public static void cleanupPrivateWorkspace(Path workspace) throws IOException {
-        if (workspace == null || !Files.exists(workspace, LinkOption.NOFOLLOW_LINKS)) return;
-        // A private workspace may have been replaced after creation. Never delete through a
-        // symlinked parent and never treat a foreign regular/special file as our workspace.
-        Path safeWorkspace = requireSafeDirectoryPath(workspace, "Application private workspace cleanup");
-        try (var paths = Files.walk(safeWorkspace)) {
-            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
-                if (Files.isSymbolicLink(path)) {
-                    // Files.walk does not follow links by default; deleting the link itself is safe.
-                    Files.deleteIfExists(path);
-                    continue;
-                }
-                Files.deleteIfExists(path);
-            }
-        }
+        NoLinkPathSafety.cleanupPrivateWorkspace(workspace, "Application private workspace cleanup");
     }
 
     public static Path requireSafeDirectoryPath(Path directory, String role) throws IOException {
-        Objects.requireNonNull(directory, "directory");
-        Path absolute = directory.toAbsolutePath().normalize();
-        Path current = absolute.getRoot();
-        for (Path component : absolute) {
-            current = current == null ? component : current.resolve(component);
-            if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
-                throw new IOException(role + " does not exist: " + absolute);
-            }
-            requireSafeDirectory(current, role);
-        }
-        return absolute;
-    }
-
-    private static void requireSafeDirectory(Path directory, String role) throws IOException {
-        if (Files.isSymbolicLink(directory)) {
-            throw new IOException(role + " contains a symbolic link: " + directory);
-        }
-        BasicFileAttributes attrs = Files.readAttributes(directory, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-        if (attrs.isOther()) {
-            throw new IOException(role + " contains a special/reparse filesystem entry: " + directory);
-        }
-        if (!attrs.isDirectory()) {
-            throw new IOException(role + " component is not a directory: " + directory);
-        }
+        return NoLinkPathSafety.requireDirectory(directory, role);
     }
 }

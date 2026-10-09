@@ -17,7 +17,6 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
 
     private final CollectionManager collectionManager;
     private final QueryExecutor queryExecutor;
-    private final SqliteBusyRetryExecutor busyRetry;
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();

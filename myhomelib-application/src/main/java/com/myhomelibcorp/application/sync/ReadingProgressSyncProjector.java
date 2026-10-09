@@ -31,14 +31,14 @@ public final class ReadingProgressSyncProjector {
         ReadingProgressDto dto = ReadingProgressDto.builder()
                 .bookId(record.localKey())
                 .anchorId(text(p, "anchorId"))
-                .paragraphIndex(integer(p, "paragraphIndex", 0))
+                .paragraphIndex(nonNegativeInteger(p, "paragraphIndex", 0))
                 .paragraphId(text(p, "paragraphId"))
-                .charOffset(integer(p, "charOffset", 0))
-                .percent(decimal(p, "percent", 0.0))
+                .charOffset(nonNegativeInteger(p, "charOffset", 0))
+                .percent(percent(p, "percent", 0.0))
                 .chapterTitle(text(p, "chapterTitle"))
                 .chapterId(text(p, "chapterId"))
                 .updatedAt(timestamp(p.get("updatedAt"), record))
-                .readingTimeSeconds(longValue(p, "readingTimeSeconds", 0L))
+                .readingTimeSeconds(nonNegativeLong(p, "readingTimeSeconds", 0L))
                 .lastDevice(record.deviceId())
                 .build();
         repository.save(dto);
@@ -54,13 +54,19 @@ public final class ReadingProgressSyncProjector {
     }
 
     private static String text(Map<String, String> p, String key) { return p.getOrDefault(key, ""); }
-    private static int integer(Map<String, String> p, String key, int fallback) {
-        try { return Integer.parseInt(p.get(key)); } catch (RuntimeException ignored) { return fallback; }
+    private static int nonNegativeInteger(Map<String, String> p, String key, int fallback) {
+        try { return Math.max(0, Integer.parseInt(p.get(key))); } catch (RuntimeException ignored) { return fallback; }
     }
-    private static long longValue(Map<String, String> p, String key, long fallback) {
-        try { return Long.parseLong(p.get(key)); } catch (RuntimeException ignored) { return fallback; }
+    private static long nonNegativeLong(Map<String, String> p, String key, long fallback) {
+        try { return Math.max(0L, Long.parseLong(p.get(key))); } catch (RuntimeException ignored) { return fallback; }
     }
-    private static double decimal(Map<String, String> p, String key, double fallback) {
-        try { return Double.parseDouble(p.get(key)); } catch (RuntimeException ignored) { return fallback; }
+    private static double percent(Map<String, String> p, String key, double fallback) {
+        try {
+            double value = Double.parseDouble(p.get(key));
+            if (!Double.isFinite(value)) return fallback;
+            return Math.max(0.0, Math.min(100.0, value));
+        } catch (RuntimeException ignored) {
+            return fallback;
+        }
     }
 }

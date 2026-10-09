@@ -11,9 +11,9 @@ class PdfReaderSourceContractTest {
     @Test
     void rendererKeepsHeavyWorkOffFxThreadAndGuardsStaleResults() throws Exception {
         String source = Files.readString(Path.of("src/main/java/com/myhomelibcorp/reader/render/pdf/PdfReaderView.java"));
-        assertThat(source).contains("ThreadPoolExecutor", "renderExecutor.purge()", "submitTrackedRender", "Platform.runLater",
-                "AtomicLong generation", "AtomicLong singleRenderGeneration", "ConcurrentHashMap.newKeySet",
-                "configToken != generation.get()", "task.cancel(true)", "cancelOutstandingRenders", "session != current");
+        assertThat(source).contains("PagedRenderCoordinator", "renderCoordinator.submit", "Platform.runLater",
+                "renderCoordinator.beginSingleRender()", "renderCoordinator.isCurrent(token)",
+                "renderCoordinator.invalidate()", "session != current");
     }
 
     @Test
@@ -30,8 +30,8 @@ class PdfReaderSourceContractTest {
         assertThat(session).contains("PDFTextStripper", "MAX_SEARCH_RESULTS", "MAX_OUTLINE_ENTRIES",
                 "MAX_OUTLINE_DEPTH", "checkInterrupted()", "textLayerDetected");
         assertThat(session.toLowerCase()).doesNotContain("tesseract", "ocrmypdf");
-        assertThat(view).contains("searchTextAsync", "submitTrackedDocumentTask",
-                "cancelOutstandingDocumentTasks", "outlineEntries()", "goToPosition");
+        assertThat(view).contains("searchTextAsync", "documentTasks.submit",
+                "documentTasks.cancelOutstanding()", "outlineEntries()", "goToPosition");
     }
 
 }

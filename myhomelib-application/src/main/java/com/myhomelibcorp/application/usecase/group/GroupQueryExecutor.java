@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.usecase.group;
 
+import static com.myhomelibcorp.application.operation.LibraryOperationLeaseSupport.withSharedLease;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import org.springframework.stereotype.Component;
@@ -18,16 +19,6 @@ public class GroupQueryExecutor {
 
     public <T> T execute(Supplier<T> query) {
         Objects.requireNonNull(query, "query");
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
-        try {
-            T result = query.get();
-            lease.markCompleted("");
-            return result;
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        return withSharedLease(operationCoordinator, LibraryOperationType.QUERY, query);
     }
 }

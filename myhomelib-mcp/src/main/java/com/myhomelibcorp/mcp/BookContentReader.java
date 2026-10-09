@@ -520,7 +520,7 @@ final class BookContentReader {
         String raw=href==null?"":href;
         int hash=raw.indexOf('#'); if(hash>=0) raw=raw.substring(0,hash);
         int query=raw.indexOf('?'); if(query>=0) raw=raw.substring(0,query);
-        try{raw=URLDecoder.decode(raw,StandardCharsets.UTF_8);}catch(Exception ignored){}
+        try{raw=URLDecoder.decode(raw.replace("+","%2B"),StandardCharsets.UTF_8);}catch(Exception ignored){}
         String combined=base==null||base.isBlank()?raw:base+"/"+raw;
         Deque<String> parts=new ArrayDeque<>();
         for(String part:combined.replace('\\','/').split("/")) {

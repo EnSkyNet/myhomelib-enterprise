@@ -6,6 +6,7 @@ import com.myhomelibcorp.domain.model.book.BookArtifact;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.cache.BookCache;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.infrastructure.persistence.CollectionTransactionExecutor;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.batch.BookBatchWriter;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
@@ -111,8 +112,8 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                     book.getAuthors() == null ? java.util.List.of() : book.getAuthors());
             bookGenreHelper.saveGenres(book.getId(),
                     book.getGenres() == null ? java.util.List.of() : book.getGenres());
-            bookCache.evict(book.getId());
         }
+        bookCache.evictAll(books.stream().map(Book::getId).toList());
         log.debug("Batch збережено {} книг", books.size());
     }
 
@@ -166,31 +167,196 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     @Override
     public void updateStorage(BookId bookId, String collectionRoot, String folder, String fileName, String archiveEntry, boolean local) {
         if (bookId == null) return;
-        busyRetry.run("book storage update", () -> getJdbcTemplate().update("""
-                UPDATE books
-                SET collection_root = ?, folder = ?, file_name = ?, archive_entry = ?, local = ?,
-                    missing_since = NULL, format = ?
-                WHERE id = ?
-                """,
-                collectionRoot == null ? "" : collectionRoot,
-                folder == null ? "" : folder,
-                fileName == null ? "" : fileName,
-                archiveEntry == null ? "" : archiveEntry,
-                local ? 1 : 0,
-                BookDenormalizedValues.format(fileName),
-                bookId.asString()));
+        String root = collectionRoot == null ? "" : collectionRoot;
+        String dir = folder == null ? "" : folder;
+        String physicalName = fileName == null ? "" : fileName;
+        String entry = archiveEntry == null ? "" : archiveEntry;
+        // books.format is the physical storage facet used by the legacy/filter projection,
+        // while an artifact describes the logical document inside an archive. Keep both contracts
+        // explicit: 729586.fb2.zip is ZIP in books.*, but Dornichev....fb2 is FB2 in artifacts.
+        String bookFormat = BookDenormalizedValues.format(physicalName);
+        String artifactFormat = BookDenormalizedValues.format(entry.isBlank() ? physicalName : entry);
+
+        busyRetry.run("book storage update", () ->
+                CollectionTransactionExecutor.run(collectionManager, () -> {
+            getJdbcTemplate().update("""
+                    UPDATE books
+                    SET collection_root = ?, folder = ?, file_name = ?, archive_entry = ?, local = ?,
+                        missing_since = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(missing_since, CURRENT_TIMESTAMP) END,
+                        format = ?
+                    WHERE id = ?
+                    """, root, dir, physicalName, entry, local ? 1 : 0, local ? 1 : 0, bookFormat, bookId.asString());
+            synchronizeSourceArtifactStorage(bookId, root, dir, physicalName, entry, local, artifactFormat);
+        }));
         bookCache.evict(bookId);
+        log.info("DB_BOOK_STORAGE_UPDATE bookId={} local={} physicalFormat={} artifactFormat={} root={} folder={} file={} entry={}",
+                bookId.asString(), local, bookFormat, artifactFormat, root, dir, physicalName, entry);
+    }
+
+    /**
+     * Keeps the durable source artifact in sync with the legacy books.* projection.
+     * Download/remove operations historically changed only books.*, leaving an imported
+     * artifact REMOTE_ONLY. Re-hydration then preferred that stale artifact and effectively
+     * lost the local file for cover/details/conversion. Generated conversion artifacts are
+     * deliberately excluded from this synchronization.
+     */
+    private void synchronizeSourceArtifactStorage(BookId bookId, String root, String folder,
+                                                  String physicalName, String archiveEntry,
+                                                  boolean local, String format) {
+        String id = bookId.asString();
+        String logicalName = archiveEntry == null || archiveEntry.isBlank() ? physicalName : archiveEntry;
+        String candidate = getJdbcTemplate().query("""
+                SELECT ba.artifact_id
+                  FROM book_artifacts ba
+                  LEFT JOIN book_artifact_preferences p
+                    ON p.book_id = ba.book_id AND p.preferred_artifact_id = ba.artifact_id
+                 WHERE ba.book_id = ?
+                   AND COALESCE(ba.source_id, '') NOT LIKE 'conversion:%'
+                 ORDER BY
+                    CASE WHEN p.preferred_artifact_id IS NOT NULL THEN 0 ELSE 1 END,
+                    CASE WHEN COALESCE(ba.archive_entry, '') = ? AND ? <> '' THEN 0 ELSE 1 END,
+                    CASE WHEN COALESCE(ba.artifact_name, '') = ? THEN 0 ELSE 1 END,
+                    CASE WHEN COALESCE(NULLIF(ba.archive_name, ''), ba.file_name, '') = ? THEN 0 ELSE 1 END,
+                    CASE WHEN ba.local = 1 AND ba.state = 'AVAILABLE' THEN 0 ELSE 1 END,
+                    ba.created_at,
+                    ba.artifact_id
+                 LIMIT 1
+                """, rs -> rs.next() ? rs.getString(1) : null,
+                id, archiveEntry, archiveEntry, logicalName, physicalName);
+
+        if (candidate == null || candidate.isBlank()) {
+            candidate = "legacy:" + id;
+            getJdbcTemplate().update("""
+                    INSERT INTO book_artifacts(
+                        artifact_id, book_id, source_id, artifact_name, media_type, file_format,
+                        file_name, archive_name, archive_entry, size_bytes, sha256, content_fingerprint,
+                        remote, local, collection_root, folder, state, created_at, updated_at
+                    )
+                    SELECT ?, b.id,
+                           (SELECT cbs.source_id FROM catalog_book_state cbs WHERE cbs.book_id=b.id LIMIT 1),
+                           ?, NULL, ?, ?, ?, ?,
+                           CASE WHEN b.file_size IS NULL OR b.file_size < 0 THEN 0 ELSE b.file_size END,
+                           NULL, NULL,
+                           CASE WHEN EXISTS (SELECT 1 FROM catalog_book_state cbs WHERE cbs.book_id=b.id) THEN 1 ELSE 0 END,
+                           ?, ?, ?,
+                           CASE WHEN ? = 1 THEN 'AVAILABLE'
+                                WHEN EXISTS (SELECT 1 FROM catalog_book_state cbs WHERE cbs.book_id=b.id) THEN 'REMOTE_ONLY'
+                                ELSE 'MISSING' END,
+                           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                      FROM books b WHERE b.id = ?
+                    ON CONFLICT(artifact_id) DO UPDATE SET
+                        source_id=COALESCE(excluded.source_id, book_artifacts.source_id),
+                        artifact_name=excluded.artifact_name,
+                        file_format=excluded.file_format,
+                        file_name=excluded.file_name,
+                        archive_name=excluded.archive_name,
+                        archive_entry=excluded.archive_entry,
+                        remote=CASE WHEN excluded.remote = 1 THEN 1 ELSE book_artifacts.remote END,
+                        local=excluded.local,
+                        collection_root=excluded.collection_root,
+                        folder=excluded.folder,
+                        state=excluded.state,
+                        updated_at=CURRENT_TIMESTAMP
+                    """, candidate, logicalName, format,
+                    archiveEntry.isBlank() ? physicalName : logicalName,
+                    archiveEntry.isBlank() ? null : physicalName,
+                    blankToNull(archiveEntry), local ? 1 : 0, blankToNull(root), blankToNull(folder),
+                    local ? 1 : 0, id);
+        } else {
+            getJdbcTemplate().update("""
+                    UPDATE book_artifacts
+                       SET source_id = COALESCE(source_id,
+                               (SELECT cbs.source_id FROM catalog_book_state cbs WHERE cbs.book_id = ? LIMIT 1)),
+                           file_format = COALESCE(NULLIF(?, ''), file_format),
+                           file_name = ?,
+                           archive_name = ?,
+                           archive_entry = ?,
+                           remote = CASE
+                               WHEN remote = 1 THEN 1
+                               WHEN EXISTS (SELECT 1 FROM catalog_book_state cbs WHERE cbs.book_id = ?) THEN 1
+                               ELSE 0
+                           END,
+                           local = ?,
+                           collection_root = ?,
+                           folder = ?,
+                           state = CASE
+                               WHEN ? = 1 THEN 'AVAILABLE'
+                               WHEN remote = 1 OR EXISTS (SELECT 1 FROM catalog_book_state cbs WHERE cbs.book_id = ?)
+                                   THEN 'REMOTE_ONLY'
+                               ELSE 'MISSING'
+                           END,
+                           updated_at = CURRENT_TIMESTAMP
+                     WHERE book_id = ? AND artifact_id = ?
+                    """, id, format,
+                    archiveEntry.isBlank() ? physicalName : logicalName,
+                    archiveEntry.isBlank() ? null : physicalName,
+                    blankToNull(archiveEntry), id, local ? 1 : 0, blankToNull(root), blankToNull(folder),
+                    local ? 1 : 0, id, id, candidate);
+        }
+
+        Integer conversionPreferred = getJdbcTemplate().queryForObject("""
+                SELECT COUNT(*)
+                  FROM book_artifact_preferences p
+                  JOIN book_artifacts ba
+                    ON ba.book_id = p.book_id AND ba.artifact_id = p.preferred_artifact_id
+                 WHERE p.book_id = ? AND COALESCE(ba.source_id, '') LIKE 'conversion:%'
+                """, Integer.class, id);
+        if (conversionPreferred == null || conversionPreferred == 0) {
+            getJdbcTemplate().update("""
+                    INSERT INTO book_artifact_preferences(book_id, preferred_artifact_id, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(book_id) DO UPDATE SET
+                        preferred_artifact_id=excluded.preferred_artifact_id,
+                        updated_at=CURRENT_TIMESTAMP
+                    """, id, candidate);
+        }
+        log.info("DB_BOOK_ARTIFACT_STORAGE_SYNC bookId={} artifactId={} local={} state={}",
+                id, candidate, local, local ? "AVAILABLE" : "REMOTE_OR_MISSING");
     }
 
     @Override
     public void markStorageMissing(BookId bookId) {
         if (bookId == null) return;
-        busyRetry.run("book storage missing", () -> getJdbcTemplate().update("""
-                UPDATE books
-                   SET local = 0,
-                       missing_since = COALESCE(missing_since, CURRENT_TIMESTAMP)
-                 WHERE id = ?
-                """, bookId.asString()));
+        busyRetry.run("book storage missing", () ->
+                CollectionTransactionExecutor.run(collectionManager, () -> {
+            // Keep the physical-artifact model consistent with books.*. Folder sync verifies the
+            // projected books.* path, therefore the artifact representing that exact projection
+            // must become unavailable as part of the same transaction. Leaving it AVAILABLE made
+            // a restart re-hydrate a file that had already disappeared from disk.
+            ensureCanonicalSourceArtifactExists(bookId);
+            String id = bookId.asString();
+            String projectedArtifact = getJdbcTemplate().query("""
+                    SELECT ba.artifact_id
+                      FROM book_artifacts ba
+                      JOIN books b ON b.id = ba.book_id
+                      LEFT JOIN book_artifact_preferences p
+                        ON p.book_id = ba.book_id AND p.preferred_artifact_id = ba.artifact_id
+                     WHERE ba.book_id = ?
+                       AND COALESCE(NULLIF(ba.archive_name, ''), ba.file_name, '') = COALESCE(b.file_name, '')
+                       AND COALESCE(ba.folder, '') = COALESCE(b.folder, '')
+                       AND COALESCE(ba.archive_entry, '') = COALESCE(b.archive_entry, '')
+                       AND COALESCE(ba.collection_root, '') = COALESCE(b.collection_root, '')
+                     ORDER BY CASE WHEN p.preferred_artifact_id IS NOT NULL THEN 0 ELSE 1 END, ba.artifact_id
+                     LIMIT 1
+                    """, rs -> rs.next() ? rs.getString(1) : null, id);
+
+            getJdbcTemplate().update("""
+                    UPDATE books
+                       SET local = 0,
+                           missing_since = COALESCE(missing_since, CURRENT_TIMESTAMP)
+                     WHERE id = ?
+                    """, id);
+            if (projectedArtifact != null && !projectedArtifact.isBlank()) {
+                getJdbcTemplate().update("""
+                        UPDATE book_artifacts
+                           SET local = 0,
+                               state = CASE WHEN remote = 1 THEN 'REMOTE_ONLY' ELSE 'MISSING' END,
+                               updated_at = CURRENT_TIMESTAMP
+                         WHERE book_id = ? AND artifact_id = ?
+                        """, id, projectedArtifact);
+                log.info("DB_BOOK_ARTIFACT_MISSING bookId={} artifactId={}", id, projectedArtifact);
+            }
+        }));
         bookCache.evict(bookId);
     }
 
@@ -200,7 +366,8 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         if (artifactId == null || artifactId.isBlank()) {
             throw new IllegalArgumentException("Artifact id is required");
         }
-        busyRetry.run("preferred artifact update", () -> {
+        busyRetry.run("preferred artifact update", () ->
+                CollectionTransactionExecutor.run(collectionManager, () -> {
             int selected = getJdbcTemplate().update("""
                     INSERT INTO book_artifact_preferences(book_id, preferred_artifact_id, updated_at)
                     SELECT ?, ba.artifact_id, CURRENT_TIMESTAMP
@@ -246,15 +413,12 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                                               WHERE ba.book_id = books.id AND ba.artifact_id = ?), 0) = 1
                                THEN NULL
                                ELSE COALESCE(missing_since, CURRENT_TIMESTAMP)
-                           END,
-                           format = COALESCE((
-                               SELECT NULLIF(ba.file_format, '') FROM book_artifacts ba
-                                WHERE ba.book_id = books.id AND ba.artifact_id = ?
-                           ), format)
+                           END
                      WHERE id = ?
-                    """, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId,
+                    """, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId,
                     bookId.asString());
-        });
+            canonicalizeBookProjectionFormat(bookId);
+        }));
         bookCache.evict(bookId);
         log.debug("Preferred artifact для книги {}: {}", bookId.asString(), artifactId);
     }
@@ -263,7 +427,13 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     public void upsertArtifact(BookId bookId, BookArtifact artifact, boolean makePreferred) {
         if (bookId == null) throw new IllegalArgumentException("Book id is required");
         if (artifact == null) throw new IllegalArgumentException("Artifact is required");
-        busyRetry.run("book artifact upsert", () -> {
+        busyRetry.run("book artifact upsert", () ->
+                CollectionTransactionExecutor.run(collectionManager, () -> {
+            // Secondary artifacts must never become primary merely because an older/imported
+            // catalogue has no explicit preference row yet. Capture the current canonical
+            // books.* projection before inserting the new representation, so re-hydration and
+            // later edits keep the original source until the user explicitly promotes another artifact.
+            if (!makePreferred) ensurePreferredArtifactForCurrentProjection(bookId);
             var file = artifact.getFile();
             int changed = getJdbcTemplate().update("""
                     INSERT INTO book_artifacts(
@@ -292,7 +462,11 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                     """,
                     artifact.getId(), bookId.asString(), blankToNull(artifact.getSourceId()), artifact.getName(),
                     blankToNull(artifact.getMediaType()), blankToNull(artifact.getFormat()),
-                    blankToNull(file.getFileName()), null, blankToNull(file.getArchiveEntry()),
+                    blankToNull(file.getArchiveEntry() == null || file.getArchiveEntry().isBlank()
+                            ? file.getFileName() : file.getArchiveEntry()),
+                    blankToNull(file.getArchiveEntry() == null || file.getArchiveEntry().isBlank()
+                            ? null : file.getFileName()),
+                    blankToNull(file.getArchiveEntry()),
                     Math.max(0L, file.getFileSize()), blankToNull(artifact.getSha256()),
                     blankToNull(artifact.getContentFingerprint()), artifact.isRemote() ? 1 : 0, artifact.isLocal() ? 1 : 0,
                     blankToNull(file.getCollectionRoot()), blankToNull(file.getFolder()), artifact.getState().name());
@@ -323,9 +497,115 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                         """, bookId.asString(), artifact.getId());
                 updatePreferredProjection(bookId, artifact.getId());
             }
-        });
+        }));
         bookCache.evict(bookId);
         log.debug("Artifact upsert for book {}: {} preferred={}", bookId.asString(), artifact.getId(), makePreferred);
+    }
+
+    private void ensurePreferredArtifactForCurrentProjection(BookId bookId) {
+        String id = bookId.asString();
+        ensureCanonicalSourceArtifactExists(bookId);
+        // First preserve an exact books.* storage match. This is the durable legacy/canonical
+        // projection and is the strongest evidence of what was primary before multi-artifact data.
+        getJdbcTemplate().update("""
+                INSERT OR IGNORE INTO book_artifact_preferences(book_id, preferred_artifact_id, updated_at)
+                SELECT b.id,
+                       (
+                           SELECT ba.artifact_id
+                             FROM book_artifacts ba
+                            WHERE ba.book_id = b.id
+                              AND COALESCE(NULLIF(ba.archive_name, ''), ba.file_name, '') = COALESCE(b.file_name, '')
+                              AND COALESCE(ba.folder, '') = COALESCE(b.folder, '')
+                              AND COALESCE(ba.archive_entry, '') = COALESCE(b.archive_entry, '')
+                              AND COALESCE(ba.collection_root, '') = COALESCE(b.collection_root, '')
+                            ORDER BY
+                                CASE WHEN COALESCE(ba.source_id, '') LIKE 'conversion:%' THEN 1 ELSE 0 END,
+                                ba.artifact_id
+                            LIMIT 1
+                       ),
+                       CURRENT_TIMESTAMP
+                  FROM books b
+                 WHERE b.id = ?
+                   AND EXISTS (
+                       SELECT 1 FROM book_artifacts ba
+                        WHERE ba.book_id = b.id
+                          AND COALESCE(NULLIF(ba.archive_name, ''), ba.file_name, '') = COALESCE(b.file_name, '')
+                          AND COALESCE(ba.folder, '') = COALESCE(b.folder, '')
+                          AND COALESCE(ba.archive_entry, '') = COALESCE(b.archive_entry, '')
+                          AND COALESCE(ba.collection_root, '') = COALESCE(b.collection_root, '')
+                   )
+                """, id);
+
+        // If a historical/imported row has no exact projection match, prefer a non-conversion
+        // local/available representation. The generated artifact being inserted by the caller is
+        // intentionally not visible yet, so it cannot win this fallback.
+        getJdbcTemplate().update("""
+                INSERT OR IGNORE INTO book_artifact_preferences(book_id, preferred_artifact_id, updated_at)
+                SELECT b.id,
+                       (
+                           SELECT ba.artifact_id
+                             FROM book_artifacts ba
+                            WHERE ba.book_id = b.id
+                            ORDER BY
+                                CASE WHEN COALESCE(ba.source_id, '') LIKE 'conversion:%' THEN 1 ELSE 0 END,
+                                CASE WHEN ba.local = 1 AND ba.state = 'AVAILABLE' THEN 0 ELSE 1 END,
+                                CASE WHEN ba.local = 1 THEN 0 ELSE 1 END,
+                                ba.created_at,
+                                ba.artifact_id
+                            LIMIT 1
+                       ),
+                       CURRENT_TIMESTAMP
+                  FROM books b
+                 WHERE b.id = ?
+                   AND EXISTS (SELECT 1 FROM book_artifacts ba WHERE ba.book_id = b.id)
+                """, id);
+    }
+
+    private void ensureCanonicalSourceArtifactExists(BookId bookId) {
+        String id = bookId.asString();
+        Integer sources = getJdbcTemplate().queryForObject("""
+                SELECT COUNT(*) FROM book_artifacts
+                 WHERE book_id = ? AND COALESCE(source_id, '') NOT LIKE 'conversion:%'
+                """, Integer.class, id);
+        if (sources != null && sources > 0) return;
+
+        String legacyId = "legacy:" + id;
+        getJdbcTemplate().update("""
+                INSERT INTO book_artifacts(
+                    artifact_id, book_id, source_id, artifact_name, media_type, file_format,
+                    file_name, archive_name, archive_entry, size_bytes, sha256, content_fingerprint,
+                    remote, local, collection_root, folder, state, created_at, updated_at
+                )
+                SELECT ?, b.id,
+                       (SELECT cbs.source_id FROM catalog_book_state cbs WHERE cbs.book_id=b.id LIMIT 1),
+                       CASE WHEN COALESCE(b.archive_entry, '') <> '' THEN b.archive_entry
+                            WHEN COALESCE(b.file_name, '') <> '' THEN b.file_name
+                            ELSE 'book-' || b.id END,
+                       NULL, NULLIF(b.format, ''),
+                       CASE WHEN COALESCE(b.archive_entry, '') <> '' THEN b.archive_entry ELSE b.file_name END,
+                       CASE WHEN COALESCE(b.archive_entry, '') <> '' THEN b.file_name ELSE NULL END,
+                       NULLIF(b.archive_entry, ''),
+                       CASE WHEN b.file_size IS NULL OR b.file_size < 0 THEN 0 ELSE b.file_size END,
+                       NULL, NULL,
+                       CASE WHEN EXISTS (SELECT 1 FROM catalog_book_state cbs WHERE cbs.book_id=b.id) THEN 1 ELSE 0 END,
+                       CASE WHEN b.local = 1 THEN 1 ELSE 0 END,
+                       NULLIF(b.collection_root, ''), NULLIF(b.folder, ''),
+                       CASE WHEN b.local = 1 THEN 'AVAILABLE'
+                            WHEN EXISTS (SELECT 1 FROM catalog_book_state cbs WHERE cbs.book_id=b.id) THEN 'REMOTE_ONLY'
+                            ELSE 'MISSING' END,
+                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                  FROM books b WHERE b.id = ?
+                ON CONFLICT(artifact_id) DO NOTHING
+                """, legacyId, id);
+        List<String> logicalNames = getJdbcTemplate().query(
+                "SELECT CASE WHEN COALESCE(archive_entry, '') <> '' THEN archive_entry ELSE file_name END FROM books WHERE id = ?",
+                (rs, rowNum) -> rs.getString(1), id);
+        if (!logicalNames.isEmpty()) {
+            getJdbcTemplate().update(
+                    "UPDATE book_artifacts SET file_format = ? WHERE artifact_id = ? AND book_id = ?",
+                    BookDenormalizedValues.format(logicalNames.getFirst()), legacyId, id);
+        }
+        log.info("DB_BOOK_ARTIFACT_SOURCE_BACKFILL bookId={} artifactId={}", id, legacyId);
     }
 
     private void updatePreferredProjection(BookId bookId, String artifactId) {
@@ -349,12 +629,26 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                        missing_since = CASE
                            WHEN COALESCE((SELECT ba.local FROM book_artifacts ba
                                           WHERE ba.book_id = books.id AND ba.artifact_id = ?), 0) = 1
-                           THEN NULL ELSE COALESCE(missing_since, CURRENT_TIMESTAMP) END,
-                       format = COALESCE((SELECT NULLIF(ba.file_format, '') FROM book_artifacts ba
-                                          WHERE ba.book_id = books.id AND ba.artifact_id = ?), format)
+                           THEN NULL ELSE COALESCE(missing_since, CURRENT_TIMESTAMP) END
                  WHERE id = ?
-                """, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId,
+                """, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId,
                 bookId.asString());
+        canonicalizeBookProjectionFormat(bookId);
+    }
+
+    /**
+     * books.format is a canonical facet of the projected physical file, not a copy of
+     * book_artifacts.file_format. This matters for archives (ZIP versus logical FB2) and
+     * for registry aliases such as SEVEN_Z. Re-derive it after every artifact projection.
+     */
+    private void canonicalizeBookProjectionFormat(BookId bookId) {
+        List<String> fileNames = getJdbcTemplate().query(
+                "SELECT file_name FROM books WHERE id = ?",
+                (rs, rowNum) -> rs.getString(1),
+                bookId.asString());
+        if (fileNames.isEmpty()) return;
+        getJdbcTemplate().update("UPDATE books SET format = ? WHERE id = ?",
+                BookDenormalizedValues.format(fileNames.getFirst()), bookId.asString());
     }
 
     private static String blankToNull(String value) {
@@ -396,7 +690,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
             updated[0] += getJdbcTemplate().update(sql, params);
         });
         log.info("Batch оновлено рейтинг для {} книг", updated[0]);
-        bookIds.forEach(bookCache::evict);
+        bookCache.evictAll(bookIds);
     }
 
     @Override
@@ -414,6 +708,6 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
             updated[0] += getJdbcTemplate().update(sql, params);
         });
         log.info("Batch оновлено прогрес для {} книг", updated[0]);
-        bookIds.forEach(bookCache::evict);
+        bookCache.evictAll(bookIds);
     }
 }

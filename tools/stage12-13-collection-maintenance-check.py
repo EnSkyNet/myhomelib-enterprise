@@ -28,8 +28,9 @@ def watcher_contract() -> None:
     src = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/collection/monitor/CollectionSourceMonitorAdapter.java")
     for marker in (
         "WatchService", "ENTRY_CREATE", "ENTRY_MODIFY", "ENTRY_DELETE",
-        "scheduleDebouncedCheck", "pendingChecks.compute", "Sha256Support.file(source)",
-        "ZipFile", "CollectionSourceUpdateAvailableEvent", "changed.getFileName().equals",
+        "scheduleDebouncedCheck", "pendingChecks.compute", "hashNoFollow(safeSource)",
+        "Sha256Support.newDigest()", "LinkOption.NOFOLLOW_LINKS",
+        "SafeZipArchive", "CollectionSourceUpdateAvailableEvent", "changed.getFileName().equals",
     ):
         require(src, marker, "watcher")
     usecase = read("myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/collection/CollectionAutoUpdateUseCase.java")
@@ -100,10 +101,17 @@ def maintenance_contract() -> None:
         raise AssertionError("legacy UI still invokes destructive fix")
 
     ds = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/config/DataSourceConfig.java")
-    if ds.count("PRAGMA foreign_keys=ON") < 2:
-        raise AssertionError("foreign keys must be enabled on default and per-collection SQLite connections")
     meta_ds = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/config/MetadataDatabaseConfig.java")
-    require(meta_ds, "PRAGMA foreign_keys=ON", "metadata foreign keys")
+    pragmas = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/config/SqliteConnectionPragmas.java")
+    pragma_test = read("myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/config/DataSourceConfigLeakDetectionTest.java")
+    require(ds, "SqliteConnectionPragmas.applyInteractive", "collection SQLite PRAGMA policy")
+    require(meta_ds, "SqliteConnectionPragmas.applyBase", "metadata SQLite PRAGMA policy")
+    if pragmas.count("sqlite.enforceForeignKeys(true)") < 2:
+        raise AssertionError("foreign keys must be enabled for base and interactive SQLite connection policies")
+    for marker in ("collectionDataSourceAppliesEveryConnectionLocalPragmaToEveryPhysicalConnection",
+                   "baseSqlitePropertiesApplyForeignKeysAndBusyTimeoutWithoutInitSqlChaining",
+                   'pragmaLong(connection, "foreign_keys")'):
+        require(pragma_test, marker, "SQLite foreign-key behavioral regression")
     legacy_impl = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/integrity/DataIntegrityService.java")
     if "fixOrphanedData" in legacy_impl:
         raise AssertionError("legacy destructive repair implementation must be removed")

@@ -76,6 +76,7 @@ public class ZipArchiveReader implements ArchiveReader {
         if (archivePath == null || !Files.isRegularFile(archivePath, LinkOption.NOFOLLOW_LINKS)) return List.of();
         String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
         try {
+            checkCancelled(null);
             if (lower.endsWith(".7z")) return list7z(archivePath);
             if (lower.endsWith(".rar") || lower.endsWith(".cbr")) return listRar(archivePath);
             if (isStreamArchiveName(lower)) return listStreamArchive(archivePath);
@@ -96,6 +97,7 @@ public class ZipArchiveReader implements ArchiveReader {
         }
         String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
         try {
+            checkCancelled(null);
             if (lower.endsWith(".7z")) return read7zEntry(archivePath, entryName);
             if (lower.endsWith(".rar") || lower.endsWith(".cbr")) return readRarEntry(archivePath, entryName);
             if (isStreamArchiveName(lower)) return readStreamArchiveEntry(archivePath, entryName);
@@ -114,6 +116,7 @@ public class ZipArchiveReader implements ArchiveReader {
         if (archivePath == null || filter == null || !Files.isRegularFile(archivePath, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
         String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
         try {
+            checkCancelled(null);
             if (lower.endsWith(".7z")) return findFirst7zEntry(archivePath, filter);
             if (lower.endsWith(".rar") || lower.endsWith(".cbr")) return findFirstRarEntry(archivePath, filter);
             if (isStreamArchiveName(lower)) return findFirstStreamArchiveEntry(archivePath, filter);
@@ -282,6 +285,7 @@ public class ZipArchiveReader implements ArchiveReader {
             Enumeration<ZipArchiveEntry> entries = zip.getEntries();
             int count = 0;
             while (entries.hasMoreElements()) {
+                checkCancelled(null);
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
                     throw new IOException("ZIP contains too many entries");
                 }
@@ -312,6 +316,7 @@ public class ZipArchiveReader implements ArchiveReader {
             Enumeration<ZipArchiveEntry> entries = opened.zip().getEntries();
             int count = 0;
             while (entries.hasMoreElements()) {
+                checkCancelled(null);
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
                     throw new IOException("ZIP contains too many entries");
                 }
@@ -347,13 +352,14 @@ public class ZipArchiveReader implements ArchiveReader {
         }
     }
 
-    private ZipArchiveEntry findZipEntry(ZipFile zip, String requestedName) {
+    private ZipArchiveEntry findZipEntry(ZipFile zip, String requestedName) throws IOException {
         ZipArchiveEntry direct = zip.getEntry(requestedName);
         if (direct != null) return direct;
         String normalized = normalizeEntryName(requestedName);
         Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         int count = 0;
         while (entries.hasMoreElements()) {
+            checkCancelled(null);
             if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) return null;
             ZipArchiveEntry entry = entries.nextElement();
             if (normalizeEntryName(entry.getName()).equalsIgnoreCase(normalized)) return entry;
@@ -372,6 +378,7 @@ public class ZipArchiveReader implements ArchiveReader {
             SevenZArchiveEntry entry;
             int count = 0;
             while ((entry = sevenZ.getNextEntry()) != null) {
+                checkCancelled(null);
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("7z contains too many entries");
                 if (!entry.isDirectory() && entry.getName() != null) result.add(entry.getName());
             }
@@ -394,6 +401,7 @@ public class ZipArchiveReader implements ArchiveReader {
             SevenZArchiveEntry entry;
             int count = 0;
             while ((entry = sevenZ.getNextEntry()) != null) {
+                checkCancelled(null);
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("7z contains too many entries");
                 if (entry.isDirectory() || entry.getName() == null || !filter.test(entry.getName())) continue;
                 if (entry.getSize() > ArchiveSafetyLimits.MAX_ENTRY_BYTES) {
@@ -405,6 +413,7 @@ public class ZipArchiveReader implements ArchiveReader {
                     long total = 0;
                     int read;
                     while ((read = sevenZ.read(buffer, 0, buffer.length)) > 0) {
+                        checkCancelled(null);
                         total += read;
                         if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES) throw new IOException("7z entry exceeds safety limit");
                         out.write(buffer, 0, read);
@@ -429,6 +438,7 @@ public class ZipArchiveReader implements ArchiveReader {
             List<String> result = new ArrayList<>();
             int count = 0;
             for (FileHeader header : archive.getFileHeaders()) {
+                checkCancelled(null);
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("RAR contains too many entries");
                 if (!header.isDirectory() && header.getFileName() != null) result.add(header.getFileName());
             }
@@ -449,6 +459,7 @@ public class ZipArchiveReader implements ArchiveReader {
             }
             int count = 0;
             for (FileHeader header : archive.getFileHeaders()) {
+                checkCancelled(null);
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("RAR contains too many entries");
                 if (header.isDirectory() || header.getFileName() == null || !filter.test(header.getFileName())) continue;
                 InputStream delegate = archive.getInputStream(header);
@@ -526,6 +537,7 @@ public class ZipArchiveReader implements ArchiveReader {
             ArchiveEntry entry;
             int count = 0;
             while ((entry = in.getNextEntry()) != null) {
+                checkCancelled(null);
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("Archive contains too many entries");
                 if (!entry.isDirectory() && entry.getName() != null) result.add(entry.getName());
             }
@@ -543,6 +555,7 @@ public class ZipArchiveReader implements ArchiveReader {
             ArchiveEntry entry;
             int count = 0;
             while ((entry = in.getNextEntry()) != null) {
+                checkCancelled(null);
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("Archive contains too many entries");
                 if (entry.isDirectory() || entry.getName() == null || !filter.test(entry.getName())) continue;
                 if (entry.getSize() > ArchiveSafetyLimits.MAX_ENTRY_BYTES) throw new IOException("Archive entry is too large");
@@ -551,6 +564,7 @@ public class ZipArchiveReader implements ArchiveReader {
                     byte[] buffer = new byte[64 * 1024];
                     long total = 0; int n;
                     while ((n = in.read(buffer)) > 0) {
+                        checkCancelled(null);
                         total += n;
                         if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES) throw new IOException("Archive entry exceeds safety limit");
                         out.write(buffer, 0, n);
@@ -573,6 +587,7 @@ public class ZipArchiveReader implements ArchiveReader {
         Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         int count = 0;
         while (entries.hasMoreElements()) {
+            checkCancelled(null);
             if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("ZIP contains too many entries");
             ZipArchiveEntry entry = entries.nextElement();
             if (normalizeEntryName(entry.getName()).equalsIgnoreCase(normalized)) return entry;
@@ -638,6 +653,7 @@ public class ZipArchiveReader implements ArchiveReader {
 
             @Override
             public int read() throws IOException {
+                checkCancelled(null);
                 int value = super.read();
                 if (value >= 0) account(1);
                 return value;
@@ -645,6 +661,7 @@ public class ZipArchiveReader implements ArchiveReader {
 
             @Override
             public int read(byte[] b, int off, int len) throws IOException {
+                checkCancelled(null);
                 int n = super.read(b, off, len);
                 if (n > 0) account(n);
                 return n;

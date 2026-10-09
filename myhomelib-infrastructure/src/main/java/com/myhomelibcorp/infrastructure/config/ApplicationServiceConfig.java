@@ -128,10 +128,12 @@ public class ApplicationServiceConfig {
             com.myhomelibcorp.application.port.out.backup.CollectionBackupPort collectionBackupPort,
             LibraryOperationCoordinator operationCoordinator,
             com.myhomelibcorp.application.content.indexing.ContentIndexAutoSchedulingService contentIndexScheduling,
+            com.myhomelibcorp.application.service.DeferredImportIndexMaintenanceService deferredImportIndexMaintenance,
             @Value("${app.import.change-tracking-limit:50000}") int changeTrackingLimit) {
         return new UpdateCollectionFromNetworkUseCase(
                 downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, statisticsRepository,
-                collectionBackupPort, changeTrackingLimit, operationCoordinator, contentIndexScheduling);
+                collectionBackupPort, changeTrackingLimit, operationCoordinator, contentIndexScheduling,
+                deferredImportIndexMaintenance);
     }
 
     @Bean

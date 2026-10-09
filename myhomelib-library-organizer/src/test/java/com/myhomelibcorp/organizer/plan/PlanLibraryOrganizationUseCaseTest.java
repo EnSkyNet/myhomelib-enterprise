@@ -80,6 +80,28 @@ class PlanLibraryOrganizationUseCaseTest {
         assertThat(plan.actions().get(1).action()).isEqualTo(OrganizationAction.REVIEW_DUPLICATE);
     }
 
+    @Test
+    void rerunInsideSameLibraryRootKeepsAlreadyCanonicalBookAsNoop() {
+        Path root = temp.resolve("library");
+        Path canonical = root.resolve("Автор Тест/Серія/01 - Назва.epub");
+        OrganizerAnalysisItem base = item(canonical, "", "0123456789abcdef", DuplicateDecision.none());
+        OrganizerAnalysisItem alreadyOrganized = new OrganizerAnalysisItem(
+                canonical, "",
+                new DetectedBookFormat("epub", "application/epub+zip", DetectionConfidence.CERTAIN, "epub", true, "EPUB container"),
+                base.extractedMetadata(), base.identity(), base.fingerprint(),
+                new CanonicalFormatDecision("epub", false, true, "Already canonical EPUB"),
+                Path.of("Автор Тест/Серія/01 - Назва.epub"), DuplicateDecision.none(), List.of());
+
+        OrganizationPlan plan = useCase.plan(
+                new OrganizationAnalysis(root, root, Instant.now(), List.of(alreadyOrganized), List.of()),
+                profile(OrganizerDuplicatePolicy.KEEP_ALL));
+
+        assertThat(plan.actions()).singleElement().satisfies(item -> {
+            assertThat(item.targetPath()).isEqualTo(canonical);
+            assertThat(item.action()).isEqualTo(OrganizationAction.NOOP);
+        });
+    }
+
     private OrganizerAnalysisItem item(Path source, String sourceEntry, String sha, DuplicateDecision duplicate) {
         DetectedBookFormat format = new DetectedBookFormat(
                 "fb2", "application/x-fictionbook+xml", DetectionConfidence.CERTAIN, "fb2", false, "XML root");

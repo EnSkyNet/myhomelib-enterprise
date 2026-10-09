@@ -3,6 +3,7 @@ package com.myhomelibcorp.ui.imports;
 import com.myhomelibcorp.application.progress.OperationProgress;
 import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.ui.service.LocalizationService;
+import com.myhomelibcorp.ui.service.OperationStageText;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -189,34 +190,9 @@ public class ImportProgressDialog {
     }
 
     private String stageText(OperationStage stage) {
-        if (stage == null) return i18n.text("ui.import.stage.processing");
-        return switch (stage) {
-            case CHECKING_SERVER -> i18n.text("ui.import.stage.checking_server");
-            case DOWNLOADING -> i18n.text("ui.import.stage.downloading");
-            case CREATING_CHECKPOINT -> i18n.text("ui.import.stage.creating_checkpoint");
-            case VALIDATING -> i18n.text("ui.import.stage.validating");
-            case READING_CATALOG -> i18n.text("ui.import.stage.reading_catalog");
-            case IMPORTING -> i18n.text("ui.import.stage.importing");
-            case UPDATING_AUTHORS -> i18n.text("ui.import.stage.updating_authors");
-            case APPLYING_DELETIONS -> i18n.text("ui.import.stage.applying_deletions");
-            case UPDATING_SEARCH_INDEX -> i18n.text("ui.import.stage.updating_index");
-            case ROLLING_BACK -> i18n.text("ui.import.stage.rolling_back");
-            case REFRESHING_STATISTICS -> i18n.text("ui.import.stage.refreshing_statistics");
-            case INTEGRITY_CHECKS -> i18n.text("ui.import.stage.integrity_checks");
-            case SCANNING_DUPLICATES -> i18n.text("ui.import.stage.scanning_duplicates");
-            case SYNCHRONIZING_FILES -> i18n.text("ui.import.stage.synchronizing_files");
-            case OPTIMIZING_DATABASE -> i18n.text("ui.import.stage.optimizing_database");
-            case BACKING_UP -> i18n.text("ui.import.stage.backing_up");
-            case RESTORING -> i18n.text("ui.import.stage.restoring");
-            case CREATING_COLLECTION -> i18n.text("ui.import.stage.creating_collection");
-            case DELETING_COLLECTION -> i18n.text("ui.import.stage.deleting_collection");
-            case FINALIZING -> i18n.text("ui.import.stage.finalizing");
-            case BOOK_DOWNLOAD -> i18n.text("ui.import.stage.book_download");
-            case CONVERTING -> i18n.text("ui.import.stage.converting");
-            case COMPLETED -> i18n.text("ui.import.stage.completed");
-            case CANCELLED -> i18n.text("ui.import.stage.cancelled");
-            case FAILED -> i18n.text("ui.import.stage.failed");
-        };
+        return stage == null
+                ? i18n.text("ui.import.stage.processing")
+                : i18n.text(OperationStageText.key(stage));
     }
 
     public void updateStatus(String status) {

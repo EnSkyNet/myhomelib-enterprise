@@ -28,13 +28,7 @@ public class CachedSeriesRepository implements SeriesRepository {
 
     @Override
     public Optional<Series> findById(SeriesId id) {
-        Optional<Series> cached = seriesCache.get(id);
-        if (cached.isPresent()) {
-            return cached;
-        }
-        Optional<Series> series = delegate.findById(id);
-        series.ifPresent(s -> seriesCache.put(id, s));
-        return series;
+        return CacheAsideRepositorySupport.findById(id, seriesCache, delegate::findById);
     }
 
     @Override
@@ -44,15 +38,13 @@ public class CachedSeriesRepository implements SeriesRepository {
 
     @Override
     public Series save(Series series) {
-        Series saved = delegate.save(series);
-        seriesCache.put(saved.getId(), saved);
-        return saved;
+        return CacheAsideRepositorySupport.saveRequired(
+                series, seriesCache, delegate::save, Series::getId);
     }
 
     @Override
     public void deleteById(SeriesId id) {
-        delegate.deleteById(id);
-        seriesCache.evict(id);
+        CacheAsideRepositorySupport.deleteById(id, seriesCache, delegate::deleteById);
     }
 
     @Override

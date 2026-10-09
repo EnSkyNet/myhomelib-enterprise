@@ -18,6 +18,9 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
+import javafx.scene.Node;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -63,6 +66,7 @@ public class NavigationPanelController {
     private java.util.OptionalLong authorTotal = java.util.OptionalLong.empty();
     private NavigationQueryService.AuthorCursor authorCursor;
     private boolean loadingMoreAuthors;
+    private NavigationNodeDto selectionBeforePointerPress;
     private final PauseTransition authorSearchDebounce = new PauseTransition(Duration.millis(250));
 
     @FXML
@@ -141,6 +145,35 @@ public class NavigationPanelController {
                     selected.mode(), selected.id(), selected.label());
             onNodeSelected.accept(selected);
         });
+
+        // JavaFX does not fire selectedItemProperty again when the user clicks the row that is
+        // already selected. That made "author -> Operations/Reader -> same author" appear dead
+        // because the sidebar retained the old author selection. Remember the pre-click selection
+        // and explicitly re-dispatch only a genuine click on that same non-empty cell; a first click
+        // on a different row is still handled exactly once by the selection listener above.
+        navigationListView.addEventFilter(MouseEvent.MOUSE_PRESSED, event ->
+                selectionBeforePointerPress = navigationListView.getSelectionModel().getSelectedItem());
+        navigationListView.addEventFilter(MouseEvent.MOUSE_CLICKED, event -> {
+            NavigationNodeDto selected = navigationListView.getSelectionModel().getSelectedItem();
+            boolean repeatSelection = event.getButton() == MouseButton.PRIMARY
+                    && selected != null
+                    && selected.equals(selectionBeforePointerPress)
+                    && isNonEmptyListCell(event.getTarget());
+            selectionBeforePointerPress = null;
+            if (!repeatSelection || onNodeSelected == null || suppressSelectionCallback) return;
+            log.debug("Navigation node re-opened: mode={}, id={}, label={}",
+                    selected.mode(), selected.id(), selected.label());
+            onNodeSelected.accept(selected);
+        });
+    }
+
+    private static boolean isNonEmptyListCell(Object target) {
+        if (!(target instanceof Node node)) return false;
+        for (Node current = node; current != null; current = current.getParent()) {
+            if (current instanceof ListCell<?> cell) return !cell.isEmpty() && cell.getItem() != null;
+            if (current instanceof ListView<?>) return false;
+        }
+        return false;
     }
 
     public void setOnNodeSelected(Consumer<NavigationNodeDto> callback) {

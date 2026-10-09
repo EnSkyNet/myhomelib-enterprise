@@ -1,10 +1,15 @@
 package com.myhomelibcorp.infrastructure.reader;
 
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectReader;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.reader.ReaderBookPreferencesPort;
+import com.myhomelibcorp.application.port.out.reader.ReaderScopedPreferencesPort;
+import com.myhomelibcorp.application.reader.ReaderPreferenceScope;
+import com.myhomelibcorp.application.reader.ReaderPreferenceScopeType;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.domain.event.collection.CollectionOpenedEvent;
@@ -42,7 +47,7 @@ import java.util.function.Supplier;
  */
 @Service
 @Slf4j
-public class ReaderBookPreferencesService implements ReaderBookPreferencesPort {
+public class ReaderBookPreferencesService implements ReaderBookPreferencesPort, ReaderScopedPreferencesPort {
     private static final String LEGACY_MIGRATION_MARKER = "v71_reader_book_preferences_json_migrated";
     private static final int LEGACY_MIGRATION_BATCH = 400;
 
@@ -52,6 +57,8 @@ public class ReaderBookPreferencesService implements ReaderBookPreferencesPort {
                                         LibraryOperationCoordinator operationCoordinator) {
         this.collectionManager = collectionManager;
         this.objectMapper = objectMapper;
+        this.streamingNodeReader = objectMapper.reader()
+                .without(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         this.codec = codec;
         this.operationCoordinator = operationCoordinator;
     }
@@ -64,6 +71,7 @@ public class ReaderBookPreferencesService implements ReaderBookPreferencesPort {
 
     private final CollectionManager collectionManager;
     private final ObjectMapper objectMapper;
+    private final ObjectReader streamingNodeReader;
     private final ReaderPreferencesJsonCodec codec;
     private final LibraryOperationCoordinator operationCoordinator;
     private final Object migrationLock = new Object();
@@ -80,53 +88,92 @@ public class ReaderBookPreferencesService implements ReaderBookPreferencesPort {
 
     @Override
     public Optional<ReaderPreferences> load(String bookId) {
-        if (bookId == null || bookId.isBlank()) return Optional.empty();
+        ReaderPreferenceScope scope = ReaderPreferenceScope.tryBook(bookId);
+        return scope == null ? Optional.empty() : load(scope);
+    }
+
+    @Override
+    public void save(String bookId, ReaderPreferences preferences) {
+        ReaderPreferenceScope scope = ReaderPreferenceScope.tryBook(bookId);
+        if (scope != null) save(scope, preferences);
+    }
+
+    @Override
+    public void delete(String bookId) {
+        ReaderPreferenceScope scope = ReaderPreferenceScope.tryBook(bookId);
+        if (scope != null) delete(scope);
+    }
+
+    @Override
+    public Optional<ReaderPreferences> load(ReaderPreferenceScope scope) {
+        if (scope == null) return Optional.empty();
         return withReaderState(() -> {
             if (!collectionManager.hasActiveCollection()) return Optional.empty();
             ensureLegacyMigrated();
+            final String json;
             try {
-                String json = jdbc().queryForObject(
-                        "SELECT preferences_json FROM reader_book_preferences WHERE book_id=?",
-                        String.class, bookId);
-                if (json == null || json.isBlank()) return Optional.empty();
-                return Optional.of(codec.decode(json));
+                json = jdbc().queryForObject(
+                        "SELECT preferences_json FROM reader_preference_overrides WHERE scope_type=? AND scope_key=?",
+                        String.class, scope.type().name(), scope.key());
             } catch (EmptyResultDataAccessException e) {
                 return Optional.empty();
-            } catch (Exception e) {
-                throw new IllegalStateException("Не вдалося прочитати per-book Reader settings для " + bookId, e);
+            } catch (DataAccessException e) {
+                throw new IllegalStateException("Не вдалося прочитати Reader settings для " + scope, e);
+            }
+            if (json == null || json.isBlank()) return Optional.empty();
+            try {
+                return Optional.of(codec.decode(json));
+            } catch (Exception malformed) {
+                log.warn("Ігноруємо пошкоджений Reader profile {} і використовуємо нижчий scope: {}",
+                        scope, malformed.getMessage());
+                return Optional.empty();
             }
         });
     }
 
     @Override
-    public void save(String bookId, ReaderPreferences preferences) {
-        if (bookId == null || bookId.isBlank() || preferences == null) return;
+    public void save(ReaderPreferenceScope scope, ReaderPreferences preferences) {
+        if (scope == null || preferences == null) return;
         withReaderState(() -> {
             if (!collectionManager.hasActiveCollection()) return null;
             ensureLegacyMigrated();
             try {
                 String json = codec.encode(preferences);
                 jdbc().update("""
-                        INSERT INTO reader_book_preferences(book_id,preferences_json,updated_at)
-                        VALUES(?,?,CURRENT_TIMESTAMP)
-                        ON CONFLICT(book_id) DO UPDATE SET
+                        INSERT INTO reader_preference_overrides(scope_type,scope_key,preferences_json,updated_at)
+                        VALUES(?,?,?,CURRENT_TIMESTAMP)
+                        ON CONFLICT(scope_type,scope_key) DO UPDATE SET
                             preferences_json=excluded.preferences_json,
                             updated_at=CURRENT_TIMESTAMP
-                        """, bookId, json);
+                        """, scope.type().name(), scope.key(), json);
+                // Keep the released V42 table synchronized for backward-compatible tooling.
+                if (scope.type() == ReaderPreferenceScopeType.BOOK) {
+                    jdbc().update("""
+                            INSERT INTO reader_book_preferences(book_id,preferences_json,updated_at)
+                            VALUES(?,?,CURRENT_TIMESTAMP)
+                            ON CONFLICT(book_id) DO UPDATE SET
+                                preferences_json=excluded.preferences_json,
+                                updated_at=CURRENT_TIMESTAMP
+                            """, scope.key(), json);
+                }
                 return null;
             } catch (Exception e) {
-                throw new IllegalStateException("Не вдалося зберегти per-book Reader settings для " + bookId, e);
+                throw new IllegalStateException("Не вдалося зберегти Reader settings для " + scope, e);
             }
         });
     }
 
     @Override
-    public void delete(String bookId) {
-        if (bookId == null || bookId.isBlank()) return;
+    public void delete(ReaderPreferenceScope scope) {
+        if (scope == null) return;
         withReaderState(() -> {
             if (!collectionManager.hasActiveCollection()) return null;
             ensureLegacyMigrated();
-            jdbc().update("DELETE FROM reader_book_preferences WHERE book_id=?", bookId);
+            jdbc().update("DELETE FROM reader_preference_overrides WHERE scope_type=? AND scope_key=?",
+                    scope.type().name(), scope.key());
+            if (scope.type() == ReaderPreferenceScopeType.BOOK) {
+                jdbc().update("DELETE FROM reader_book_preferences WHERE book_id=?", scope.key());
+            }
             return null;
         });
     }
@@ -192,7 +239,7 @@ public class ReaderBookPreferencesService implements ReaderBookPreferencesPort {
         long migrated = 0L;
         try (java.io.InputStream input = Files.newInputStream(
                      safeLegacyFile, java.nio.file.StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
-             JsonParser parser = objectMapper.getFactory().createParser(input)) {
+             JsonParser parser = objectMapper.createParser(input)) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
                 throw new IllegalStateException("legacy reader-book-preferences.json is not a JSON object");
             }
@@ -200,7 +247,7 @@ public class ReaderBookPreferencesService implements ReaderBookPreferencesPort {
             while (parser.nextToken() != JsonToken.END_OBJECT) {
                 String bookId = parser.currentName();
                 parser.nextToken();
-                JsonNode node = objectMapper.readTree(parser);
+                JsonNode node = streamingNodeReader.readTree(parser);
                 if (bookId == null || bookId.isBlank() || node == null || !node.isObject()) continue;
                 // Normalize missing legacy fields against current domain defaults.
                 batch.add(new LegacyOverride(bookId, codec.encode(codec.decode(node))));
@@ -227,7 +274,14 @@ public class ReaderBookPreferencesService implements ReaderBookPreferencesPort {
                 .map(entry -> new Object[]{entry.bookId(), entry.preferencesJson()})
                 .toList();
         if (inserts.isEmpty()) return 0L;
+
         int[] counts = jdbc.batchUpdate("""
+                INSERT INTO reader_preference_overrides(scope_type,scope_key,preferences_json,updated_at)
+                VALUES('BOOK',?,?,CURRENT_TIMESTAMP)
+                ON CONFLICT(scope_type,scope_key) DO NOTHING
+                """, inserts);
+        // Mirror into the released V42 table for backward-compatible export/tools.
+        jdbc.batchUpdate("""
                 INSERT INTO reader_book_preferences(book_id,preferences_json,updated_at)
                 VALUES(?,?,CURRENT_TIMESTAMP)
                 ON CONFLICT(book_id) DO NOTHING

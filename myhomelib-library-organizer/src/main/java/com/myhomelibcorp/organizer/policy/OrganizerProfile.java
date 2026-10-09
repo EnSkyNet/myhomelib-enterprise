@@ -2,6 +2,8 @@ package com.myhomelibcorp.organizer.policy;
 
 import com.myhomelibcorp.epub.optimizer.EpubOptimizationProfile;
 
+import java.util.Locale;
+
 public record OrganizerProfile(String id, String name, String directoryTemplate, String filenameTemplate,
                                String canonicalReflowableFormat, PdfPolicy pdfPolicy,
                                OriginalRetentionPolicy originalRetention, OrganizerDuplicatePolicy duplicatePolicy,
@@ -12,7 +14,7 @@ public record OrganizerProfile(String id, String name, String directoryTemplate,
         id = blank(id) ? "epub-library" : id; name = blank(name) ? "EPUB-бібліотека" : name;
         directoryTemplate = blank(directoryTemplate) ? "{Author}/{?Series:{Series}/}" : directoryTemplate;
         filenameTemplate = blank(filenameTemplate) ? "{?Series:{SeriesNo:00} - }{Title}.{ext}" : filenameTemplate;
-        canonicalReflowableFormat = blank(canonicalReflowableFormat) ? "epub" : canonicalReflowableFormat.toLowerCase();
+        canonicalReflowableFormat = blank(canonicalReflowableFormat) ? "epub" : canonicalReflowableFormat.toLowerCase(Locale.ROOT);
         pdfPolicy = pdfPolicy == null ? PdfPolicy.KEEP_PDF : pdfPolicy;
         originalRetention = originalRetention == null ? OriginalRetentionPolicy.KEEP_ORIGINAL : originalRetention;
         duplicatePolicy = duplicatePolicy == null ? OrganizerDuplicatePolicy.REVIEW : duplicatePolicy;

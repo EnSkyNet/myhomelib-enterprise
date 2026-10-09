@@ -30,7 +30,7 @@ public final class CatalogUpdateRecoveryFiles {
     public static boolean isPending(String collectionId) {
         Path marker = marker(collectionId);
         try {
-            validateParent(marker, "catalog-update recovery marker parent");
+            RecoveryFileSupport.validateParent(marker, "catalog-update recovery marker parent");
             if (!Files.exists(marker, LinkOption.NOFOLLOW_LINKS)) return false;
             AtomicFileSupport.requireSafeRegularFile(marker, "catalog-update recovery marker");
             return true;
@@ -41,7 +41,7 @@ public final class CatalogUpdateRecoveryFiles {
 
     public static void markPending(String collectionId, String operationId) throws IOException {
         Path marker = marker(collectionId).toAbsolutePath().normalize();
-        validateParent(marker, "catalog-update recovery marker parent");
+        RecoveryFileSupport.validateParent(marker, "catalog-update recovery marker parent");
         if (Files.exists(marker, LinkOption.NOFOLLOW_LINKS)) {
             AtomicFileSupport.requireSafeRegularFile(marker, "catalog-update recovery marker");
             throw new IOException("Catalog update pending marker already exists: " + marker);
@@ -54,27 +54,17 @@ public final class CatalogUpdateRecoveryFiles {
     }
 
     public static void clear(String collectionId) throws IOException {
-        safeDelete(marker(collectionId), "catalog-update recovery marker cleanup");
-        safeDelete(checkpoint(collectionId), "catalog-update recovery checkpoint cleanup");
+        RecoveryFileSupport.safeDelete(marker(collectionId), "catalog-update recovery marker cleanup");
+        RecoveryFileSupport.safeDelete(checkpoint(collectionId), "catalog-update recovery checkpoint cleanup");
     }
 
     public static void deleteMarkerOnly(String collectionId) throws IOException {
-        safeDelete(marker(collectionId), "catalog-update recovery marker cleanup");
+        RecoveryFileSupport.safeDelete(marker(collectionId), "catalog-update recovery marker cleanup");
     }
 
-    private static void safeDelete(Path path, String role) throws IOException {
-        Path absolute = path.toAbsolutePath().normalize();
-        validateParent(absolute, role + " parent");
-        if (!Files.exists(absolute, LinkOption.NOFOLLOW_LINKS)) return;
-        Path safe = AtomicFileSupport.requireSafeRegularFile(absolute, role);
-        Files.delete(safe);
-    }
 
-    private static void validateParent(Path path, String role) throws IOException {
-        Path parent = path.toAbsolutePath().normalize().getParent();
-        if (parent == null) throw new IOException(role + " has no parent directory: " + path);
-        AtomicFileSupport.createDirectoriesNoLinks(parent, role);
-    }
+
+
 
     private static String safe(String value) {
         if (value == null || value.isBlank()) return "unknown";

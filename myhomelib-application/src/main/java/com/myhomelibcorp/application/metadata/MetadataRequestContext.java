@@ -1,34 +1,21 @@
 package com.myhomelibcorp.application.metadata;
 
+import com.myhomelibcorp.application.util.RequestDeadline;
+
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 
 /** Cooperative cancellation/deadline contract passed unchanged to every provider implementation. */
 public final class MetadataRequestContext {
-    private final AtomicBoolean cancelFlag;
-    private final long timeoutNanos;
-    private final long startedNanos;
-    private final LongSupplier clock;
+    private final RequestDeadline deadline;
 
     private MetadataRequestContext(Duration timeout, AtomicBoolean cancelFlag) {
-        this(timeout, cancelFlag, System::nanoTime);
+        this.deadline = RequestDeadline.start(timeout, cancelFlag == null ? null : cancelFlag::get);
     }
 
     MetadataRequestContext(Duration timeout, AtomicBoolean cancelFlag, LongSupplier clock) {
-        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
-            throw new IllegalArgumentException("timeout must be positive");
-        }
-        this.cancelFlag = cancelFlag == null ? new AtomicBoolean(false) : cancelFlag;
-        this.clock = java.util.Objects.requireNonNull(clock, "clock");
-        long timeoutNanos;
-        try {
-            timeoutNanos = timeout.toNanos();
-        } catch (ArithmeticException overflow) {
-            timeoutNanos = Long.MAX_VALUE;
-        }
-        this.timeoutNanos = timeoutNanos;
-        this.startedNanos = clock.getAsLong();
+        this.deadline = RequestDeadline.start(timeout, cancelFlag == null ? null : cancelFlag::get, clock);
     }
 
     public static MetadataRequestContext create(Duration timeout, AtomicBoolean cancelFlag) {
@@ -36,19 +23,15 @@ public final class MetadataRequestContext {
     }
 
     public boolean isCancelled() {
-        return cancelFlag.get() || Thread.currentThread().isInterrupted();
+        return deadline.isCancelled();
     }
 
     public boolean isTimedOut() {
-        return remainingTimeout().isZero();
+        return deadline.isTimedOut();
     }
 
     public Duration remainingTimeout() {
-        // Subtraction works across nanoTime's signed origin and wraparound; absolute
-        // deadline saturation does not. Intervals are bounded to Long.MAX_VALUE nanos.
-        long elapsed = clock.getAsLong() - startedNanos;
-        if (elapsed < 0 || elapsed >= timeoutNanos) return Duration.ZERO;
-        return Duration.ofNanos(timeoutNanos - elapsed);
+        return deadline.remainingTimeout();
     }
 
     /** Providers should call this before/after remote I/O and long parsing steps. */

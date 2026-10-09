@@ -1,10 +1,10 @@
 package com.myhomelibcorp.ui.presenter;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.cover.CoverExtractor;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.scene.image.Image;
@@ -29,7 +29,9 @@ public class CoverPresenter {
 
     private ImageView coverImageView;
     private final AtomicReference<CoverRequestKey> currentLoadingRequest = new AtomicReference<>();
+    private volatile UiBackgroundExecutor.CancellableSubmission<byte[]> coverTask;
     private CoverRequestKey lastLoadedRequest = null;
+    private boolean lastCoverAbsent;
 
     public void bind(ImageView coverImageView) {
         this.coverImageView = coverImageView;
@@ -37,22 +39,7 @@ public class CoverPresenter {
     }
 
     public void showCover(BookViewModel book) {
-        if (coverImageView == null || book == null) {
-            return;
-        }
-
-        String bookId = book.getId();
-        CoverRequestKey requestKey = new CoverRequestKey(applicationState.getCurrentLibraryCollectionId(), bookId);
-        log.debug("Завантаження обкладинки для книги: collectionId={}, id={}, title={}",
-                requestKey.collectionId(), bookId, book.getTitle());
-
-        // Не змішуємо результати однакових bookId з різних колекцій.
-        if (requestKey.equals(lastLoadedRequest) && book.getCover() != null) {
-            return;
-        }
-
-        clearCover();
-
+        if (book == null) return;
         BookDto dto = new BookDto();
         dto.setId(book.getId());
         dto.setTitle(book.getTitle());
@@ -64,41 +51,116 @@ public class CoverPresenter {
         dto.setArchiveEntry(book.getArchiveEntry());
         dto.setCollectionRoot(book.getCollectionRoot());
         dto.setProgress(book.getProgress());
+        showCoverInternal(dto, book);
+    }
+
+    /**
+     * Preferred path for details/workspace flows: keep the authoritative storage identity from the
+     * reconciled BookDto instead of projecting it through a presentation model first. This preserves
+     * libId/artifact/local-path information used by online/local archive resolution.
+     */
+    public void showCover(BookDto book) {
+        showCoverInternal(book, null);
+    }
+
+    private void showCoverInternal(BookDto book, BookViewModel targetViewModel) {
+        if (coverImageView == null || book == null) return;
+
+        String bookId = book.getId();
+        CoverRequestKey requestKey = new CoverRequestKey(
+                applicationState.getCurrentLibraryCollectionId(), bookId,
+                safe(book.getCollectionRoot()), safe(book.getFolder()), safe(book.getFileName()),
+                safe(book.getArchiveEntry()), safe(book.getPreferredArtifactId()));
+        log.debug("Завантаження обкладинки для книги: collectionId={}, id={}, title={}",
+                requestKey.collectionId(), bookId, book.getTitle());
+
+        if (requestKey.equals(lastLoadedRequest)
+                && (coverImageView.getImage() != null || lastCoverAbsent)) return;
+        if (requestKey.equals(currentLoadingRequest.get())) return;
+
+        cancelCurrentTask();
+        lastLoadedRequest = null;
+        lastCoverAbsent = false;
+        coverImageView.setImage(null);
 
         currentLoadingRequest.set(requestKey);
-        lastLoadedRequest = null;
+        long startedNanos = System.nanoTime();
+        log.info("COVER_START title='{}' id={} file='{}' archiveEntry='{}'",
+                book.getTitle(), bookId, book.getFileName(), book.getArchiveEntry());
 
-        backgroundExecutor.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
-            log.debug("Виклик coverExtractor.extractCover для bookId={}", bookId);
-            return coverExtractor.extractCover(dto);
-        }).thenAccept(imageData -> UiExecutor.runOnUiThread(() -> {
+        UiBackgroundExecutor.CancellableSubmission<byte[]> submission =
+                backgroundExecutor.submitInteractiveCancellable(() -> {
+                    log.debug("Виклик coverExtractor.extractCover для bookId={}", bookId);
+                    return coverExtractor.extractCover(book);
+                });
+        coverTask = submission;
+        submission.completion().thenAccept(imageData -> UiExecutor.runOnUiThread(() -> {
             boolean sameRequest = requestKey.equals(currentLoadingRequest.get());
             boolean sameCollection = java.util.Objects.equals(
                     requestKey.collectionId(), applicationState.getCurrentLibraryCollectionId());
-            if (coverImageView != null && sameRequest && sameCollection) {
+            if (coverImageView != null && sameRequest && sameCollection && coverTask == submission) {
                 if (imageData != null && imageData.length > 0) {
-                    Image fxImage = new Image(new ByteArrayInputStream(imageData));
-                    coverImageView.setImage(fxImage);
-                    book.setCover(fxImage);
-                    lastLoadedRequest = requestKey;
-                    log.debug("Обкладинку встановлено для {}", book.getTitle());
+                    Image fxImage = new Image(new ByteArrayInputStream(imageData),
+                            800, 1200, true, true); // bounded decode for thumbnail and high-DPI UI
+                    if (fxImage.isError() || fxImage.getWidth() <= 0 || fxImage.getHeight() <= 0) {
+                        Throwable decodeFailure = fxImage.getException();
+                        coverExtractor.invalidateCover(book);
+                        coverImageView.setImage(null);
+                        if (targetViewModel != null) targetViewModel.setCover(null);
+                        lastLoadedRequest = null;
+                        long durationMs = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+                        log.warn("COVER_FAIL title='{}' id={} bytes={} durationMs={} stage=decode error={}",
+                                book.getTitle(), bookId, imageData.length, durationMs,
+                                decodeFailure == null ? "unsupported-or-corrupt-image"
+                                        : UiExceptionSupport.technicalMessage(decodeFailure));
+                    } else {
+                        coverImageView.setImage(fxImage);
+                        if (targetViewModel != null) targetViewModel.setCover(fxImage);
+                        lastLoadedRequest = requestKey;
+                        lastCoverAbsent = false;
+                        long durationMs = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+                        log.info("COVER_DONE title='{}' id={} bytes={} width={} height={} durationMs={}",
+                                book.getTitle(), bookId, imageData.length, fxImage.getWidth(), fxImage.getHeight(), durationMs);
+                    }
                 } else {
                     log.debug("Обкладинка відсутня для {}", book.getTitle());
                     coverImageView.setImage(null);
+                    lastLoadedRequest = requestKey;
+                    lastCoverAbsent = true;
+                    long durationMs = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+                    log.info("COVER_NONE title='{}' id={} durationMs={}", book.getTitle(), bookId, durationMs);
                 }
+                currentLoadingRequest.compareAndSet(requestKey, null);
+                if (coverTask == submission) coverTask = null;
             } else {
                 log.debug("Пропускаємо застарілий запит обкладинки: requested={}, current={}, activeCollectionId={}",
                         requestKey, currentLoadingRequest.get(), applicationState.getCurrentLibraryCollectionId());
             }
         })).exceptionally(ex -> {
-            log.error("Помилка завантаження обкладинки для {}", book.getTitle(), ex);
+            Throwable cause = ex instanceof java.util.concurrent.CompletionException && ex.getCause() != null
+                    ? ex.getCause() : ex;
+            long durationMs = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+            if (cause instanceof java.util.concurrent.CancellationException) {
+                log.debug("COVER_CANCEL title='{}' id={} durationMs={}", book.getTitle(), bookId, durationMs);
+            } else {
+                log.warn("COVER_FAIL title='{}' id={} durationMs={} error={}",
+                        book.getTitle(), bookId, durationMs, UiExceptionSupport.technicalMessage(cause));
+            }
+            UiExecutor.runOnUiThread(() -> {
+                if (coverTask == submission) {
+                    coverTask = null;
+                    currentLoadingRequest.compareAndSet(requestKey, null);
+                }
+            });
             return null;
         });
     }
 
     public void clearCover() {
+        cancelCurrentTask();
         currentLoadingRequest.set(null);
         lastLoadedRequest = null;
+        lastCoverAbsent = false;
         UiExecutor.runOnUiThread(() -> {
             if (coverImageView != null) {
                 coverImageView.setImage(null);
@@ -106,6 +168,18 @@ public class CoverPresenter {
         });
     }
 
-    private record CoverRequestKey(String collectionId, String bookId) {
+    private void cancelCurrentTask() {
+        UiBackgroundExecutor.CancellableSubmission<byte[]> current = coverTask;
+        coverTask = null;
+        if (current != null) current.cancel();
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private record CoverRequestKey(String collectionId, String bookId, String collectionRoot,
+                                   String folder, String fileName, String archiveEntry,
+                                   String preferredArtifactId) {
     }
 }

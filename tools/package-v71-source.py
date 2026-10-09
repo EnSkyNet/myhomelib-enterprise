@@ -19,6 +19,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 DEFAULT_BASELINE = ROOT.parent / "baseline"
 EXCLUDED_DIRS = {".git", ".mvn", "target", "dist", "verification", ".idea", ".gradle", "__pycache__", ".pytest_cache"}
 EXCLUDED_FILES = {".DS_Store", "Thumbs.db", "mvnw", "mvnw.cmd"}
@@ -68,6 +69,10 @@ def run(cmd: list[str], cwd: Path, *, capture: bool = False, accepted: set[int] 
 def offline_checks(tree: Path) -> None:
     run([sys.executable, "tools/build-check-v7.py"], tree)
     run([sys.executable, "tools/static_release_check.py"], tree)
+    run([sys.executable, "tools/static-release-source-count-test.py"], tree)
+    run([sys.executable, "tools/implementation-completeness-check.py"], tree)
+    run([sys.executable, "tools/project-hygiene-check.py"], tree)
+    run([sys.executable, "tools/architecture-module-coverage-test.py"], tree)
     run([sys.executable, "tools/architecture-check.py"], tree)
     run([sys.executable, "tools/catalog-lifecycle-regression-check.py"], tree)
     run([sys.executable, "tools/v71-standalone-java-smoke.py"], tree)
@@ -104,6 +109,8 @@ def create_zip(source: Path, archive: Path, top_dir: str) -> None:
             if path.is_dir():
                 continue
             rel = path.relative_to(source)
+            if is_excluded(rel):
+                continue
             arc = Path(top_dir) / rel
             if path.is_symlink():
                 info = zipfile.ZipInfo(str(arc).replace(os.sep, "/"))

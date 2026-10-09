@@ -80,6 +80,22 @@ class SafeFilePublicationTest {
         assertEquals("NEW", Files.readString(staged));
     }
 
+
+    @Test
+    void publishReplacingIfUnchangedRejectsStagingBytesChangedAfterValidation() throws Exception {
+        Path target = temp.resolve("target.bin");
+        Path staged = temp.resolve("staged.bin");
+        Files.writeString(staged, "EXPECTED", StandardCharsets.UTF_8);
+        String stagedHash = SafeFilePublication.sha256(staged, "staging snapshot");
+        Files.writeString(staged, "REPLACED", StandardCharsets.UTF_8);
+
+        assertThrows(java.io.IOException.class,
+                () -> SafeFilePublication.publishReplacingIfUnchanged(
+                        staged, target, null, stagedHash, "fresh publication"));
+        assertFalse(Files.exists(target));
+        assertEquals("REPLACED", Files.readString(staged));
+    }
+
     @Test
     void freshOutputRefusesDanglingSymlinkWhenSupported() throws Exception {
         Path target = temp.resolve("target.bin");

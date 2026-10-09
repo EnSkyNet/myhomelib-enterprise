@@ -12,10 +12,10 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import java.util.Locale;
 
 /**
  * Durable filesystem journal for the destructive part of Delete Collection.
@@ -151,7 +151,7 @@ public final class CollectionDeletionRecoveryStore {
         if (!tombstone.getParent().equals(expectedDb.getParent())) {
             throw new IOException("Collection deletion tombstone escaped database directory");
         }
-        return new Pending(marker, markerHash, expectedDb, tombstone, hash.toLowerCase());
+        return new Pending(marker, markerHash, expectedDb, tombstone, hash.toLowerCase(Locale.ROOT));
     }
 
     /** Roll back a prepared deletion while the registry entry is still authoritative. */

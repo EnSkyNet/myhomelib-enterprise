@@ -29,9 +29,41 @@ class FfmpegAudioPlaybackBackendTest {
         assertThat(track.chapterIndexAt(20_000L)).isEqualTo(1);
     }
 
+    @Test void diagnosticCompactionDoesNotSplitSurrogatePair() throws Exception {
+        var compact = FfmpegAudioPlaybackBackend.class.getDeclaredMethod("compact", String.class);
+        compact.setAccessible(true);
+        String input = "x".repeat(299) + "😀" + "tail";
+
+        String result = (String) compact.invoke(null, input);
+
+        assertThat(result).doesNotEndWith(String.valueOf(input.charAt(299)));
+        assertThat(result.codePoints().toArray()).doesNotContain(0xD83D);
+    }
+
     @Test void fallsBackToOneSyntheticChapterWhenContainerHasNone() throws Exception {
         AudioTrack track = FfmpegAudioPlaybackBackend.parseProbe(Path.of("sample.mp3"), "[FORMAT]\nduration=3.250\n[/FORMAT]\n");
         assertThat(track.durationMillis()).isEqualTo(3_250L);
         assertThat(track.chapters()).hasSize(1);
+    }
+
+    @Test void diagnosticCompactionDoesNotSplitSurrogatePairAtLimit() throws Exception {
+        String diagnostic = "x".repeat(299) + "😀" + "tail";
+        var method = FfmpegAudioPlaybackBackend.class.getDeclaredMethod("compact", String.class);
+        method.setAccessible(true);
+
+        String compacted = (String) method.invoke(null, diagnostic);
+
+        assertThat(compacted.length()).isLessThanOrEqualTo(300);
+        assertThat(Character.isHighSurrogate(compacted.charAt(compacted.length() - 1))).isFalse();
+    }
+
+    @Test void diagnosticCompactionDoesNotDetachCombiningMarkAtLimit() throws Exception {
+        String diagnostic = "x".repeat(299) + "e\u0301" + "tail";
+        var method = FfmpegAudioPlaybackBackend.class.getDeclaredMethod("compact", String.class);
+        method.setAccessible(true);
+
+        String compacted = (String) method.invoke(null, diagnostic);
+
+        assertThat(compacted).hasSize(299);
     }
 }

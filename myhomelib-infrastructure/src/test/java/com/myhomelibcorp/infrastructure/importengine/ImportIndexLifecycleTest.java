@@ -55,7 +55,7 @@ class ImportIndexLifecycleTest {
         verifyIndexWasProbed("idx_book_authors_author_id");
         verifyIndexWasProbed("idx_book_genres_genre_code");
         verifyIndexWasNotProbed("idx_authors_name_lookup");
-        verifyIndexWasNotProbed("idx_keyword_books_book_id");
+        verifyIndexWasProbed("idx_keyword_books_book_id");
     }
 
     @Test
@@ -75,7 +75,7 @@ class ImportIndexLifecycleTest {
             var token = realLifecycle.suspendForFullSnapshot(true);
 
             assertIndexPresent(jdbc, "idx_authors_name_lookup", true);
-            assertIndexPresent(jdbc, "idx_keyword_books_book_id", true);
+            assertIndexPresent(jdbc, "idx_keyword_books_book_id", false);
             assertIndexPresent(jdbc, "idx_books_title", false);
             assertIndexPresent(jdbc, "idx_books_active_id", false);
             assertIndexPresent(jdbc, "idx_book_authors_author_id", false);
@@ -85,6 +85,7 @@ class ImportIndexLifecycleTest {
             assertIndexPresent(jdbc, "idx_books_title", true);
             assertIndexPresent(jdbc, "idx_books_active_id", true);
             assertIndexPresent(jdbc, "idx_book_authors_author_id", true);
+            assertIndexPresent(jdbc, "idx_keyword_books_book_id", true);
         } finally {
             ds.close();
         }

@@ -5,24 +5,26 @@ import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.myhomelibcorp.application.textprovider.TextProviderErrorKind;
 import com.myhomelibcorp.application.textprovider.TextProviderException;
+import com.myhomelibcorp.application.textprovider.TextProviderExecutionSupport;
 import com.myhomelibcorp.application.textprovider.TextProviderFailures;
 import com.myhomelibcorp.application.textprovider.TextProviderIssue;
 import com.myhomelibcorp.application.textprovider.TextProviderRequestContext;
+import com.myhomelibcorp.application.textprovider.TextProviderRegistrySupport;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 public class TranslationService {
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(10);
+    private static final Comparator<TranslationProvider> DEFAULT_PROVIDER_ORDER =
+            Comparator.comparing(TranslationProvider::isRemote)
+                    .thenComparing(TranslationProvider::id);
 
     private final List<TranslationProvider> providers;
     private final ExecutorPort executor;
@@ -42,8 +44,7 @@ public class TranslationService {
     public List<TranslationProviderDescriptor> availableProviders() {
         return allProviders().stream()
                 .filter(TranslationProvider::isEnabled)
-                .sorted(Comparator.comparing(TranslationProvider::isRemote)
-                        .thenComparing(TranslationProvider::id))
+                .sorted(DEFAULT_PROVIDER_ORDER)
                 .map(provider -> new TranslationProviderDescriptor(
                         provider.id(), provider.displayName(), provider.isRemote()))
                 .toList();
@@ -63,35 +64,24 @@ public class TranslationService {
             Duration timeout,
             AtomicBoolean cancelFlag) {
         Objects.requireNonNull(query, "query");
-        validateTimeout(timeout);
+        TextProviderExecutionSupport.requirePositiveTimeout(timeout);
         AtomicBoolean cancellation = cancelFlag == null ? new AtomicBoolean(false) : cancelFlag;
         if (cancellation.get()) return CompletableFuture.completedFuture(TranslationLookupResult.cancelled(null));
 
         TranslationProvider provider = selectProvider(providerId);
         if (provider == null) {
             return CompletableFuture.completedFuture(TranslationLookupResult.failed(new TextProviderIssue(
-                    clean(providerId), "", TextProviderErrorKind.UNAVAILABLE, "Translation provider is unavailable")));
+                    TextProviderRegistrySupport.normalizeId(providerId), "", TextProviderErrorKind.UNAVAILABLE, "Translation provider is unavailable")));
         }
 
         TextProviderRequestContext context = TextProviderRequestContext.create(timeout, cancellation);
-        com.myhomelibcorp.application.port.out.executor.ExecutorPort.CancellableTask<TranslationLookupResult> submitted;
-        try {
-            submitted = executor.submitCancellable(() -> callProvider(provider, query, context));
-        } catch (RuntimeException rejected) {
-            return CompletableFuture.completedFuture(failed(provider, TextProviderErrorKind.UNAVAILABLE));
-        }
-        if (submitted == null || submitted.future() == null) {
-            return CompletableFuture.completedFuture(failed(provider, TextProviderErrorKind.UNAVAILABLE));
-        }
-
-        return submitted.future().orTimeout(safeTimeoutMillis(timeout), TimeUnit.MILLISECONDS)
-                .handle((result, failure) -> {
-                    if (failure != null && TextProviderFailures.unwrap(failure) instanceof TimeoutException) {
-                        cancellation.set(true);
-                        submitted.cancel();
-                    }
-                    return failure == null ? result : mapFailure(provider, failure);
-                });
+        return TextProviderExecutionSupport.submitBounded(
+                executor,
+                timeout,
+                cancellation,
+                () -> callProvider(provider, query, context),
+                () -> failed(provider, TextProviderErrorKind.UNAVAILABLE),
+                failure -> mapFailure(provider, failure));
     }
 
     private TranslationLookupResult callProvider(
@@ -108,31 +98,17 @@ public class TranslationService {
     }
 
     private TranslationProvider selectProvider(String providerId) {
-        String requested = clean(providerId);
-        if (!requested.isBlank()) {
-            return allProviders().stream()
-                    .filter(TranslationProvider::isEnabled)
-                    .filter(provider -> requested.equals(provider.id()))
-                    .findFirst().orElse(null);
-        }
-        return allProviders().stream()
-                .filter(TranslationProvider::isEnabled)
-                .sorted(Comparator.comparing(TranslationProvider::isRemote)
-                        .thenComparing(TranslationProvider::id))
-                .findFirst().orElse(null);
+        return TextProviderRegistrySupport.select(
+                allProviders(), providerId, TranslationProvider::isEnabled,
+                DEFAULT_PROVIDER_ORDER, TranslationProvider::id);
     }
 
     private static TranslationLookupResult mapFailure(TranslationProvider provider, Throwable failure) {
-        Throwable root = TextProviderFailures.unwrap(failure);
-        if (root instanceof TextProviderException providerFailure) {
-            TextProviderIssue issue = issue(provider, providerFailure.kind());
-            return providerFailure.kind() == TextProviderErrorKind.CANCELLED
-                    ? TranslationLookupResult.cancelled(issue)
-                    : TranslationLookupResult.failed(issue);
-        }
-        if (root instanceof TimeoutException) return failed(provider, TextProviderErrorKind.TIMEOUT);
-        if (root instanceof CancellationException) return TranslationLookupResult.cancelled(issue(provider, TextProviderErrorKind.CANCELLED));
-        return failed(provider, TextProviderErrorKind.FAILED);
+        TextProviderErrorKind kind = TextProviderFailures.classify(failure);
+        TextProviderIssue issue = issue(provider, kind);
+        return kind == TextProviderErrorKind.CANCELLED
+                ? TranslationLookupResult.cancelled(issue)
+                : TranslationLookupResult.failed(issue);
     }
 
     private static TranslationLookupResult failed(TranslationProvider provider, TextProviderErrorKind kind) {
@@ -156,28 +132,10 @@ public class TranslationService {
         };
     }
 
-    private static void validateTimeout(Duration timeout) {
-        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
-            throw new IllegalArgumentException("timeout must be positive");
-        }
-    }
 
-    private static long safeTimeoutMillis(Duration timeout) {
-        try {
-            return Math.max(1L, timeout.toMillis());
-        } catch (ArithmeticException overflow) {
-            return Long.MAX_VALUE;
-        }
-    }
-
-    private static String clean(String value) {
-        return value == null ? "" : value.trim();
-    }
     private List<TranslationProvider> allProviders() {
-        java.util.LinkedHashMap<String, TranslationProvider> result = new java.util.LinkedHashMap<>();
-        providers.forEach(provider -> result.putIfAbsent(provider.id(), provider));
-        runtimeExtensions.translationProviders().forEach(provider -> result.putIfAbsent(provider.id(), provider));
-        return List.copyOf(result.values());
+        return TextProviderRegistrySupport.mergeUniqueById(
+                providers, runtimeExtensions.translationProviders(), TranslationProvider::id);
     }
 
 }

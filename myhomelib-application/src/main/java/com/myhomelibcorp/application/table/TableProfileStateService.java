@@ -54,5 +54,12 @@ public class TableProfileStateService {
     private String prefix(String profile) { return ROOT + safe(profile) + "."; }
     private static String safe(String value) { return value == null || value.isBlank() ? "default" : value.replaceAll("[^A-Za-z0-9_.-]", "_"); }
     private int intValue(String key, int fallback) { try { return Integer.parseInt(settings.get(key, Integer.toString(fallback))); } catch (Exception e) { return fallback; } }
-    private double doubleValue(String key, double fallback) { try { return Double.parseDouble(settings.get(key, Double.toString(fallback))); } catch (Exception e) { return fallback; } }
+    private double doubleValue(String key, double fallback) {
+        try {
+            double value = Double.parseDouble(settings.get(key, Double.toString(fallback)));
+            return Double.isFinite(value) ? value : fallback;
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
 }

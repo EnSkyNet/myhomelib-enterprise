@@ -73,22 +73,33 @@ public class ReaderPositionManager {
             return ReaderPosition.start();
         }
 
-        long maxOffset = document.totalTextLength();
+        long maxOffset = Math.max(0L, document.totalTextLength());
         long offset = position.textOffset();
-
-        if (offset < 0) {
+        if (offset < 0 || maxOffset == 0) {
             return ReaderPosition.start();
         }
+
+        int chapterCount = document.chapters() == null ? 0 : document.chapters().size();
         if (offset >= maxOffset) {
-            return new ReaderPosition(
-                    document.chapters().size() - 1,
-                    maxOffset > 0 ? maxOffset - 1 : 0,
-                    0,
-                    0
-            );
+            int lastChapter = chapterCount == 0 ? 0 : chapterCount - 1;
+            return new ReaderPosition(lastChapter, maxOffset - 1, 0, 0);
         }
 
-        return position;
+        int chapterIndex = position.chapterIndex();
+        if (chapterCount == 0) {
+            chapterIndex = 0;
+        } else if (chapterIndex < 0 || chapterIndex >= chapterCount) {
+            chapterIndex = Math.max(0, Math.min(chapterCount - 1, document.chapterIndexAt(offset)));
+        }
+
+        int paragraphIndex = Math.max(0, position.paragraphIndex());
+        int charOffset = Math.max(0, position.charOffset());
+        if (chapterIndex == position.chapterIndex()
+                && paragraphIndex == position.paragraphIndex()
+                && charOffset == position.charOffset()) {
+            return position;
+        }
+        return new ReaderPosition(chapterIndex, offset, paragraphIndex, charOffset);
     }
 
     public ReaderPosition startPosition() {
@@ -99,8 +110,12 @@ public class ReaderPositionManager {
         if (document == null) {
             return ReaderPosition.start();
         }
-        long maxOffset = document.totalTextLength();
-        int lastChapter = document.chapters().size() - 1;
-        return new ReaderPosition(lastChapter, maxOffset > 0 ? maxOffset - 1 : 0, 0, 0);
+        long maxOffset = Math.max(0L, document.totalTextLength());
+        if (maxOffset == 0) {
+            return ReaderPosition.start();
+        }
+        int chapterCount = document.chapters() == null ? 0 : document.chapters().size();
+        int lastChapter = chapterCount == 0 ? 0 : chapterCount - 1;
+        return new ReaderPosition(lastChapter, maxOffset - 1, 0, 0);
     }
 }

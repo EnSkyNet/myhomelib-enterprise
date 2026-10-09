@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,6 +35,40 @@ class InpxReaderResourceTest {
             support.when(() -> SafeZipArchive.openDetected(safePath, "INPX source")).thenReturn(opened);
             var failure = assertThrows(UncheckedIOException.class, () -> new InpxReader().read(path));
             assertThat(failure.getCause()).isInstanceOf(IOException.class).hasMessageContaining("too large");
+            verify(opened).close();
+        }
+    }
+
+    @Test
+    void rejectsArchiveWhoseDeclaredEntriesExceedCumulativeSafetyLimit(@TempDir Path directory) throws Exception {
+        Path path = directory.resolve("cumulative-bomb.inpx");
+        Files.write(path, new byte[]{0});
+        Path safePath = path.toAbsolutePath().normalize();
+        SafeZipArchive opened = mock(SafeZipArchive.class);
+        ZipFile zip = mock(ZipFile.class);
+        long entryBytes = 400L * 1024L * 1024L;
+        long compressedBytes = 5L * 1024L * 1024L;
+        List<ZipArchiveEntry> entries = java.util.stream.IntStream.range(0, 3)
+                .mapToObj(i -> {
+                    ZipArchiveEntry entry = new ZipArchiveEntry("catalog-" + i + ".inp");
+                    entry.setSize(entryBytes);
+                    entry.setCompressedSize(compressedBytes);
+                    return entry;
+                })
+                .toList();
+        when(opened.zip()).thenReturn(zip);
+        when(zip.getEntries()).thenAnswer(call -> Collections.enumeration(entries));
+        when(zip.getInputStream(any(ZipArchiveEntry.class))).thenAnswer(call -> InputStream.nullInputStream());
+
+        try (var support = mockStatic(SafeZipArchive.class)) {
+            support.when(() -> SafeZipArchive.openDetected(safePath, "INPX source")).thenReturn(opened);
+
+            var failure = assertThrows(UncheckedIOException.class, () -> new InpxReader().count(path));
+
+            assertThat(failure.getCause())
+                    .isInstanceOf(IOException.class)
+                    .hasMessageContaining("cumulative")
+                    .hasMessageContaining("safety limit");
             verify(opened).close();
         }
     }

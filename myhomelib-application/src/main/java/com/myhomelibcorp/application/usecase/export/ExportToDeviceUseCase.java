@@ -725,13 +725,7 @@ public class ExportToDeviceUseCase {
     }
 
     private static boolean mayTryNextProvider(Throwable failure) {
-        Throwable current = failure;
-        int depth = 0;
-        while (current != null && depth++ < 16) {
-            if (current instanceof ConversionFailureSignal signal) return signal.mayTryNextProvider();
-            current = current.getCause();
-        }
-        return false;
+        return ConversionFailureSignal.mayTryNextProvider(failure);
     }
 
     private List<ConversionSource> conversionSources(Book book) {

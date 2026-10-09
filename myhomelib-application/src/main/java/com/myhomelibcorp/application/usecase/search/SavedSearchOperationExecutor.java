@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.usecase.search;
 
+import static com.myhomelibcorp.application.operation.LibraryOperationLeaseSupport.withSharedLease;
+import static com.myhomelibcorp.application.operation.LibraryOperationLeaseSupport.withSharedTransaction;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -29,32 +31,12 @@ public class SavedSearchOperationExecutor {
 
     public <T> T query(Supplier<T> query) {
         Objects.requireNonNull(query, "query");
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
-        try {
-            T result = query.get();
-            lease.markCompleted("");
-            return result;
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        return withSharedLease(operationCoordinator, LibraryOperationType.QUERY, query);
     }
 
     public <T> T mutate(Supplier<T> mutation) {
         Objects.requireNonNull(mutation, "mutation");
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EDIT);
-        try {
-            T result = transactionTemplate.execute(status -> mutation.get());
-            lease.markCompleted("");
-            return result;
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        return withSharedTransaction(operationCoordinator, LibraryOperationType.EDIT, transactionTemplate, mutation);
     }
 
     public void mutate(Runnable mutation) {

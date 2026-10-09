@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.reader;
 
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
+import com.myhomelibcorp.ui.util.Utf16BoundarySupport;
 import com.myhomelibcorp.reader.api.ReaderDocument;
 import com.myhomelibcorp.reader.api.ReaderPosition;
 import com.myhomelibcorp.reader.service.ReaderSearchService;
@@ -63,7 +64,8 @@ public class SearchDialogController {
                 } else {
                     String context = item.context();
                     if (context != null && context.length() > 80) {
-                        context = context.substring(0, 80) + "...";
+                        int end = Utf16BoundarySupport.safeCut(context, 80);
+                        context = context.substring(0, end) + "...";
                     }
                     setText(context);
                 }
@@ -99,6 +101,8 @@ public class SearchDialogController {
 
         String query = searchField.getText();
         if (query == null || query.isBlank()) {
+            searchGeneration.incrementAndGet();
+            cancelSearch();
             statusLabel.setText(i18n.text("ui.reader.search.enter_text"));
             resultsListView.getItems().clear();
             return;

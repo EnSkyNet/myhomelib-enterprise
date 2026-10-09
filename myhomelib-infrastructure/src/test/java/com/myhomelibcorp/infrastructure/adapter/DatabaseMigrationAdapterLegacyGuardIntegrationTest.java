@@ -73,7 +73,8 @@ class DatabaseMigrationAdapterLegacyGuardIntegrationTest {
         when(manager.getCurrentDataSource()).thenReturn(ds);
         SqliteAuthorRepository authors = mock(SqliteAuthorRepository.class);
         KeywordIndexBackfillService keywords = mock(KeywordIndexBackfillService.class);
-        return new DatabaseMigrationAdapter(manager, authors, keywords, new LegacyMigrationDataGuard());
+        return new DatabaseMigrationAdapter(manager, authors, keywords, new LegacyMigrationDataGuard(),
+                mock(com.myhomelibcorp.application.port.out.infrastructure.ImportIndexMaintenancePort.class));
     }
 
     private static DriverManagerDataSource dataSource(Path db) {

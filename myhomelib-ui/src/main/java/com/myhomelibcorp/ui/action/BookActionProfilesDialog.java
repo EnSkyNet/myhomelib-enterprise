@@ -11,14 +11,13 @@ import com.myhomelibcorp.application.action.BookActionProfile;
 import com.myhomelibcorp.application.action.BookActionProfileService;
 import com.myhomelibcorp.application.util.CommandTemplate;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.FileChooserService;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
-import javafx.stage.DirectoryChooser;
-import javafx.stage.FileChooser;
 import javafx.stage.Window;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -36,6 +35,7 @@ public class BookActionProfilesDialog {
     private final BookActionProfileService profileService;
     private final BookActionExecutionService executionService;
     private final DialogService dialogs;
+    private final FileChooserService fileChooserService;
 
     public void show(Window owner) {
         Dialog<ButtonType> dialog = new Dialog<>();
@@ -189,13 +189,13 @@ public class BookActionProfilesDialog {
         wait.setSelected(current != null && current.waitForExit());
         Button chooseExe = new Button("...");
         chooseExe.setOnAction(e -> {
-            FileChooser chooser = new FileChooser(); chooser.setTitle(UiText.text("ui.java.book_action_profiles_dialog.2a2405437c"));
-            File file = chooser.showOpenDialog(owner); if (file != null) executable.setText(file.getAbsolutePath());
+            File file = fileChooserService.chooseFile(owner, UiText.text("ui.java.book_action_profiles_dialog.2a2405437c"), List.of());
+            if (file != null) executable.setText(file.getAbsolutePath());
         });
         Button chooseDir = new Button("...");
         chooseDir.setOnAction(e -> {
-            DirectoryChooser chooser = new DirectoryChooser(); chooser.setTitle(UiText.text("ui.java.book_action_profiles_dialog.c97684da7c"));
-            File dir = chooser.showDialog(owner); if (dir != null) working.setText(dir.getAbsolutePath());
+            File dir = fileChooserService.chooseDirectory(owner, UiText.text("ui.java.book_action_profiles_dialog.c97684da7c"));
+            if (dir != null) working.setText(dir.getAbsolutePath());
         });
         GridPane grid = new GridPane(); grid.setHgap(8); grid.setVgap(8); grid.setPadding(new Insets(8));
         grid.add(new Label(UiText.text("ui.java.book_action_profiles_dialog.d91bea5e26")),0,0); grid.add(executable,1,0); grid.add(chooseExe,2,0);

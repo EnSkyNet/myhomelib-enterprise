@@ -1,7 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.repository.SavedSearchRepository;
 import com.myhomelibcorp.domain.model.search.SavedSearch;
 import com.myhomelibcorp.domain.model.search.SavedSearchKind;
@@ -95,7 +95,7 @@ public class SqliteSavedSearchRepository implements SavedSearchRepository {
         if (!search.isSmartCollection()) return search.getFilters();
         try {
             return objectMapper.writeValueAsString(search.getSmartCollection());
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Cannot serialize smart collection " + search.getName(), e);
         }
     }
@@ -106,7 +106,7 @@ public class SqliteSavedSearchRepository implements SavedSearchRepository {
         }
         try {
             return objectMapper.readValue(json, SmartCollectionSpec.class);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Cannot deserialize smart collection definition", e);
         }
     }

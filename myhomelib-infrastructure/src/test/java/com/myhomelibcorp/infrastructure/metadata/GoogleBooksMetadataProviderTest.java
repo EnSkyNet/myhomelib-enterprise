@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.metadata;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.metadata.MetadataProviderErrorKind;
 import com.myhomelibcorp.application.metadata.MetadataProviderException;
 import com.myhomelibcorp.application.metadata.MetadataQuery;

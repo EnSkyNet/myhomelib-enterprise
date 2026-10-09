@@ -11,10 +11,19 @@ import com.myhomelibcorp.plugin.api.PluginPermission;
 import com.myhomelibcorp.plugin.api.PluginService;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -48,6 +57,20 @@ class CalibreConverterPluginTest {
             if (previous == null) System.clearProperty("myhomelib.calibre.executable");
             else System.setProperty("myhomelib.calibre.executable", previous);
             Files.deleteIfExists(fake);
+        }
+    }
+
+    @Test
+    void legacyFiveMinuteRuntimePropertyUsesLongConversionDefault() throws Exception {
+        String previous = System.getProperty("myhomelib.calibre.timeoutSeconds");
+        try {
+            System.setProperty("myhomelib.calibre.timeoutSeconds", "300");
+            var method = CalibreConverterPlugin.CalibreConverter.class.getDeclaredMethod("configuredTimeout");
+            method.setAccessible(true);
+            assertThat(method.invoke(null)).isEqualTo(Duration.ofMinutes(30));
+        } finally {
+            if (previous == null) System.clearProperty("myhomelib.calibre.timeoutSeconds");
+            else System.setProperty("myhomelib.calibre.timeoutSeconds", previous);
         }
     }
 
@@ -97,6 +120,87 @@ class CalibreConverterPluginTest {
             Files.deleteIfExists(script);
             Files.deleteIfExists(target);
         }
+    }
+
+    @Test
+    void processTreeTerminationWaitsForForciblyKilledDescendants() throws Exception {
+        DelayedTerminationHandle child = new DelayedTerminationHandle(4202, List.of(), true);
+        DelayedTerminationHandle root = new DelayedTerminationHandle(4201, List.of(child), false);
+        DelayedTerminationProcess process = new DelayedTerminationProcess(root);
+
+        var method = CalibreConverterPlugin.CalibreConverter.class
+                .getDeclaredMethod("terminateProcessTree", Process.class);
+        method.setAccessible(true);
+        method.invoke(null, process);
+
+        assertThat(root.isAlive()).isFalse();
+        assertThat(child.isAlive())
+                .as("Calibre termination must not return while a forcibly-killed child is still alive")
+                .isFalse();
+    }
+
+    private static final class DelayedTerminationProcess extends Process {
+        private final DelayedTerminationHandle handle;
+
+        private DelayedTerminationProcess(DelayedTerminationHandle handle) { this.handle = handle; }
+        @Override public OutputStream getOutputStream() { return new ByteArrayOutputStream(); }
+        @Override public InputStream getInputStream() { return InputStream.nullInputStream(); }
+        @Override public InputStream getErrorStream() { return InputStream.nullInputStream(); }
+        @Override public int waitFor() throws InterruptedException {
+            while (handle.isAlive()) Thread.sleep(5);
+            return 0;
+        }
+        @Override public boolean waitFor(long timeout, TimeUnit unit) throws InterruptedException {
+            long deadline = System.nanoTime() + unit.toNanos(timeout);
+            while (handle.isAlive() && System.nanoTime() < deadline) Thread.sleep(5);
+            return !handle.isAlive();
+        }
+        @Override public int exitValue() {
+            if (handle.isAlive()) throw new IllegalThreadStateException("running");
+            return 0;
+        }
+        @Override public void destroy() { handle.destroy(); }
+        @Override public Process destroyForcibly() { handle.destroyForcibly(); return this; }
+        @Override public boolean isAlive() { return handle.isAlive(); }
+        @Override public ProcessHandle toHandle() { return handle; }
+    }
+
+    private static final class DelayedTerminationHandle implements ProcessHandle {
+        private final long pid;
+        private final List<ProcessHandle> descendants;
+        private final boolean delayedForcibleExit;
+        private final AtomicBoolean alive = new AtomicBoolean(true);
+        private final CompletableFuture<ProcessHandle> exited = new CompletableFuture<>();
+
+        private DelayedTerminationHandle(long pid, List<? extends ProcessHandle> descendants, boolean delayedForcibleExit) {
+            this.pid = pid;
+            this.descendants = List.copyOf(descendants);
+            this.delayedForcibleExit = delayedForcibleExit;
+        }
+        @Override public long pid() { return pid; }
+        @Override public Optional<ProcessHandle> parent() { return Optional.empty(); }
+        @Override public java.util.stream.Stream<ProcessHandle> children() { return descendants.stream(); }
+        @Override public java.util.stream.Stream<ProcessHandle> descendants() { return descendants.stream(); }
+        @Override public Info info() { throw new UnsupportedOperationException(); }
+        @Override public CompletableFuture<ProcessHandle> onExit() { return exited; }
+        @Override public boolean supportsNormalTermination() { return true; }
+        @Override public boolean destroy() {
+            if (!delayedForcibleExit) markExited();
+            return true;
+        }
+        @Override public boolean destroyForcibly() {
+            if (!delayedForcibleExit) markExited();
+            else Thread.startVirtualThread(() -> {
+                try { Thread.sleep(150); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                markExited();
+            });
+            return true;
+        }
+        @Override public boolean isAlive() { return alive.get(); }
+        @Override public int compareTo(ProcessHandle other) { return Long.compare(pid, other.pid()); }
+        @Override public int hashCode() { return Long.hashCode(pid); }
+        @Override public boolean equals(Object other) { return other instanceof ProcessHandle handle && handle.pid() == pid; }
+        private void markExited() { if (alive.compareAndSet(true, false)) exited.complete(this); }
     }
 
     private static Book book() {

@@ -28,9 +28,11 @@ check("system TTS supports Windows/macOS/eSpeak without cloud transport",
 check("TTS playback is asynchronous and supports pause/resume/stop",
       contains("myhomelib-application/src/main/java/com/myhomelibcorp/application/tts/TtsPlaybackService.java",
                "executor", "pause", "resume", "stop", "repeatCurrentAfterPause"))
-check("Reader TTS uses system voices, speed dialog and FX-thread highlight callback",
+check("Reader TTS uses system voices, speed dialog and UI-thread sentence/highlight callback",
+      contains("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderTtsCoordinator.java",
+               "playbackService.availableVoices()", "TextInputDialog", "UiExecutor.runOnUiThread", "context.showSentence") and
       contains("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java",
-               "ttsPlaybackService.availableVoices()", "TextInputDialog", "Platform.runLater", "showTtsSentence", "setSpeechHighlight"))
+               "new ReaderTtsCoordinator.Context", "readerView.setSpeechHighlight", "ttsCoordinator.start"))
 check("TTS toolbar controls have accessibility-aware controls",
       contains("myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderToolbar.java",
                'createButton("🔊"', 'createButton("⏯"', 'createButton("⏹"', "setAccessibleText"))

@@ -7,6 +7,7 @@ import com.myhomelibcorp.application.collection.CollectionSourceState;
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.usecase.collection.CollectionAutoUpdateUseCase;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -35,6 +36,7 @@ final class CollectionSourcePanelCoordinator {
     private final CollectionAutoUpdateUseCase autoUpdateUseCase;
     private final ApplicationState appState;
     private final DialogService dialogService;
+    private final FileChooserService fileChooserService;
 
     private TextField sourceFileField;
     private CheckBox enabledCheckBox;
@@ -74,15 +76,13 @@ final class CollectionSourcePanelCoordinator {
             dialogService.showWarning(UiText.text("ui.fxml.collection_workspace.collection"), UiText.text("ui.java.collection_source_panel_coordinator.6686ed3c16"));
             return;
         }
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle(UiText.text("ui.java.collection_source_panel_coordinator.7e07fe6985"));
-        chooser.getExtensionFilters().addAll(
-                ImportFileChooserFilters.catalogAndZipSources(localizationService),
-                new FileChooser.ExtensionFilter(UiText.text("ui.java.collection_source_panel_coordinator.3efc61c5fd"), "*.*"));
-        configureInitialDirectory(chooser);
-
         var window = ownerNode == null || ownerNode.getScene() == null ? null : ownerNode.getScene().getWindow();
-        java.io.File selected = chooser.showOpenDialog(window);
+        java.io.File selected = fileChooserService.chooseFile(window,
+                UiText.text("ui.java.collection_source_panel_coordinator.7e07fe6985"),
+                java.util.List.of(
+                        ImportFileChooserFilters.catalogAndZipSources(localizationService),
+                        new FileChooser.ExtensionFilter(UiText.text("ui.java.collection_source_panel_coordinator.3efc61c5fd"), "*.*")),
+                initialDirectory());
         if (selected != null && sourceFileField != null) {
             sourceFileField.setText(selected.toPath().toAbsolutePath().normalize().toString());
         }
@@ -148,16 +148,17 @@ final class CollectionSourcePanelCoordinator {
         }
     }
 
-    private void configureInitialDirectory(FileChooser chooser) {
-        if (sourceFileField == null || sourceFileField.getText().isBlank()) return;
+    private java.io.File initialDirectory() {
+        if (sourceFileField == null || sourceFileField.getText().isBlank()) return null;
         try {
             Path current = Paths.get(sourceFileField.getText()).toAbsolutePath().normalize();
             if (current.getParent() != null && Files.isDirectory(current.getParent())) {
-                chooser.setInitialDirectory(current.getParent().toFile());
+                return current.getParent().toFile();
             }
         } catch (RuntimeException ignored) {
             // Invalid/incomplete text in the field must not prevent opening the chooser.
         }
+        return null;
     }
 
     private void setBusy(boolean busy) {

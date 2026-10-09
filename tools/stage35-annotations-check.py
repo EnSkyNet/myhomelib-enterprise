@@ -34,7 +34,7 @@ need('CollectionTransactionExecutor' in repo and 'CollectionTransactionExecutor.
      'TransactionTemplate' in tx_helper and 'DataSourceTransactionManager' in tx_helper,
      'annotation save/delete must be transaction-bound')
 need('DELETE FROM annotation_tags' in repo and 'DELETE FROM annotation_anchors' in repo, 'annotation delete must not rely only on PRAGMA foreign_keys cascade')
-need('CURRENT_SCHEMA_VERSION = 4' in transfer_port, 'portable user-data schema v4 missing')
+need('CURRENT_SCHEMA_VERSION = 6' in transfer_port, 'portable user-data schema v6 missing')
 for section in ['"annotations"','"annotationTags"','exportAnnotations','restoreAnnotationRow']:
     need(section in transfer, f'annotation portable transfer missing {section}')
 need('book_artifacts WHERE book_id=? AND artifact_id=?' in transfer,

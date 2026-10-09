@@ -317,6 +317,12 @@ public class WorkspaceManager {
         push("groups", group != null ? group.getId().toString() : "");
     }
 
+    public void showReadingListsWorkspace() {
+        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/reading-lists-workspace.fxml");
+        setWorkspace(workspace);
+        push("reading-lists", "");
+    }
+
 
     /**
      * Opens the Reader only after the physical book resource is available.
@@ -468,6 +474,7 @@ public class WorkspaceManager {
             case "search" -> showSearchResults(entry.id);
             case "search-results" -> showSearchResults(entry.results == null ? List.of() : entry.results);
             case "collection" -> showCollectionWorkspace();
+            case "reading-lists" -> showReadingListsWorkspace();
             case "groups" -> {
                 Long groupId = parseLong(entry.id);
                 if (groupId == null) showGroupWorkspace(null);

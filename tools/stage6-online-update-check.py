@@ -182,12 +182,14 @@ def check_java_markers() -> None:
         assert marker in migration, f"V31 missing {marker}"
 
     writer = (ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/JdbcBatchWriter.java").read_text(encoding="utf-8")
+    upsert = (ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/BookUpsertSql.java").read_text(encoding="utf-8")
+    assert "BookUpsertSql.UPSERT" in writer, "JdbcBatchWriter no longer uses the canonical book UPSERT contract"
     for marker in (
         "CASE WHEN books.local = 1 THEN books.file_name ELSE excluded.file_name END",
         "rate = books.rate", "progress = books.progress", "review = books.review",
         "CASE WHEN books.local = 1 THEN books.collection_root ELSE excluded.collection_root END",
     ):
-        assert marker in writer, f"local/user-data UPSERT guard missing: {marker}"
+        assert marker in upsert, f"local/user-data UPSERT guard missing: {marker}"
 
     update_uc = (ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/collection/UpdateCollectionFromNetworkUseCase.java").read_text(encoding="utf-8")
     assert "CatalogSourceIdentity.remoteCollection(collection.getId())" in update_uc

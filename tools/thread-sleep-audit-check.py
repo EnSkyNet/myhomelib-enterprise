@@ -15,6 +15,11 @@ ALLOWED = {
     "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/sync/webdav/WebDavSyncAdapter.java",
     # Provider rate limiting runs on ExecutorPort; polling checks deadline/cancellation every 50 ms.
     "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/metadata/MetadataProviderSupport.java",
+    # Readwise HTTP retry/backoff is bounded by retry count and preserves interruption.
+    "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/integration/readwise/ReadwiseAnnotationExportAdapter.java",
+    # Update handoff polls a child health marker / parent exit with explicit deadlines off the FX thread.
+    "myhomelib-bootstrap/src/main/java/com/myhomelibcorp/update/ApplicationUpdateInstaller.java",
+    "myhomelib-updater/src/main/java/com/myhomelibcorp/updater/ApplicationUpdaterMain.java",
 }
 found = set()
 errors = []

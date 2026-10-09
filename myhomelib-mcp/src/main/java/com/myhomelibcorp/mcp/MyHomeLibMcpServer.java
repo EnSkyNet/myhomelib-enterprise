@@ -1,9 +1,9 @@
 package com.myhomelibcorp.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 import com.myhomelibcorp.shared.util.AtomicFileSupport;
 
 import java.io.*;
@@ -52,11 +52,11 @@ public final class MyHomeLibMcpServer implements AutoCloseable {
             JsonNode req;
             try { req = json.readTree(line); } catch (Exception bad) { sendError(null, -32700, "Parse error"); continue; }
             JsonNode id = req.get("id");
-            if (!req.isObject() || !req.hasNonNull("method") || !req.path("method").isTextual()) {
+            if (!req.isObject() || !req.hasNonNull("method") || !req.path("method").isString()) {
                 if (id != null && !id.isNull()) sendError(id, -32600, "Invalid Request");
                 continue;
             }
-            String method = req.path("method").asText();
+            String method = req.path("method").asString();
             if (method.startsWith("notifications/")) continue;
             try {
                 JsonNode result = dispatch(method, req.path("params"));
@@ -144,12 +144,12 @@ public final class MyHomeLibMcpServer implements AutoCloseable {
     }
 
     private JsonNode callTool(JsonNode params) throws Exception {
-        String name=params.path("name").asText(); JsonNode a=params.path("arguments");
+        String name=params.path("name").asString(); JsonNode a=params.path("arguments");
         JsonNode value=switch(name){
-            case "search_books" -> db.searchBooks(a.path("query").asText(""), intArg(a,"limit",50,1,500), Math.max(0,a.path("offset").asInt(0)));
-            case "list_authors" -> db.listAuthors(a.path("query").asText(""),intArg(a,"limit",100,1,500));
-            case "list_series" -> db.listSeries(a.path("query").asText(""),intArg(a,"limit",100,1,500));
-            case "list_genres" -> db.listGenres(a.path("query").asText(""),intArg(a,"limit",100,1,500));
+            case "search_books" -> db.searchBooks(a.path("query").asString(""), intArg(a,"limit",50,1,500), Math.max(0,a.path("offset").asInt(0)));
+            case "list_authors" -> db.listAuthors(a.path("query").asString(""),intArg(a,"limit",100,1,500));
+            case "list_series" -> db.listSeries(a.path("query").asString(""),intArg(a,"limit",100,1,500));
+            case "list_genres" -> db.listGenres(a.path("query").asString(""),intArg(a,"limit",100,1,500));
             case "book_info" -> {ObjectNode b=db.bookById(required(a,"book_id")); if(b==null)throw new IllegalArgumentException("Book not found"); yield b;}
             case "book_toc" -> toc(required(a,"book_id"));
             case "book_text" -> bookText(a);
@@ -166,13 +166,33 @@ public final class MyHomeLibMcpServer implements AutoCloseable {
     private ObjectNode bookText(JsonNode a)throws Exception{
         LibraryDb.BookLocation l=db.locate(required(a,"book_id"));if(l==null)throw new IllegalArgumentException("Book not found");String t=content.text(l);int off=Math.min(Math.max(0,a.path("offset").asInt(0)),t.length());int len=intArg(a,"length",12000,1,100000);int end=Math.min(t.length(),off+len);return json.createObjectNode().put("offset",off).put("nextOffset",end).put("totalLength",t.length()).put("text",t.substring(off,end));
     }
-    private ObjectNode searchInside(JsonNode a)throws Exception{
-        String q=required(a,"query");LibraryDb.BookLocation l=db.locate(required(a,"book_id"));if(l==null)throw new IllegalArgumentException("Book not found");String t=content.text(l),low=t.toLowerCase(Locale.ROOT),needle=q.toLowerCase(Locale.ROOT);int lim=intArg(a,"limit",20,1,100),from=0;ArrayNode hits=json.createArrayNode();while(hits.size()<lim){int at=low.indexOf(needle,from);if(at<0)break;int s=Math.max(0,at-120),e=Math.min(t.length(),at+q.length()+180);hits.add(json.createObjectNode().put("offset",at).put("snippet",t.substring(s,e).replace('\n',' ')));from=at+Math.max(1,needle.length());}ObjectNode result=json.createObjectNode().put("query",q).put("matches",hits.size()); result.set("hits",hits); return result;
+    private ObjectNode searchInside(JsonNode a) throws Exception {
+        String q = required(a, "query");
+        LibraryDb.BookLocation location = db.locate(required(a, "book_id"));
+        if (location == null) throw new IllegalArgumentException("Book not found");
+        String text = content.text(location);
+        int limit = intArg(a, "limit", 20, 1, 100);
+        java.util.regex.Pattern literal = java.util.regex.Pattern.compile(
+                java.util.regex.Pattern.quote(q),
+                java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.UNICODE_CASE);
+        var matcher = literal.matcher(text);
+        ArrayNode hits = json.createArrayNode();
+        while (hits.size() < limit && matcher.find()) {
+            int at = matcher.start();
+            int start = Math.max(0, at - 120);
+            int end = Math.min(text.length(), matcher.end() + 180);
+            hits.add(json.createObjectNode()
+                    .put("offset", at)
+                    .put("snippet", text.substring(start, end).replace('\n', ' ')));
+        }
+        ObjectNode result = json.createObjectNode().put("query", q).put("matches", hits.size());
+        result.set("hits", hits);
+        return result;
     }
 
     private ObjectNode tool(String name,String description,ObjectNode input){return json.createObjectNode().put("name",name).put("description",description).set("inputSchema",input);}
     private ObjectNode schema(Map<String,String> props,List<String> required){ObjectNode s=json.createObjectNode().put("type","object");ObjectNode p=json.createObjectNode();props.forEach((k,v)->p.set(k,json.createObjectNode().put("type",v)));s.set("properties",p);ArrayNode r=json.createArrayNode();required.forEach(r::add);s.set("required",r);s.put("additionalProperties",false);return s;}
-    private static String required(JsonNode a,String k){String v=a.path(k).asText("").trim();if(v.isEmpty())throw new IllegalArgumentException(k+" is required");return v;}
+    private static String required(JsonNode a,String k){String v=a.path(k).asString("").trim();if(v.isEmpty())throw new IllegalArgumentException(k+" is required");return v;}
     private static int intArg(JsonNode a,String k,int d,int lo,int hi){int v=a.path(k).asInt(d);return Math.max(lo,Math.min(hi,v));}
 
     private synchronized void sendResult(JsonNode id,JsonNode result)throws IOException{ObjectNode r=json.createObjectNode().put("jsonrpc","2.0");r.set("id",id);r.set("result",result);write(r);}

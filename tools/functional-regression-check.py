@@ -61,7 +61,7 @@ checks={
  ['ensureLocalForOpen(selected)']),
 'External open uses authoritative confirmation': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/DefaultNavigationService.java',
- ['bookDownloadCoordinator.ensureLocalForOpen(book)', 'externalBookLauncher.open(book)']),
+ ['bookDownloadCoordinator.ensureLocalForOpen(book)', 'externalBookLauncher.open(book, expectedCollectionId)']),
 'Navigation read uses the single Reader guard': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/DefaultNavigationService.java',
  ['workspaceManager.showNewReaderWorkspace(BookId.fromString(book.getId()))']),
@@ -98,16 +98,20 @@ checks={
  ['onlineBookStorageRoot(active)', 'AppPaths.downloadsDir().resolve(collection.getId())']),
 'Existing transient remote roots are repaired': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/BookDownloadCoordinator.java',
- ['normalizeLegacyRemoteStorage(book)', 'isTransientCatalogRoot', '.myhomelibcorp', 'downloads']),
+ ['normalizeLegacyRemoteStorage(book, collection)', 'isTransientCatalogRoot', '.myhomelibcorp', 'downloads']),
 'Remote root repair is bounded SQL': (
  ROOT/'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteBookCommandRepository.java',
  ['repairTransientRemoteStorageRoots(String permanentRoot)', "WHERE local = 0", "LIKE '%/.myhomelibcorp/cache/catalog-updates%'"]),
 'Lucene startup reuse without catalog-wide normalization': (
  ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/service/CollectionLifecycleService.java',
- ['searchIndexLifecycle.activateCollectionIndex(collection)', 'boolean shouldRebuild = rebuildIndex && !reusableIndex']),
-'Collection folder chooser fallback': (
+ ['searchIndexLifecycle.activateCollectionIndex(collection)', 'boolean shouldRebuild = rebuildIndex && searchIndexAvailable && !reusableIndex']),
+'Native folder chooser fallback remains centralized': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/FileChooserService.java',
+ ['chooseDirectory(Window owner, String title, File initialDirectory)',
+  'catch (IllegalArgumentException invalidInitialDirectory)', 'directoryChooser(title, null).showDialog(owner)']),
+'Collection properties uses native chooser boundary': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/CollectionPropertiesUiService.java',
- ['catch (IllegalArgumentException invalidInitialDirectory)', 'DirectoryChooser fallback=new DirectoryChooser()']),
+ ['fileChooserService.chooseDirectory(owner', 'ui.java.collection_properties_ui_service.00ad58e3df']),
 'Reader quick-setting persistence': (
  ROOT/'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderCanvas.java',
  ['cycleTheme()', 'notifySettingsChanged()', 'toggleTwoPageMode()', 'toggleAutoScroll()']),

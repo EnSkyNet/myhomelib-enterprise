@@ -67,29 +67,12 @@ public class BookAuthorHelper {
     }
 
     public void loadAuthorsForBooks(List<Book> books) {
-        if (books.isEmpty()) return;
-        JdbcTemplate jdbcTemplate = getJdbcTemplate();
-        List<String> bookIds = books.stream().map(b -> b.getId().asString()).toList();
-        Map<String, List<Author>> authorMap = new HashMap<>();
-        SqliteInClauseSupport.forEachChunk(bookIds, part -> {
-            String sql = """
-                    SELECT b.book_id, a.id, a.first_name, a.middle_name, a.last_name
-                    FROM book_authors b
-                    JOIN authors a ON b.author_id = a.id
-                    WHERE b.book_id IN (""" + SqliteInClauseSupport.placeholders(part.size()) + ")";
-            jdbcTemplate.query(sql, rs -> {
-                String bookId = rs.getString("book_id");
-                Author author = authorRowMapper.mapRow(rs, 0);
-                authorMap.computeIfAbsent(bookId, k -> new ArrayList<>()).add(author);
-            }, part.toArray());
-        });
-
-        for (Book book : books) {
-            List<Author> authors = authorMap.getOrDefault(book.getId().asString(), List.of());
-            for (Author author : authors) {
-                book.addAuthor(author);
-            }
-        }
+        BookRelationBatchLoader.load(getJdbcTemplate(), books, """
+                SELECT b.book_id, a.id, a.first_name, a.middle_name, a.last_name
+                FROM book_authors b
+                JOIN authors a ON b.author_id = a.id
+                WHERE b.book_id IN (%s)
+                """, authorRowMapper, Book::addAuthor);
         log.debug("Завантажено авторів для {} книг", books.size());
     }
 }

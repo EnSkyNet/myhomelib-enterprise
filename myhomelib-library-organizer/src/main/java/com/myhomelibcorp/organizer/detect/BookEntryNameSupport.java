@@ -17,6 +17,10 @@ public final class BookEntryNameSupport {
 
     private BookEntryNameSupport() { }
 
+    public static Set<String> supportedExtensions() {
+        return EXTENSIONS;
+    }
+
     public static boolean isSupportedBookEntry(String name) {
         if (name == null || name.isBlank()) return false;
         String normalized = name.replace('\\', '/');

@@ -2,6 +2,7 @@ package com.myhomelibcorp.converter.toolchain;
 
 import com.myhomelibcorp.application.conversion.BookConversionCapability;
 
+import java.util.Locale;
 import java.util.Objects;
 
 public record ConversionStep(
@@ -24,7 +25,7 @@ public record ConversionStep(
     }
 
     private static String normalizeExtension(String value, String format) {
-        String result = value == null || value.isBlank() ? "." + format : value.trim().toLowerCase();
+        String result = value == null || value.isBlank() ? "." + format : value.trim().toLowerCase(Locale.ROOT);
         return result.startsWith(".") ? result : "." + result;
     }
 }

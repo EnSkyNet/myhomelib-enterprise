@@ -68,6 +68,27 @@ public class BookDownloadCoordinator {
         this.downloadSlots = new Semaphore(permits, true);
     }
 
+    /**
+     * Reconciles a stale catalogue DTO with a physical local copy without starting network I/O.
+     * This is intentionally cheap enough for Book Details selection and prevents a stale remote
+     * flag from re-downloading a file that is already present in the active collection root.
+     */
+    public boolean reconcileLocalClaim(BookDto book) {
+        if (book == null) return false;
+        Collection collection = applicationState.getCurrentLibraryCollection();
+        if (collection == null) return book.isLocal();
+        normalizeLegacyRemoteStorage(book, collection);
+        return locateExistingLocal(book, collection).isPresent();
+    }
+
+    /** Returns whether the active collection has a remote source that can materialize this book. */
+    public boolean canDownload(BookDto book) {
+        if (book == null) return false;
+        if (book.isLocal() || reconcileLocalClaim(book)) return false;
+        Collection collection = applicationState.getCurrentLibraryCollection();
+        return collection != null && isOnlineCollection(collection);
+    }
+
     public CompletableFuture<Path> ensureLocal(BookDto book) {
         return ensureLocal(book, applicationState.getCurrentLibraryCollectionId());
     }
@@ -76,7 +97,7 @@ public class BookDownloadCoordinator {
     public CompletableFuture<Path> ensureLocal(BookDto book, String expectedCollectionId) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
         if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("Активну колекцію не вибрано"));
+            return CompletableFuture.failedFuture(new IllegalStateException(UiText.text("ui.error.collection_not_selected")));
         }
         return loadAuthoritative(book, expectedCollectionId, LibraryOperationType.DOWNLOAD).thenCompose(authoritative ->
                 download(authoritative, false, true, true, expectedCollectionId).whenComplete((path, error) -> {
@@ -88,9 +109,9 @@ public class BookDownloadCoordinator {
     public CompletableFuture<Path> ensureLocal(BookId bookId) {
         if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
         String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
-        return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD,
+        return executor.submitCollectionScopedNetwork(LibraryOperationType.DOWNLOAD,
                         () -> {
-                            requireCurrentCollection(expectedCollectionId, "завантаження книги");
+                            requireCurrentCollection(expectedCollectionId, "ui.error.collection_changed.book_download");
                             return loadBookByIdUseCase.execute(bookId)
                                     .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.book_download_coordinator.7e6db1b645") + bookId));
                         })
@@ -116,9 +137,9 @@ public class BookDownloadCoordinator {
         // DOWNLOAD in the continuation creates a QUERY -> DOWNLOAD lifecycle transition. Under
         // a large batch, many pre-acquired QUERY leases coexist and almost every continuation is
         // rejected while sibling QUERY leases are still queued.
-        return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD,
+        return executor.submitCollectionScopedNetwork(LibraryOperationType.DOWNLOAD,
                         () -> {
-                            requireCurrentCollection(expectedCollectionId, "завантаження книги");
+                            requireCurrentCollection(expectedCollectionId, "ui.error.collection_changed.book_download");
                             BookDto authoritative = loadBookByIdUseCase.execute(bookId)
                                     .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.book_download_coordinator.7e6db1b645") + bookId));
                             Collection collection = applicationState.getCurrentLibraryCollection();
@@ -126,8 +147,8 @@ public class BookDownloadCoordinator {
                             return authoritative;
                         })
                 .thenCompose(book -> {
-                    var existing = bookResourcePort.locateBookFile(
-                            book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
+                    Collection collection = applicationState.getCurrentLibraryCollection();
+                    var existing = locateExistingLocal(book, collection);
                     if (existing.isPresent()) {
                         return CompletableFuture.completedFuture(new EnsureLocalOutcome(existing.get(), true));
                     }
@@ -159,7 +180,7 @@ public class BookDownloadCoordinator {
                     .thenCompose(java.util.function.Function.identity());
         }
         if (!isCurrentCollection(expectedCollectionId)) {
-            return CompletableFuture.failedFuture(new IllegalStateException("Активна колекція змінилася до початку завантаження"));
+            return CompletableFuture.failedFuture(new IllegalStateException(UiText.text("ui.error.collection_changed.book_download")));
         }
 
         BookDownloadProgressDialog progressDialog = new BookDownloadProgressDialog(owner, ids.size());
@@ -228,7 +249,7 @@ public class BookDownloadCoordinator {
 
         return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD, () -> {
             if (!isCurrentCollection(expectedCollectionId)) {
-                throw new IllegalStateException("Активна колекція змінилася до підготовки експорту");
+                throw new IllegalStateException(UiText.text("ui.error.collection_changed.export_prepare"));
             }
             java.util.ArrayList<BookId> missing = new java.util.ArrayList<>();
             int local = 0;
@@ -240,8 +261,7 @@ public class BookDownloadCoordinator {
                 }
                 Collection collection = applicationState.getCurrentLibraryCollection();
                 normalizeLegacyRemoteStorage(book, collection);
-                boolean present = bookResourcePort.locateBookFile(
-                        book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry()).isPresent();
+                boolean present = locateExistingLocal(book, collection).isPresent();
                 if (present) local++; else missing.add(id);
             }
             return new ExportPreflight(List.copyOf(missing), local);
@@ -277,9 +297,9 @@ public class BookDownloadCoordinator {
     public CompletableFuture<Path> ensureLocalForOpen(BookId bookId) {
         if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
         String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
-        return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD,
+        return executor.submitCollectionScopedNetwork(LibraryOperationType.DOWNLOAD,
                         () -> {
-                            requireCurrentCollection(expectedCollectionId, "відкриття книги");
+                            requireCurrentCollection(expectedCollectionId, "ui.error.collection_changed.book_open");
                             BookDto authoritative = loadBookByIdUseCase.execute(bookId)
                                     .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.book_download_coordinator.7e6db1b645") + bookId));
                             Collection collection = applicationState.getCurrentLibraryCollection();
@@ -291,15 +311,14 @@ public class BookDownloadCoordinator {
 
     private CompletableFuture<Path> ensureLocalForOpenAuthoritative(BookDto book, String expectedCollectionId) {
         if (!isCurrentCollection(expectedCollectionId)) {
-            return CompletableFuture.failedFuture(new IllegalStateException("Активна колекція змінилася до відкриття книги"));
+            return CompletableFuture.failedFuture(new IllegalStateException(UiText.text("ui.error.collection_changed.book_open")));
         }
         Collection collection = applicationState.getCurrentLibraryCollection();
         if (collection == null || !expectedCollectionId.equals(collection.getId())) {
-            return CompletableFuture.failedFuture(new IllegalStateException("Активна колекція змінилася до відкриття книги"));
+            return CompletableFuture.failedFuture(new IllegalStateException(UiText.text("ui.error.collection_changed.book_open")));
         }
         normalizeLegacyRemoteStorage(book, collection);
-        var existing = bookResourcePort.locateBookFile(
-                book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
+        var existing = locateExistingLocal(book, collection);
         if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
 
         if (!Platform.isFxApplicationThread()) {
@@ -326,7 +345,7 @@ public class BookDownloadCoordinator {
     public CompletableFuture<Path> downloadUpdate(BookDto book, String expectedCollectionId) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
         if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("Активну колекцію не вибрано"));
+            return CompletableFuture.failedFuture(new IllegalStateException(UiText.text("ui.error.collection_not_selected")));
         }
         return loadAuthoritative(book, expectedCollectionId, LibraryOperationType.DOWNLOAD).thenCompose(authoritative ->
                 download(authoritative, true, true, true, expectedCollectionId).whenComplete((path, error) -> {
@@ -353,12 +372,17 @@ public class BookDownloadCoordinator {
             return CompletableFuture.failedFuture(new IllegalArgumentException("Book has an invalid stable id", invalidId));
         }
         LibraryOperationType scope = operationType == null ? LibraryOperationType.QUERY : operationType;
-        return executor.submitCollectionScoped(scope, () -> {
-            requireCurrentCollection(expectedCollectionId, "завантаження даних книги");
+        java.util.concurrent.Callable<BookDto> load = () -> {
+            requireCurrentCollection(expectedCollectionId, "ui.error.collection_changed.book_data_load");
             return loadBookByIdUseCase.execute(id)
                     .orElseThrow(() -> new IllegalStateException(
-                            "Книгу " + id + " не знайдено в очікуваній активній колекції"));
-        });
+                            UiText.format("ui.error.book_not_found_expected_collection", id)));
+        };
+        // Download preflight must not sit behind passive UI/query backlog while the user waits.
+        // It performs only a short DB lookup but belongs to the same latency path as the network request.
+        return scope == LibraryOperationType.DOWNLOAD
+                ? executor.submitCollectionScopedNetwork(scope, load)
+                : executor.submitCollectionScoped(scope, load);
     }
 
     private CompletableFuture<Path> download(BookDto book, boolean force) {
@@ -382,14 +406,18 @@ public class BookDownloadCoordinator {
         }
         if (expectedCollectionId == null || expectedCollectionId.isBlank()
                 || collection.getId() == null || !expectedCollectionId.equals(collection.getId())) {
-            return CompletableFuture.failedFuture(new IllegalStateException("Активна колекція змінилася до початку завантаження"));
+            return CompletableFuture.failedFuture(new IllegalStateException(UiText.text("ui.error.collection_changed.book_download")));
         }
 
         // Never normalize or resolve a DTO from collection A using collection B settings.
         normalizeLegacyRemoteStorage(book, collection);
         if (!force) {
-            var existing = bookResourcePort.locateBookFile(book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
-            if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
+            var existing = locateExistingLocal(book, collection);
+            if (existing.isPresent()) {
+                log.info("ONLINE_DOWNLOAD_SKIP_LOCAL title='{}' id={} path='{}'",
+                        safeBookTitle(book), book.getId(), existing.get());
+                return CompletableFuture.completedFuture(existing.get());
+            }
         }
         if ((collection.getUrl() == null || collection.getUrl().isBlank())
                 && (collection.getConnectionScript() == null || collection.getConnectionScript().isBlank())) {
@@ -416,8 +444,11 @@ public class BookDownloadCoordinator {
         });
 
         long startTime = System.currentTimeMillis();
+        log.info("ONLINE_DOWNLOAD_START title='{}' id={} libId={} file='{}' archiveEntry='{}' collection={}",
+                safeBookTitle(book), book.getId(), safeLog(book.getLibId()), safeLog(book.getFileName()),
+                safeLog(book.getArchiveEntry()), collectionId);
 
-        return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD, () -> {
+        return executor.submitCollectionScopedNetwork(LibraryOperationType.DOWNLOAD, () -> {
                     boolean acquired = false;
                     try {
                         while (!cancel.get() && !Thread.currentThread().isInterrupted()) {
@@ -437,13 +468,22 @@ public class BookDownloadCoordinator {
                         });
 
                         if (!isCurrentCollection(collectionId)) {
-                            throw new IllegalStateException("Активна колекція змінилася до початку завантаження");
+                            throw new IllegalStateException(UiText.text("ui.error.collection_changed.book_download"));
                         }
                         BookId authoritativeId = BookId.fromString(book.getId());
                         BookDto effectiveBook = loadBookByIdUseCase.execute(authoritativeId)
                                 .orElseThrow(() -> new IllegalStateException(
-                                        "Книгу " + authoritativeId + " було видалено або вона більше не належить активній колекції"));
+                                        UiText.format("ui.error.book_removed_expected_collection", authoritativeId)));
                         normalizeLegacyRemoteStorage(effectiveBook, collection);
+                        if (!force) {
+                            var existingNow = locateExistingLocal(effectiveBook, collection);
+                            if (existingNow.isPresent()) {
+                                effectiveBook.setLocal(true);
+                                log.info("ONLINE_DOWNLOAD_SKIP_LOCAL_RACE title='{}' id={} path='{}'",
+                                        safeBookTitle(effectiveBook), effectiveBook.getId(), existingNow.get());
+                                return new DownloadCompletion(existingNow.get(), effectiveBook);
+                            }
+                        }
                         Path downloadedPath = downloadBookUseCase.execute(effectiveBook, collection, cancel, value -> {
                             long processed = Math.max(0L, Math.min(1000L, Math.round(value * 1000.0)));
                             operationCenter.accept(operationTitle, collectionId, OperationKind.BOOK_DOWNLOAD,
@@ -472,12 +512,21 @@ public class BookDownloadCoordinator {
                     // observe the pre-download remote folder/fileName.
                     if (error == null) {
                         copyStorageState(refreshed, book);
+                        log.info("ONLINE_DOWNLOAD_DONE title='{}' id={} libId={} file='{}' archiveEntry='{}' durationMs={} path='{}'",
+                                safeBookTitle(refreshed), refreshed.getId(), safeLog(refreshed.getLibId()),
+                                safeLog(refreshed.getFileName()), safeLog(refreshed.getArchiveEntry()), duration,
+                                completion == null || completion.path() == null ? "" : completion.path());
                         operationCenter.complete(operationId, UiText.text("ui.java.book_download_coordinator.a0c024460b") + Math.max(0, duration / 1000) + UiText.text("ui.java.book_download_coordinator.488d98cad9"));
                     } else {
                         Throwable operationFailure = unwrap(error);
                         if (UiExceptionSupport.isCancellation(operationFailure)) {
+                            log.info("ONLINE_DOWNLOAD_CANCEL title='{}' id={} durationMs={}",
+                                    safeBookTitle(book), book.getId(), duration);
                             operationCenter.cancel(operationId, UiText.text("ui.java.book_download_coordinator.b23355d41c"));
                         } else {
+                            log.error("ONLINE_DOWNLOAD_FAIL title='{}' id={} libId={} file='{}' archiveEntry='{}' durationMs={} error={}",
+                                    safeBookTitle(book), book.getId(), safeLog(book.getLibId()), safeLog(book.getFileName()),
+                                    safeLog(book.getArchiveEntry()), duration, compactError(operationFailure));
                             operationCenter.fail(operationId, operationFailure);
                         }
                     }
@@ -488,7 +537,7 @@ public class BookDownloadCoordinator {
                         }
                         applicationState.getStatusBar().setProgressVisible(false);
                         if (error == null) {
-                            applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.a10fff9611") + refreshed.getTitle() + " (" + duration / 1000 + UiText.text("ui.java.book_download_coordinator.3023b67d72"));
+                            applicationState.getStatusBar().setTransientStatusText(UiText.text("ui.java.book_download_coordinator.a10fff9611") + refreshed.getTitle() + " (" + duration / 1000 + UiText.text("ui.java.book_download_coordinator.3023b67d72"));
                             BookDto details = applicationState.getBookDetails().getCurrentBook();
                             if (details != null && book.getId().equals(details.getId())) {
                                 applicationState.getBookDetails().setCurrentBook(refreshed);
@@ -509,7 +558,8 @@ public class BookDownloadCoordinator {
                             Throwable cause = unwrap(error);
                             applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.4f6a3c9ef7") + book.getTitle());
                             if (!UiExceptionSupport.isCancellation(cause)) {
-                                log.error("Завантаження книги {} завершилося помилкою: {}", book.getId(), compactError(cause));
+                                log.error("Завантаження книги '{}' (id={}, libId={}) завершилося помилкою: {}",
+                                        safeBookTitle(book), book.getId(), safeLog(book.getLibId()), compactError(cause));
                                 if (showErrors) dialogService.showError(UiText.text("ui.import.stage.downloading"), userVisibleDownloadError(cause));
                             }
                         }
@@ -519,6 +569,49 @@ public class BookDownloadCoordinator {
     }
 
     private record DownloadCompletion(Path path, BookDto refreshed) { }
+
+    private java.util.Optional<Path> locateExistingLocal(BookDto book, Collection collection) {
+        if (book == null || collection == null) return java.util.Optional.empty();
+        java.util.Optional<Path> existing = bookResourcePort.locateBookFile(
+                book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
+        if (existing.isPresent()) {
+            book.setLocal(true);
+            return existing;
+        }
+
+        Path rootFolder = collection.getRootFolder();
+        if (rootFolder == null) return java.util.Optional.empty();
+        String currentRoot = rootFolder.toAbsolutePath().normalize().toString();
+
+        // Stale catalogue/storage DTOs can retain an old/transient collection root. Always probe the
+        // current active root before deciding that network I/O is required.
+        if (!java.util.Objects.equals(currentRoot, book.getCollectionRoot())) {
+            existing = bookResourcePort.locateBookFile(
+                    book.getFileName(), book.getFolder(), currentRoot, book.getArchiveEntry());
+            if (existing.isPresent()) {
+                book.setCollectionRoot(currentRoot);
+                book.setLocal(true);
+                return existing;
+            }
+        }
+
+        // Legacy online FB2 storage uses a generated archive path. Recompute it from authoritative
+        // metadata so a stale remote DTO (e.g. fileName=729586.fb2) still discovers an already
+        // downloaded <libId> <title>.fb2.zip before any HTTP request is started.
+        if (isOnlineCollection(collection) && isFb2(book)) {
+            String expectedFolder = LegacyOnlineBookLocation.archivePath(
+                    primaryAuthorName(book), book.getTitle(), book.getLibId(), book.getFileName());
+            existing = bookResourcePort.locateBookFile(
+                    book.getFileName(), expectedFolder, currentRoot, book.getArchiveEntry());
+            if (existing.isPresent()) {
+                book.setCollectionRoot(currentRoot);
+                book.setFolder(expectedFolder);
+                book.setLocal(true);
+                return existing;
+            }
+        }
+        return java.util.Optional.empty();
+    }
 
     private void normalizeLegacyRemoteStorage(BookDto book, Collection collection) {
         if (book == null || collection == null || collection.getId() == null || collection.getId().isBlank()) return;
@@ -593,6 +686,11 @@ public class BookDownloadCoordinator {
         return book.getTitle().trim();
     }
 
+    private static String safeLog(String value) {
+        if (value == null) return "";
+        return value.replace('\r', ' ').replace('\n', ' ').trim();
+    }
+
     private CompletableFuture<Path> failedVisible(String message) {
         Platform.runLater(() -> dialogService.showError(UiText.text("ui.import.stage.downloading"), message));
         return CompletableFuture.failedFuture(new IllegalStateException(message));
@@ -603,7 +701,7 @@ public class BookDownloadCoordinator {
         if (isDownloading(book)) return CompletableFuture.failedFuture(new IllegalStateException(UiText.text("ui.java.book_download_coordinator.b536619b61")));
         String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
         if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("Активну колекцію не вибрано"));
+            return CompletableFuture.failedFuture(new IllegalStateException(UiText.text("ui.error.collection_not_selected")));
         }
         return loadAuthoritative(book, expectedCollectionId).thenCompose(authoritative ->
                 executor.submitCollectionScoped(LibraryOperationType.QUERY,
@@ -635,7 +733,7 @@ public class BookDownloadCoordinator {
         if (bookIds == null || bookIds.isEmpty()) return CompletableFuture.completedFuture(0);
         String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
         if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("Активну колекцію не вибрано"));
+            return CompletableFuture.failedFuture(new IllegalStateException(UiText.text("ui.error.collection_not_selected")));
         }
         return executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
             LinkedHashMap<String, PlannedRemoval> unique = new LinkedHashMap<>();
@@ -706,7 +804,7 @@ public class BookDownloadCoordinator {
 
     private void requireCurrentCollection(String expectedCollectionId, String operation) {
         if (!isCurrentCollection(expectedCollectionId)) {
-            throw new IllegalStateException("Активна колекція змінилася до операції: " + operation);
+            throw new IllegalStateException(UiText.text(operation));
         }
     }
 

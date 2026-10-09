@@ -1,15 +1,15 @@
 package com.myhomelibcorp.infrastructure.sync.folder;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 import com.myhomelibcorp.domain.model.sync.ChangeSet;
 import com.myhomelibcorp.domain.model.sync.SyncEntityType;
 import com.myhomelibcorp.domain.model.sync.SyncRecord;
 import com.myhomelibcorp.domain.model.sync.SyncSchema;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -56,7 +56,7 @@ public final class SyncBundleJsonCodec {
             byte[] bytes = mapper.writeValueAsBytes(root);
             requireBundleSize(bytes.length);
             return bytes;
-        } catch (IOException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Could not encode sync bundle", e);
         }
     }
@@ -80,8 +80,8 @@ public final class SyncBundleJsonCodec {
                 if (payloadNode.size() > MAX_PAYLOAD_FIELDS) throw new IllegalArgumentException("Too many payload fields");
                 Map<String, String> payload = new LinkedHashMap<>();
                 for (Map.Entry<String, JsonNode> field : payloadNode.properties()) {
-                    if (!field.getValue().isTextual()) throw new IllegalArgumentException("payload values must be strings");
-                    payload.put(limited(field.getKey(), "payload key"), limited(field.getValue().asText(), "payload value"));
+                    if (!field.getValue().isString()) throw new IllegalArgumentException("payload values must be strings");
+                    payload.put(limited(field.getKey(), "payload key"), limited(field.getValue().asString(), "payload value"));
                 }
                 records.add(new SyncRecord(
                         text(item, "syncId"),
@@ -107,15 +107,15 @@ public final class SyncBundleJsonCodec {
 
     private static String text(JsonNode node, String field) {
         JsonNode value = node.get(field);
-        if (value == null || !value.isTextual()) throw new IllegalArgumentException(field + " must be text");
-        return limited(value.asText(), field);
+        if (value == null || !value.isString()) throw new IllegalArgumentException(field + " must be text");
+        return limited(value.asString(), field);
     }
 
     private static String optionalText(JsonNode node, String field) {
         JsonNode value = node.get(field);
         if (value == null || value.isNull()) return "";
-        if (!value.isTextual()) throw new IllegalArgumentException(field + " must be text");
-        return limited(value.asText(), field);
+        if (!value.isString()) throw new IllegalArgumentException(field + " must be text");
+        return limited(value.asString(), field);
     }
 
     private static int intValue(JsonNode node, String field) {

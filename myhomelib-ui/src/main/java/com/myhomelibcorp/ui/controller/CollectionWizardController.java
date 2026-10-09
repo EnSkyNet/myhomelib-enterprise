@@ -82,6 +82,7 @@ public class CollectionWizardController {
     @FXML private Button finishButton;
     @FXML private Label errorLabel;
     @FXML private StackPane wizardContent;
+    @FXML private ScrollPane wizardScrollPane;
     @FXML private Label confirmName;
     @FXML private Label confirmType;
     @FXML private Label confirmRootFolder;
@@ -166,8 +167,9 @@ public class CollectionWizardController {
     public void setStage(Stage stage) {
         this.stage = stage;
         if (stage != null) {
-            stage.setMinWidth(Math.max(720, stage.getMinWidth()));
-            stage.setMinHeight(Math.max(560, stage.getMinHeight()));
+            stage.setResizable(true);
+            stage.setMinWidth(Math.max(500, stage.getMinWidth()));
+            stage.setMinHeight(Math.max(420, stage.getMinHeight()));
         }
     }
 
@@ -331,6 +333,15 @@ public class CollectionWizardController {
             wizardContent.getChildren().get(i).setVisible(active);
             wizardContent.getChildren().get(i).setManaged(active);
         }
+        // Managed children change the content height. Force a fresh layout and always expose
+        // the top of the selected step; the ScrollPane will show its vertical bar whenever the
+        // active step is taller than the available viewport (small screen / RDP / high DPI).
+        wizardContent.requestLayout();
+        if (wizardScrollPane != null) {
+            wizardScrollPane.setVvalue(0.0);
+            wizardScrollPane.requestLayout();
+        }
+        log.info("USER_ACTION_COLLECTION_WIZARD_STEP step={} type={}", step + 1, model.getType());
     }
 
     private void updateStepIndicators(int activeStep) {

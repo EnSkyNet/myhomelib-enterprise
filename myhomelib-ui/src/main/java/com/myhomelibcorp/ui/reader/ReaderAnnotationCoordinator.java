@@ -228,7 +228,10 @@ public class ReaderAnnotationCoordinator {
     }
 
     private static void focus(Context context) {
-        if (context != null && context.focusReader() != null) Platform.runLater(context.focusReader());
+        if (context == null || context.focusReader() == null) return;
+        Platform.runLater(() -> {
+            if (current(context)) context.focusReader().run();
+        });
     }
 
     private <T> T fail(Context context, Throwable error) {

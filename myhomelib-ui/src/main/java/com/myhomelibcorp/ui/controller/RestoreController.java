@@ -7,6 +7,7 @@ import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -14,7 +15,6 @@ import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
-import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +33,7 @@ public class RestoreController {
 
     private final BackupRestoreService backupRestoreService;
     private final DialogService dialogService;
+    private final FileChooserService fileChooserService;
     private final UiBackgroundExecutor executor;
     private final OperationCenterService operationCenter;
     private final ApplicationState appState;
@@ -70,10 +71,8 @@ public class RestoreController {
 
     @FXML
     public void onSelectPath() {
-        DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle(UiText.text("ui.fxml.restore_dialog.select_the_backup_folder_697a0c0"));
-        chooser.setInitialDirectory(AppPaths.backupsDir().toFile());
-        File dir = chooser.showDialog(stage);
+        File dir = fileChooserService.chooseDirectory(
+                stage, UiText.text("ui.fxml.restore_dialog.select_the_backup_folder_697a0c0"), AppPaths.backupsDir().toFile());
         if (dir != null) {
             backupPathField.setText(dir.getAbsolutePath());
             checkBackupContents(dir.toPath());

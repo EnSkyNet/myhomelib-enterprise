@@ -346,7 +346,12 @@ def validate_windows_release_artifact(
         sums_name = "SHA256SUMS"
         for required in (msi_name, exe_name, sums_name):
             need(required in basenames, f"Windows release artifact missing {required}")
-        portable = [base for base in basenames if base.startswith(f"myhomelib-{version}-windows-") and base.endswith(".zip")]
+        canonical_prefix = f"MyHomeLib-R18-{version}-portable-windows-"
+        legacy_prefix = f"myhomelib-{version}-windows-"
+        portable = [
+            base for base in basenames
+            if base.endswith(".zip") and (base.startswith(canonical_prefix) or base.startswith(legacy_prefix))
+        ]
         need(len(portable) == 1, f"Windows release artifact expected exactly one versioned portable ZIP, found {len(portable)}")
 
         sums_path = basenames[sums_name][0]

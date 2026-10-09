@@ -6,6 +6,7 @@ import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.ui.service.BookDisplayText;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.imports.saver.BookSaver;
+import com.myhomelibcorp.application.operation.LibraryOperationConflictException;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.usecase.group.AddBookToGroupUseCase;
@@ -109,8 +110,9 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
                 }
                 return null;
             });
-        } catch (RejectedExecutionException rejected) {
-            applyLoadError(bookId, requestToken, rejected);
+        } catch (LibraryOperationConflictException | RejectedExecutionException rejectedOrBusy) {
+            // Lifecycle conflicts and executor saturation are expected user-visible contention, not uncaught FX errors.
+            applyLoadError(bookId, requestToken, rejectedOrBusy);
         }
     }
 
@@ -126,7 +128,7 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
         }
         currentBook = result.get();
         updateUI(currentBook);
-        coverPresenter.showCover(bookViewModelMapper.toViewModel(currentBook));
+        coverPresenter.showCover(currentBook);
         setLoadState(null, false);
     }
 
@@ -205,9 +207,16 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
     private void onDownload() {
         if (currentBook == null) return;
         BookId id = BookId.fromString(currentBook.getId());
+        UiAsyncRequestToken refreshToken = UiAsyncRequestGuard.snapshot(loadGeneration, appState);
         javafx.stage.Window owner = titleLabel != null && titleLabel.getScene() != null ? titleLabel.getScene().getWindow() : null;
         bookDownloadCoordinator.downloadBatch(java.util.List.of(id), owner).whenComplete((result, error) -> {
-            if (error == null && result != null && result.failed() == 0) UiExecutor.runOnUiThread(() -> setBookId(id));
+            if (error == null && result != null && result.failed() == 0) {
+                UiExecutor.runOnUiThread(() -> {
+                    if (!UiAsyncRequestGuard.isCurrent(refreshToken, loadGeneration, appState)) return;
+                    if (currentBook == null || !id.asString().equals(currentBook.getId())) return;
+                    setBookId(id);
+                });
+            }
         });
     }
 

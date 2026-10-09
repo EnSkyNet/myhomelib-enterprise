@@ -1,0 +1,32 @@
+MyHomeLib V29 checkpoint — 2026-10-01
+
+STATUS: LOCAL PRODUCT COMPLETE / FULL LOCAL GATES PASS
+
+Implemented:
+- installable Web Library PWA shell;
+- public versioned manifest/SW/client/CSS/icons/offline fallback;
+- explicit Save/Remove/Clear offline-book actions;
+- authenticated sanitized /web/offline/books/{id}/manifest.json projection;
+- atomic staged offline cache replacement; max 20 completed offline books;
+- IndexedDB offline progress queue + monotonic sequence/timestamp replay;
+- idempotent duplicate replay and stale-progress rejection;
+- Web actions integrated into UI inventory/behavior/user-functions docs;
+- UK/EN/BG localization/help/docs.
+
+Exact local evidence:
+- Maven clean verify: 20/20 SUCCESS, BUILD SUCCESS, 2:47
+- Surefire: 2006 tests, 0 failures, 0 errors, 18 skipped
+- ArchUnit: 19/19
+- E2E: 15/15
+- UI action inventory: 470/470 (271 FXML + 193 programmatic + 6 Web)
+- action behavior: 469 automated + 1 justified exclusion = 470/470
+- static release / supply chain / architecture / UI+Web+help localization: PASS
+- production JAR: 65,463,091 bytes
+- production JAR SHA-256: c1123b850bc27679e8aecdf901d9a747aaffa9f4050ba0797e17c64f50f8b9dd
+
+External gates still open:
+- real supported-browser PWA install/offline/reconnect acceptance;
+- V26 Windows/live/connected release gates.
+
+NEXT PRODUCT CHECKPOINT: V30 Kobo native sync.
+Do not mix V30 with V29. Begin V30 with protocol research/probe and stable identity/progress contracts.

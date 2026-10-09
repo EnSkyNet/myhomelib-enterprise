@@ -8,7 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
+import java.util.regex.Pattern;
 import java.util.concurrent.CancellationException;
 
 /** Пошук по абзацах без створення lowercase-копії всієї книги. */
@@ -29,7 +29,7 @@ public class ReaderSearchService {
         TextStorage storage = document.text();
         if (storage == null || storage.length() == 0) return List.of();
 
-        String needle = query.toLowerCase(Locale.ROOT);
+        Pattern needle = Pattern.compile(Pattern.quote(query), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
         List<ParagraphInfo> paragraphs = storage.getParagraphs();
         List<SearchResult> results = new ArrayList<>();
         int matchIndex = 0;
@@ -47,25 +47,22 @@ public class ReaderSearchService {
             int windowStart = paragraphStart;
             while (windowStart < paragraphEnd && results.size() < MAX_RESULTS) {
                 checkCancelled();
-                int primaryEnd = Math.min(paragraphEnd, windowStart + SEARCH_WINDOW_CHARS);
-                int readEnd = Math.min(paragraphEnd, primaryEnd + Math.max(0, needle.length() - 1));
-                String haystack = storage.getText(windowStart, readEnd).toLowerCase(Locale.ROOT);
-                int from = 0;
-                while (from < haystack.length() && results.size() < MAX_RESULTS) {
-                    int local = haystack.indexOf(needle, from);
-                    if (local < 0) break;
-                    int absolute = windowStart + local;
+                int primaryEnd = boundedEnd(windowStart, SEARCH_WINDOW_CHARS, paragraphEnd);
+                int readEnd = boundedEnd(primaryEnd, Math.max(0, query.length() - 1), paragraphEnd);
+                String haystack = storage.getText(windowStart, readEnd);
+                var matcher = needle.matcher(haystack);
+                while (matcher.find() && results.size() < MAX_RESULTS) {
+                    int absolute = windowStart + matcher.start();
                     if (absolute >= primaryEnd) break; // next window owns this match
 
                     int contextStart = Math.max(paragraphStart, absolute - 50);
-                    int contextEnd = Math.min(paragraphEnd, absolute + query.length() + 50);
+                    int contextEnd = boundedEnd(windowStart, matcher.end() + 50, paragraphEnd);
                     results.add(new SearchResult(
                             matchIndex++,
                             absolute,
                             paragraph.index(),
                             storage.getText(contextStart, contextEnd).trim()
                     ));
-                    from = local + Math.max(1, needle.length());
                 }
                 windowStart = primaryEnd;
             }
@@ -73,6 +70,10 @@ public class ReaderSearchService {
 
         log.debug("🔍 '{}' -> {} matches", query, results.size());
         return results;
+    }
+
+    private static int boundedEnd(int start, int increment, int limit) {
+        return (int) Math.min((long) limit, (long) start + increment);
     }
 
     private static void checkCancelled() {

@@ -3,7 +3,7 @@ package com.myhomelibcorp.reader.format.fb2;
 import com.myhomelibcorp.reader.api.BookSource;
 import com.myhomelibcorp.reader.api.ParseOptions;
 import com.myhomelibcorp.reader.api.TocEntry;
-import com.myhomelibcorp.shared.archive.ZipCharsetSupport;
+import com.myhomelibcorp.shared.archive.SafeZipSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
@@ -14,7 +14,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.OptionalLong;
-import java.util.zip.ZipFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -27,8 +26,8 @@ class RealFb2ReaderProbeTest {
         int books = 0;
         try (var paths = Files.list(directory)) {
             for (Path path : paths.filter(p -> p.toString().toLowerCase(Locale.ROOT).endsWith(".zip")).sorted().toList()) {
-                try (ZipFile archive = ZipCharsetSupport.open(path)) {
-                    var entries = archive.entries();
+                try (var archive = SafeZipSupport.openDetected(path, "FB2 probe archive")) {
+                    var entries = archive.getEntries();
                     while (entries.hasMoreElements()) {
                         var entry = entries.nextElement();
                         if (entry.isDirectory() || !entry.getName().toLowerCase(Locale.ROOT).endsWith(".fb2")) continue;

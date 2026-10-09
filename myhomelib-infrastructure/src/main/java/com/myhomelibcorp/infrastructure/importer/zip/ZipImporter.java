@@ -19,7 +19,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.LinkedList;
 import java.util.Queue;
@@ -32,6 +31,7 @@ import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipFile;
 import java.util.Enumeration;
 
+@Lazy
 @Component
 @Slf4j
 public class ZipImporter implements BookImporterPort {
@@ -196,8 +196,17 @@ public class ZipImporter implements BookImporterPort {
 
                     try (Stream<Book> bookStream = importer.importBooks(tempFile)) {
                         final long extractedSize = actualSize;
-                        bookStream.map(book -> ArchiveImportSupport.enrich(book, archivePath, rawEntryName, extractedSize))
+                        bookStream.filter(java.util.Objects::nonNull)
+                                .map(book -> ArchiveImportSupport.enrich(book, archivePath, rawEntryName, extractedSize))
                                 .forEach(bookQueue::add);
+                    } catch (RuntimeException entryFailure) {
+                        if (Thread.currentThread().isInterrupted()) {
+                            close();
+                            return false;
+                        }
+                        log.warn("Пропущено пошкоджений ZIP entry {} у {}: {}",
+                                rawEntryName, archivePath, entryFailure.getMessage());
+                        return true;
                     }
                 } finally {
                     Files.deleteIfExists(tempFile);

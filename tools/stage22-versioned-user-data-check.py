@@ -12,25 +12,33 @@ def txt(p): return (ROOT/p).read_text(encoding='utf-8')
 port=txt('myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/backup/UserDataTransferPort.java')
 service=txt('myhomelib-application/src/main/java/com/myhomelibcorp/application/service/BackupRestoreService.java')
 adapter=txt('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/backup/VersionedUserDataTransferAdapter.java')
+validator=txt('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/backup/PortableUserDataManifestValidator.java')
 backup_adapter=txt('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/adapter/CollectionBackupAdapter.java')
 restore=txt('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/RestoreController.java')
 restore_fxml=txt('myhomelib-ui/src/main/resources/view/restore-dialog.fxml')
 backup_fxml=txt('myhomelib-ui/src/main/resources/view/backup-dialog.fxml')
 test=txt('myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/backup/VersionedUserDataTransferAdapterTest.java')
 legacy=txt('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/collection/legacy/SqliteLegacyCollectionAttachAdapter.java')
-atomic_support=txt('myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/AtomicFileSupport.java')
 
-need('CURRENT_SCHEMA_VERSION = 4' in port, 'portable user-data schema v4 missing')
-for section in ['bookState','readingProgress','readingHistory','readingStats','bookmarks','annotations','annotationTags','groups','groupMemberships','savedSearches','filterSettings','readerSettings']:
+need('CURRENT_SCHEMA_VERSION = 6' in port, 'portable user-data schema v6 missing')
+for section in ['bookState','readingProgress','readingHistory','readingStats','bookmarks','annotations','annotationTags','groups','groupMemberships','savedSearches','filterSettings','readerSettings','readingLists','readingListItems']:
     need(f'"{section}"' in adapter, f'missing portable section {section}')
+need('reader_preference_overrides' in adapter and '"scoped"' in adapter, 'schema v6 scoped Reader profile transfer missing')
 need('SELECT id FROM books WHERE lib_id=?' in adapter, 'restore must resolve stable LibID first')
 need('sourceBookId' in adapter, 'same-catalogue internal-id fallback missing')
 need('restoreLegacyV1DatabaseStreaming' in adapter and 'case "ratings"' in adapter and 'case "reading"' in adapter, 'streaming v1 compatibility migration missing')
-need('version' in adapter and 'ratings' in adapter and 'reading' in adapter, 'v1 previous-format compatibility missing')
+need('legacyVersion' in validator and 'version' in validator and 'ratings' in adapter and 'reading' in adapter, 'v1 previous-format compatibility missing')
 need('ID_CACHE_LIMIT = 50_000' in adapter, 'bounded restore identity cache missing')
 need('CollectionManager' in adapter and 'getCurrentJdbcTemplate()' in adapter, 'portable adapter must follow active collection dynamically')
 need('BACKUP main TO' in backup_adapter and 'createRecoveryCheckpoint' in backup_adapter, 'live SQLite backup must use the online backup API')
-need('RestoreRecoveryFiles.staged(targetDb)' in service and 'AtomicFileSupport.moveReplacing(stagedDb, targetDb)' in service and 'ATOMIC_MOVE' in atomic_support, 'restore staging/atomic swap missing')
+need('RestoreRecoveryFiles.staged(safeTarget)' in service
+     and 'RestoreRecoveryFiles.previous(safeTarget)' in service
+     and 'RestoreRecoveryFiles.pending(safeTarget)' in service
+     and 'SafeFilePublication.copyFresh(input, stagedDb' in service
+     and 'SafeFilePublication.moveNoReplace(stagedDb, safeTarget' in service
+     and 'SafeFilePublication.moveNoReplace(\n                        swap.previousDb(), swap.targetDb()' in service
+     and 'private record RestoreSwap' in service,
+     'restore staged install/recovery transaction missing')
 need('closeCurrentCollection()' in service and 'openCollection(collection)' in service and 'migrateCurrentCollection()' in service, 'full restore must close/reopen collection and run sequential DB migrations')
 need('Legacy database-only backup detected' in service, 'legacy DB-only backup compatibility missing')
 need('userDataOnly' in service and 'restoreDatabase' in service, 'user-data-only restore mode missing')
@@ -40,8 +48,8 @@ need('collectionManagementService.closeCurrentCollection()' not in restore, 'UI 
 need("value(rs, cols, \"libid\")" in legacy and 'intValue(rs,cols,"rate",0)' in legacy and 'intValue(rs,cols,"progress",0)' in legacy, 'legacy HLC2 attach must preserve LibID/rate/progress')
 need("'old-1','L100'" in test and "'new-77','L100'" in test, 'LibID remap regression fixture missing')
 need('sequentiallyMigratesPreviousV1Manifest' in test, 'v1 manifest compatibility test missing')
-need('validateCurrentManifestStructure' in adapter and 'replaceByPrefix(FILTER_PREFIX' in adapter and 'rollbackExternalState' in adapter, 'portable restore preflight/external-state atomicity missing')
-need('schemaVersion must be an integer' in adapter and 'format is missing for schema v' in adapter and 'Conflicting portable user-data schema versions' in adapter,
+need('manifestValidator.validateCurrentStructure' in adapter and 'replaceByPrefix(FILTER_PREFIX' in adapter and 'rollbackExternalState' in adapter and 'validateCurrentStructure' in validator, 'portable restore preflight/external-state atomicity missing')
+need('schemaVersion must be an integer' in validator and 'format is missing for schema v' in validator and 'Conflicting portable user-data schema versions' in validator,
      'portable current-schema header validation/anti-downgrade guards missing')
 need('currentSchemaRestoreReplacesFilterSliceAndClearsExplicitNullReaderGlobal' in test and
      'malformedV2ExternalSectionIsRejectedBeforeDatabaseMutation' in test and
@@ -105,7 +113,7 @@ if errors:
     for e in errors: print(' -',e)
     sys.exit(1)
 print('STAGE 22 VERSIONED USER-DATA CHECK: PASS')
-print(' - schema-v4 portable user-data sections (including annotations) + streaming v1 compatibility: PASS')
+print(' - schema-v6 portable user-data sections (including scoped Reader profiles) + streaming v1 compatibility: PASS')
 print(' - stable LibID-first remap + bounded identity cache + migrated-schema index lookup: PASS')
 print(' - WAL-safe online backup + staged atomic DB restore: PASS')
 print(' - full restore + user-data-only UI modes + legacy DB-only compatibility: PASS')

@@ -29,7 +29,12 @@ public interface ApplicationSettingsPort {
     }
 
     default boolean getBoolean(String key, boolean defaultValue) {
-        return Boolean.parseBoolean(get(key, Boolean.toString(defaultValue)));
+        String value = get(key, Boolean.toString(defaultValue));
+        if (value == null) return defaultValue;
+        String normalized = value.trim();
+        if ("true".equalsIgnoreCase(normalized)) return true;
+        if ("false".equalsIgnoreCase(normalized)) return false;
+        return defaultValue;
     }
 
     default int getInt(String key, int defaultValue) {

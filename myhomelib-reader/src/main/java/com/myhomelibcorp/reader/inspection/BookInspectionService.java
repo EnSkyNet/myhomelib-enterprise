@@ -1,5 +1,6 @@
 package com.myhomelibcorp.reader.inspection;
 
+import com.myhomelibcorp.reader.api.BookDocumentMetadata;
 import com.myhomelibcorp.reader.api.BookFormat;
 import com.myhomelibcorp.reader.api.BookParser;
 import com.myhomelibcorp.reader.api.BookSource;
@@ -15,10 +16,12 @@ import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
 
 /**
  * UI-neutral, bounded inspection of one local book. Full reader documents are
@@ -47,9 +50,11 @@ public final class BookInspectionService {
         }
 
         ReaderDocument document = null;
+        BookFormat detectedFormat = format.get();
         try {
-            BookParser parser = format.get().createParser();
-            document = parser.parse(source, new ParseOptions(true, false, true, 24 * 1024 * 1024, null));
+            boolean lazyFb2Images = isFb2(source);
+            BookParser parser = detectedFormat.createParser();
+            document = parser.parse(source, new ParseOptions(!lazyFb2Images, false, true, 24 * 1024 * 1024, null));
             if (document == null || document.isEmpty()) {
                 closeDocument(document);
                 return simple(DocumentInspection.unsupported(source.extension().toUpperCase(Locale.ROOT),
@@ -79,11 +84,47 @@ public final class BookInspectionService {
                     images,
                     ""
             );
-            return new ParsedSession(document, inspection);
+            return new ParsedSession(document, inspection, source, detectedFormat, lazyFb2Images);
         } catch (Exception e) {
             closeDocument(document);
+            if (Thread.currentThread().isInterrupted() || e instanceof InterruptedIOException
+                    || e instanceof CancellationException) {
+                Thread.currentThread().interrupt();
+                throw new CancellationException("Book inspection cancelled");
+            }
+            if (isEpub(source)) {
+                DocumentInspection metadataOnly = inspectEpubMetadata(source, detectedFormat, e);
+                if (metadataOnly != null) return simple(metadataOnly);
+            }
             return simple(DocumentInspection.unsupported(source.extension().toUpperCase(Locale.ROOT),
                     "Не вдалося проаналізувати документ: " + safeMessage(e)));
+        }
+    }
+
+    private static DocumentInspection inspectEpubMetadata(BookSource source, BookFormat format, Exception fullParseFailure) {
+        try {
+            BookDocumentMetadata metadata = format.createParser().readMetadata(source);
+            if (metadata == null) return null;
+            return new DocumentInspection(
+                    true,
+                    source.extension().toUpperCase(Locale.ROOT),
+                    metadata.title(),
+                    metadata.authors(),
+                    metadata.language(),
+                    "",
+                    metadata.publisher(),
+                    metadata.year(),
+                    metadata.isbn(),
+                    metadata.annotation(),
+                    0,
+                    0,
+                    metadata.chapterCount(),
+                    List.of(),
+                    List.of(),
+                    "Повний текст EPUB не вдалося проаналізувати; показано метадані: " + safeMessage(fullParseFailure)
+            );
+        } catch (Exception ignored) {
+            return null;
         }
     }
 
@@ -93,6 +134,9 @@ public final class BookInspectionService {
         boolean inWord = false;
         int length = text.length();
         for (int start = 0; start < length; start += WORD_COUNT_CHUNK) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new CancellationException("Book inspection cancelled while counting words");
+            }
             int end = Math.min(length, start + WORD_COUNT_CHUNK);
             String chunk = text.getText(start, end);
             if (chunk == null || chunk.isEmpty()) continue;
@@ -147,12 +191,19 @@ public final class BookInspectionService {
         return ext.equals("fb2") || ext.equals("fbd");
     }
 
+    private static boolean isEpub(BookSource source) {
+        return "epub".equalsIgnoreCase(source.extension());
+    }
+
     private static String scanFb2SourceLanguage(BookSource source) {
         XMLInputFactory factory = SecureXmlInputFactory.create(false, false);
         try (InputStream in = source.openStream()) {
             XMLStreamReader reader = factory.createXMLStreamReader(in);
             int events = 0;
             while (reader.hasNext() && events++ < 200_000) {
+                if ((events & 0xFF) == 0 && Thread.currentThread().isInterrupted()) {
+                    throw new InterruptedIOException("FB2 source-language scan cancelled");
+                }
                 int event = reader.next();
                 if (event == XMLStreamConstants.START_ELEMENT) {
                     String local = reader.getLocalName();
@@ -179,27 +230,54 @@ public final class BookInspectionService {
 
     private static final class ParsedSession implements DocumentInspectionSession {
         private ReaderDocument document;
+        private ReaderDocument imageDocument;
         private final DocumentInspection inspection;
+        private final BookSource source;
+        private final BookFormat format;
+        private final boolean lazyImages;
 
-        private ParsedSession(ReaderDocument document, DocumentInspection inspection) {
+        private ParsedSession(ReaderDocument document, DocumentInspection inspection,
+                              BookSource source, BookFormat format, boolean lazyImages) {
             this.document = document;
             this.inspection = inspection;
+            this.source = source;
+            this.format = format;
+            this.lazyImages = lazyImages;
         }
 
         @Override public DocumentInspection inspection() { return inspection; }
 
         @Override
-        public Optional<InputStream> openImage(String id) {
+        public synchronized Optional<InputStream> openImage(String id) {
             ReaderDocument current = document;
-            if (current == null || current.resources() == null || id == null) return Optional.empty();
-            return current.resources().open(id);
+            if (current == null || id == null) return Optional.empty();
+            if (!lazyImages) {
+                return current.resources() == null ? Optional.empty() : current.resources().open(id);
+            }
+
+            // Book Details only needs image ids/count during passive inspection. FB2 binary
+            // payloads are comparatively expensive on Windows because they create/decode temp
+            // resources (and are often scanned by antivirus software). Materialize them only
+            // when the user explicitly opens the image gallery.
+            if (imageDocument == null) {
+                try {
+                    imageDocument = format.createParser().parse(
+                            source, new ParseOptions(true, false, true, 24 * 1024 * 1024, null));
+                } catch (Exception ignored) {
+                    return Optional.empty();
+                }
+            }
+            return imageDocument.resources() == null ? Optional.empty() : imageDocument.resources().open(id);
         }
 
         @Override
-        public void close() {
+        public synchronized void close() {
             ReaderDocument current = document;
+            ReaderDocument images = imageDocument;
             document = null;
+            imageDocument = null;
             closeDocument(current);
+            if (images != current) closeDocument(images);
         }
     }
 

@@ -19,6 +19,8 @@
                    style="-fx-font-weight: bold; -fx-font-size: 15px;"/>
             <Label fx:id="documentWarningLabel" wrapText="true" visible="false" managed="false"
                    style="-fx-text-fill: -mhl-warning-text; -fx-background-color: -mhl-warning-bg; -fx-padding: 6;"/>
+            <Button fx:id="downloadBookButton" text="ui.book_details.download" onAction="#onDownloadBook"
+                    visible="false" managed="false" disable="true"/>
 
             <TitledPane text="ui.details.section.main" expanded="true" animated="false">
                 <content>
@@ -75,6 +77,8 @@
                         <Label fx:id="imagesCountLabel" text="ui.fxml.details.images_0"/>
                         <Button fx:id="showImagesButton" text="ui.fxml.details.view_images" onAction="#onShowImages"
                                 visible="false" managed="false"/>
+                        <Button fx:id="scanDuplicatePagesButton" text="ui.comic.duplicates.action" onAction="#onScanDuplicatePages"
+                                visible="false" managed="false"/>
                         <Label text="ui.fxml.details.table_of_contents" style="-fx-font-weight: bold;"/>
                         <VBox fx:id="tocPreviewBox" spacing="2"/>
                     </VBox>
@@ -88,6 +92,9 @@
                         <FlowPane fx:id="groupLinksPane" hgap="6" vgap="4"/>
                         <Label text="ui.fxml.details.keywords" style="-fx-font-weight: bold;"/>
                         <FlowPane fx:id="keywordsLinksPane" hgap="6" vgap="4"/>
+                        <Separator/>
+                        <Label text="ui.details.similar_books" style="-fx-font-weight: bold;"/>
+                        <VBox fx:id="similarBooksBox" spacing="3"/>
                     </VBox>
                 </content>
             </TitledPane>

@@ -23,6 +23,7 @@ import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import com.myhomelibcorp.shared.util.ThrowableMessages;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -43,6 +44,7 @@ import java.util.stream.Stream;
 
 /** Diagnostics and fail-safe rebuild orchestration for the independent full-text index. */
 @Service
+@Slf4j
 public class ContentIndexMaintenanceService {
     private static final SupportedFormatRegistry FORMATS = SupportedFormatRegistry.standard();
     private static final Set<String> FULL_TEXT_EXTENSIONS = FORMATS.extensions(f -> f.fullTextSupported());
@@ -93,11 +95,34 @@ public class ContentIndexMaintenanceService {
                                              BooleanSupplier cancelled,
                                              Consumer<ContentIndexRebuildProgress> progress) {
         String id = requiredCollection(collectionId);
-        if (operationCoordinator == null) return rebuildLocked(id, cancelled, progress);
-        try (var ignored = operationCoordinator.acquire(LibraryOperationType.INDEX)) {
-            assertActiveCollection(id);
-            return rebuildLocked(id, cancelled, progress);
+        long started = System.nanoTime();
+        log.info("CONTENT_INDEX_REBUILD_START collection={}", id);
+        if (operationCoordinator == null) {
+            ContentIndexRebuildResult result = rebuildLocked(id, cancelled, progress);
+            logRebuildResult(id, result, started);
+            return result;
         }
+        // Full-text rebuild is derived-state maintenance. It must keep SWITCH/DELETE/RESTORE out,
+        // but it must not freeze an online download in the same active collection. Use the same
+        // shared INDEX-root barrier as the catalogue Lucene rebuild; DownloadBookUseCase defers
+        // both derived-index repairs off the caller thread while this rebuild owns the index lock.
+        try (var ignored = operationCoordinator.acquireDetachedShared(LibraryOperationType.INDEX)) {
+            assertActiveCollection(id);
+            ContentIndexRebuildResult result = rebuildLocked(id, cancelled, progress);
+            logRebuildResult(id, result, started);
+            return result;
+        }
+    }
+
+    private static void logRebuildResult(String collectionId, ContentIndexRebuildResult result, long startedNanos) {
+        long durationMs = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+        if (result == null) {
+            log.warn("CONTENT_INDEX_REBUILD_DONE collection={} durationMs={} result=null", collectionId, durationMs);
+            return;
+        }
+        log.info("CONTENT_INDEX_REBUILD_DONE collection={} status={} processedBooks={} indexedArtifacts={} durationMs={} detail='{}'",
+                collectionId, result.status(), result.processedBooks(), result.indexedArtifacts(), durationMs,
+                result.technicalDetail() == null ? "" : result.technicalDetail().replace('\n', ' ').replace('\r', ' '));
     }
 
     private ContentIndexRebuildResult rebuildLocked(String id,
@@ -140,6 +165,10 @@ public class ContentIndexMaintenanceService {
             // every entry is written successfully. Any exception leaves the active index intact.
             contentIndex.rebuild(id, entries::iterator);
             indexingQueue.acknowledgeFresh(id);
+            // Release only this rebuild's stale hold. A concurrent committed download may own a
+            // second hold and/or queued task; in that case the index deliberately remains STALE
+            // until that incremental repair has completed.
+            indexingQueue.releaseStaleHold(id);
             ContentIndexHealth health = contentIndex.health(id);
             listener.accept(new ContentIndexRebuildProgress(processed.get(), totalBooks, "", "complete"));
             return new ContentIndexRebuildResult(ContentIndexRebuildResult.Status.COMPLETED,

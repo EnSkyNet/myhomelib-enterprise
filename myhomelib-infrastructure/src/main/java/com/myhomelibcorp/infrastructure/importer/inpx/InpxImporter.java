@@ -20,6 +20,7 @@ import com.myhomelibcorp.shared.exception.ErrorCode;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
@@ -43,6 +44,7 @@ import java.util.stream.StreamSupport;
  * prevents the historical split where this adapter interpreted the same INPX file
  * differently from the main catalogue import pipeline.</p>
  */
+@Lazy
 @Component
 @Slf4j
 public class InpxImporter implements BookImporterPort {

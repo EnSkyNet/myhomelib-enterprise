@@ -26,6 +26,8 @@ import org.apache.commons.compress.archivers.zip.ZipFile;
 public class InpxReader {
     private static final char FIELD_DELIMITER = 0x04;
     private static final long MAX_METADATA_BYTES = 16L * 1024L * 1024L;
+    // Cap decoded characters before allocating a malformed/hostile INP row.
+    private static final int MAX_INP_LINE_CHARS = 1_048_576;
     private static final List<String> DEFAULT_STRUCTURE = List.of(
             "AUTHOR", "GENRE", "TITLE", "SERIES", "SERNO", "FILE", "SIZE",
             "LIBID", "DEL", "EXT", "DATE", "LANG", "KEYWORDS"
@@ -150,7 +152,8 @@ public class InpxReader {
 
     private Iterator<InpxRecord> readStandaloneInp(Path file) {
         try {
-            BufferedReader br = newDetectedReader(Files.newInputStream(file, java.nio.file.LinkOption.NOFOLLOW_LINKS));
+            BufferedReader br = new BoundedInpLineReader(newDetectedReader(
+                    Files.newInputStream(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)));
             String base = stripExtension(file.getFileName().toString());
             return new SingleReaderIterator(br, DEFAULT_STRUCTURE, true, file.getFileName().toString(), base + ".zip");
         } catch (IOException e) {
@@ -217,7 +220,8 @@ public class InpxReader {
                             return;
                         }
                         currentEntry = inpEntries.get(entryIndex++);
-                        currentReader = newDetectedReader(boundedEntryStream(zip, currentEntry, ArchiveSafetyLimits.MAX_ENTRY_BYTES));
+                        currentReader = new BoundedInpLineReader(newDetectedReader(
+                                boundedEntryStream(zip, currentEntry, ArchiveSafetyLimits.MAX_ENTRY_BYTES)));
                         log.debug("Читання INP: {}", currentEntry.getName());
                     }
                     String line = currentReader.readLine();
@@ -569,6 +573,60 @@ public class InpxReader {
         }
     }
 
+    /**
+     * Reads line slices from a buffered character stream. Unlike BufferedReader.readLine(),
+     * it checks size BEFORE materializing a complete line. It preserves LF, CRLF and CR
+     * semantics, including separators crossing the internal chunk boundary.
+     * Metadata readers are deliberately unaffected.
+     */
+    static final class BoundedInpLineReader extends BufferedReader {
+        private static final int CHUNK = 8192;
+        private final char[] buffer = new char[CHUNK];
+        private int position;
+        private int length;
+        private boolean skipNextLf;
+
+        BoundedInpLineReader(Reader delegate) {
+            super(delegate, CHUNK);
+        }
+
+        @Override
+        public String readLine() throws IOException {
+            StringBuilder row = new StringBuilder(256);
+            for (;;) {
+                if (length < 0) return row.isEmpty() ? null : row.toString();
+                if (position == length) {
+                    length = super.read(buffer, 0, buffer.length);
+                    position = 0;
+                    if (length < 0) {
+                        return row.isEmpty() ? null : row.toString();
+                    }
+                }
+                if (skipNextLf) {
+                    skipNextLf = false;
+                    if (buffer[position] == '\n') {
+                        position++;
+                        continue;
+                    }
+                }
+                int start = position;
+                while (position < length && buffer[position] != '\n' && buffer[position] != '\r') {
+                    position++;
+                }
+                int count = position - start;
+                if (count > MAX_INP_LINE_CHARS - row.length()) {
+                    throw new IOException("INP_RECORD_TOO_LONG: limit " + MAX_INP_LINE_CHARS + " characters");
+                }
+                row.append(buffer, start, count);
+                if (position < length) {
+                    char separator = buffer[position++];
+                    skipNextLf = separator == '\r';
+                    return row.toString();
+                }
+            }
+        }
+    }
+
     private static BufferedReader newDetectedReader(InputStream input) throws IOException {
         final int sampleLimit = 16 * 1024;
         PushbackInputStream in = new PushbackInputStream(new BufferedInputStream(input, 64 * 1024), sampleLimit);
@@ -636,6 +694,7 @@ public class InpxReader {
 
     private static void validateArchive(ZipFile zip) throws IOException {
         int count = 0;
+        long totalDeclared = 0L;
         Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         while (entries.hasMoreElements()) {
             ZipArchiveEntry entry = entries.nextElement();
@@ -643,11 +702,17 @@ public class InpxReader {
                 throw new IOException("INPX contains too many entries: " + count);
             }
             if (entry.isDirectory()) continue;
-            if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize())) {
-                throw new IOException("INPX entry is too large: " + entry.getName() + " (" + entry.getSize() + " bytes)");
+            long size = entry.getSize();
+            if (ArchiveSafetyLimits.declaredEntryTooLarge(size)) {
+                throw new IOException("INPX entry is too large: " + entry.getName() + " (" + size + " bytes)");
+            }
+            if (size > 0) {
+                if (size > ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES - totalDeclared) {
+                    throw new IOException("INPX cumulative declared size exceeds archive safety limit");
+                }
+                totalDeclared += size;
             }
             long compressed = entry.getCompressedSize();
-            long size = entry.getSize();
             if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed)) {
                 throw new IOException("INPX entry has suspicious compression ratio: " + entry.getName());
             }

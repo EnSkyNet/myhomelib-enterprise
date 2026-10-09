@@ -24,6 +24,7 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 /** TAR/CPIO and compressed TAR importer.  It is sequential and memory bounded. */
+@Lazy
 @Component
 @Slf4j
 public class StreamArchiveImporter implements BookImporterPort {
@@ -88,9 +89,15 @@ public class StreamArchiveImporter implements BookImporterPort {
                         if(totalDecompressedBytes>ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES)throw new IOException("archive exceeds cumulative decompression safety limit");
                         try(Stream<Book>s=importer.importBooks(tmp)){
                             s.filter(Objects::nonNull).map(b->ArchiveImportSupport.enrich(b,path,name,extracted)).forEach(q::add);
+                        } catch (RuntimeException entryFailure) {
+                            if (Thread.currentThread().isInterrupted()) {
+                                close();
+                                return;
+                            }
+                            log.warn("Archive book entry skipped in {} ({}): {}", path, name, entryFailure.getMessage());
                         }
                     }finally{Files.deleteIfExists(tmp);}
-                }catch(Exception ex){log.warn("Archive entry skipped in {}: {}",path,ex.getMessage());close();}
+                }catch(Exception ex){log.warn("Archive stream stopped in {}: {}",path,ex.getMessage());close();}
             }
         }
         private long copyBounded(InputStream src,Path dst)throws IOException{

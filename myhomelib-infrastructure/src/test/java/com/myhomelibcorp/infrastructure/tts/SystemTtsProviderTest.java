@@ -111,6 +111,16 @@ class SystemTtsProviderTest {
         assertThat(unsupported.isAvailable()).isFalse();
     }
 
+
+    @Test
+    void rejectsNonFiniteRateBeforeLaunchingAnyCommand() {
+        SystemTtsProvider provider = new SystemTtsProvider(SystemTtsProvider.Platform.UNSUPPORTED, new FakeCommands());
+
+        assertThatThrownBy(() -> provider.speak("text", "", Double.NaN))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("0.5");
+    }
+
     private static final class FakeCommands implements SystemTtsProvider.CommandExecutor {
         private final AtomicInteger captureCalls = new AtomicInteger();
         @Override public boolean commandExists(String command) { return true; }

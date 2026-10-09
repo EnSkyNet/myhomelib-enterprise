@@ -11,9 +11,6 @@ import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -122,17 +119,8 @@ final class MacKeychainSecretStore implements SecretStore {
         if (key.isBlank()) throw new IllegalArgumentException("Secret key must not be blank");
         String service = CredentialMasterKeyManager.SECRET_NAME.equals(key)
                 ? LEGACY_SERVICE
-                : KEYED_SERVICE_PREFIX + sha256(key);
+                : KEYED_SERVICE_PREFIX + Utf8HashSupport.sha256(key);
         return service.getBytes(StandardCharsets.UTF_8);
-    }
-
-    private static String sha256(String value) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
-        } catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException("SHA-256 is unavailable", impossible);
-        }
     }
 
     private record FoundItem(int status, int passwordLength, Pointer passwordData, Pointer itemRef) {}

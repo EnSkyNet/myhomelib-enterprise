@@ -116,19 +116,31 @@ public class ImportFileUseCase {
             throw new IllegalArgumentException("File cannot be null");
         }
 
-        try (var ignored = operationCoordinator.acquire(LibraryOperationType.IMPORT)) {
-            assertExpectedCollection(context);
-            assertExpectedSourceFingerprint(context);
-            Path safeSource = requireSafeImportSource(context.getFile());
-            String fileName = safeSource.getFileName().toString().toLowerCase(Locale.ROOT);
-            if (fileName.endsWith(".inpx") || fileName.endsWith(".inp")) {
-                return executeInpx(context);
+        try (var lease = operationCoordinator.acquire(LibraryOperationType.IMPORT)) {
+            try {
+                assertExpectedCollection(context);
+                assertExpectedSourceFingerprint(context);
+                Path safeSource = requireSafeImportSource(context.getFile());
+                String fileName = safeSource.getFileName().toString().toLowerCase(Locale.ROOT);
+                ImportResult result;
+                if (fileName.endsWith(".inpx") || fileName.endsWith(".inp")) {
+                    result = executeInpx(context);
+                } else if (catalogImportPort.supports(context.getFile())) {
+                    result = executeNeutralCatalog(context);
+                } else {
+                    result = executeLegacy(context);
+                }
+                if (result.status() == ImportStatus.CANCELLED) {
+                    lease.markCancelled("Import cancelled");
+                }
+                return result;
+            } catch (java.util.concurrent.CancellationException cancelled) {
+                lease.markCancelled(cancelled.getMessage());
+                throw cancelled;
+            } catch (RuntimeException | Error failure) {
+                lease.markFailed(failure);
+                throw failure;
             }
-            if (catalogImportPort.supports(context.getFile())) {
-                return executeNeutralCatalog(context);
-            }
-
-            return executeLegacy(context);
         }
     }
 

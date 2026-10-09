@@ -1,10 +1,10 @@
 package com.myhomelibcorp.infrastructure.ai;
 
 import com.myhomelibcorp.shared.util.NetworkUris;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 import com.myhomelibcorp.application.ai.AiOperation;
 import com.myhomelibcorp.application.ai.AiProvider;
 import com.myhomelibcorp.application.ai.AiProviderCapabilities;
@@ -26,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -51,20 +52,45 @@ public final class OpenAiResponsesProvider implements AiProvider {
 
     private final ApplicationSettingsPort settings;
     private final ObjectMapper mapper;
-    private final HttpClient http;
+    private final Supplier<HttpClient> http;
 
     @Autowired
     public OpenAiResponsesProvider(ApplicationSettingsPort settings, ObjectMapper mapper) {
-        this(settings, mapper, HttpClient.newBuilder()
+        this(settings, mapper, memoizedClient(() -> HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .connectTimeout(Duration.ofSeconds(20))
-                .build());
+                .build()));
     }
 
     OpenAiResponsesProvider(ApplicationSettingsPort settings, ObjectMapper mapper, HttpClient http) {
+        this(settings, mapper, () -> Objects.requireNonNull(http, "http"));
+    }
+
+    private OpenAiResponsesProvider(ApplicationSettingsPort settings, ObjectMapper mapper, Supplier<HttpClient> http) {
         this.settings = Objects.requireNonNull(settings, "settings");
         this.mapper = Objects.requireNonNull(mapper, "mapper");
         this.http = Objects.requireNonNull(http, "http");
+    }
+
+    private static Supplier<HttpClient> memoizedClient(Supplier<HttpClient> factory) {
+        Objects.requireNonNull(factory, "factory");
+        return new Supplier<>() {
+            private volatile HttpClient value;
+
+            @Override
+            public HttpClient get() {
+                HttpClient current = value;
+                if (current != null) return current;
+                synchronized (this) {
+                    current = value;
+                    if (current == null) {
+                        current = Objects.requireNonNull(factory.get(), "factory result");
+                        value = current;
+                    }
+                    return current;
+                }
+            }
+        };
     }
 
     @Override
@@ -110,7 +136,7 @@ public final class OpenAiResponsesProvider implements AiProvider {
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                 .build();
 
-        CompletableFuture<HttpResponse<byte[]>> future = http.sendAsync(
+        CompletableFuture<HttpResponse<byte[]>> future = http.get().sendAsync(
                 httpRequest, BoundedHttpBodyHandlers.ofByteArray(MAX_RESPONSE_BYTES));
         try {
             HttpResponse<byte[]> response = await(future, context);
@@ -186,7 +212,7 @@ public final class OpenAiResponsesProvider implements AiProvider {
         try {
             JsonNode root = mapper.readTree(bytes);
             JsonNode message = root.path("error").path("message");
-            if (message.isTextual() && !message.asText().isBlank()) detail += ": " + message.asText();
+            if (message.isString() && !message.asString().isBlank()) detail += ": " + message.asString();
         } catch (Exception ignored) {
             if (bytes.length > 0) {
                 String raw = new String(bytes, 0, Math.min(bytes.length, MAX_ERROR_BODY), StandardCharsets.UTF_8)
@@ -200,7 +226,7 @@ public final class OpenAiResponsesProvider implements AiProvider {
     private static String extractOutputText(JsonNode root) {
         if (root == null) return "";
         JsonNode direct = root.get("output_text");
-        if (direct != null && direct.isTextual()) return direct.asText().trim();
+        if (direct != null && direct.isString()) return direct.asString().trim();
         StringBuilder result = new StringBuilder();
         JsonNode output = root.get("output");
         if (output != null && output.isArray()) {
@@ -209,9 +235,9 @@ public final class OpenAiResponsesProvider implements AiProvider {
                 if (content == null || !content.isArray()) continue;
                 for (JsonNode part : content) {
                     JsonNode text = part.get("text");
-                    if (text != null && text.isTextual() && !text.asText().isBlank()) {
+                    if (text != null && text.isString() && !text.asString().isBlank()) {
                         if (!result.isEmpty()) result.append('\n');
-                        result.append(text.asText().trim());
+                        result.append(text.asString().trim());
                     }
                 }
             }

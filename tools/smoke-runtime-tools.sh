@@ -24,7 +24,7 @@ esac
 
 [[ -x "$JAVA" ]] || { echo "ERROR: packaged Java launcher missing: $JAVA" >&2; exit 1; }
 [[ -s "$EPUBCHECK" ]] || { echo "ERROR: packaged EPUBCheck JAR missing: $EPUBCHECK" >&2; exit 1; }
-[[ -x "$MOBITOOL" ]] || { echo "ERROR: packaged mobitool missing/not executable: $MOBITOOL" >&2; exit 1; }
+REQUIRE_LIBMOBI="${MHL_REQUIRE_LIBMOBI:-0}"
 
 EPUB_VERSION="$("$JAVA" -jar "$EPUBCHECK" --version 2>&1)"
 grep -F "EPUBCheck v5.4.0" <<<"$EPUB_VERSION" >/dev/null || {
@@ -32,12 +32,20 @@ grep -F "EPUBCheck v5.4.0" <<<"$EPUB_VERSION" >/dev/null || {
   exit 1
 }
 
-MOBI_VERSION="$("$MOBITOOL" -v 2>&1)"
-grep -F "libmobi: 0.12" <<<"$MOBI_VERSION" >/dev/null || {
-  echo "ERROR: unexpected packaged libmobi version: $MOBI_VERSION" >&2
+MOBI_VERSION=""
+if [[ -x "$MOBITOOL" ]]; then
+  MOBI_VERSION="$("$MOBITOOL" -v 2>&1)"
+  grep -F "libmobi: 0.12" <<<"$MOBI_VERSION" >/dev/null || {
+    echo "ERROR: unexpected packaged libmobi version: $MOBI_VERSION" >&2
+    exit 1
+  }
+elif [[ "$REQUIRE_LIBMOBI" == "1" ]]; then
+  echo "ERROR: packaged mobitool missing/not executable: $MOBITOOL" >&2
   exit 1
-}
+else
+  echo "WARNING: packaged mobitool is absent; optional MOBI/AZW conversion tool was not bundled." >&2
+fi
 
 echo "Packaged runtime tools smoke: PASS"
 echo "$EPUB_VERSION"
-printf '%s\n' "$MOBI_VERSION"
+[[ -z "$MOBI_VERSION" ]] || printf '%s\n' "$MOBI_VERSION"

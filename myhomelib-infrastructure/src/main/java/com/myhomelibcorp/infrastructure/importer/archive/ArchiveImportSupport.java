@@ -37,7 +37,7 @@ public final class ArchiveImportSupport {
 
 
     public static boolean isSupportedBookEntry(String name, ImporterRegistry importerRegistry) {
-        if (name == null || importerRegistry == null || isNestedArchive(name)) return false;
+        if (name == null || importerRegistry == null || !isSafeEntryName(name) || isNestedArchive(name)) return false;
         try {
             importerRegistry.findImporter(importerProbePath(name));
             return true;

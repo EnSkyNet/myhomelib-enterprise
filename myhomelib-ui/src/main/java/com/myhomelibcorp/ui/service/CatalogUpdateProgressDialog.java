@@ -200,33 +200,15 @@ public final class CatalogUpdateProgressDialog {
     private static String stageText(OperationStage stage) {
         if (stage == null) return UiText.text("ui.java.catalog_update_progress_dialog.17df011233");
         return switch (stage) {
-            case CHECKING_SERVER -> UiText.text("ui.import.stage.checking_server");
-            case DOWNLOADING -> UiText.text("ui.import.stage.downloading");
-            case CREATING_CHECKPOINT -> UiText.text("ui.import.stage.creating_checkpoint");
-            case VALIDATING -> UiText.text("ui.import.stage.validating");
-            case READING_CATALOG -> UiText.text("ui.import.stage.reading_catalog");
             case IMPORTING -> UiText.text("ui.import.action.catalog");
-            case UPDATING_AUTHORS -> UiText.text("ui.import.stage.updating_authors");
             case APPLYING_DELETIONS -> UiText.text("ui.java.catalog_update_progress_dialog.8bc92236cd");
-            case UPDATING_SEARCH_INDEX -> UiText.text("ui.import.stage.updating_index");
-            case ROLLING_BACK -> UiText.text("ui.import.stage.rolling_back");
-            case REFRESHING_STATISTICS -> UiText.text("ui.import.stage.refreshing_statistics");
-            case INTEGRITY_CHECKS -> UiText.text("ui.import.stage.integrity_checks");
-            case SCANNING_DUPLICATES -> UiText.text("ui.import.stage.scanning_duplicates");
-            case SYNCHRONIZING_FILES -> UiText.text("ui.import.stage.synchronizing_files");
-            case OPTIMIZING_DATABASE -> UiText.text("ui.import.stage.optimizing_database");
             case BACKING_UP -> UiText.text("ui.backup.confirm.start.title");
-            case RESTORING -> UiText.text("ui.import.stage.restoring");
-            case CREATING_COLLECTION -> UiText.text("ui.import.stage.creating_collection");
-            case DELETING_COLLECTION -> UiText.text("ui.import.stage.deleting_collection");
             case FINALIZING -> UiText.text("ui.fxml.operation_center_workspace.finalizing");
-            case BOOK_DOWNLOAD -> UiText.text("ui.import.stage.book_download");
-            case CONVERTING -> UiText.text("ui.import.stage.converting");
-            case COMPLETED -> UiText.text("ui.import.stage.completed");
-            case CANCELLED -> UiText.text("ui.import.stage.cancelled");
             case FAILED -> UiText.text("common.error");
+            default -> OperationStageText.text(stage);
         };
     }
+
 
 
     private static String formatBytes(long bytes) {

@@ -8,6 +8,7 @@ resource_port = (ROOT / 'myhomelib-application/src/main/java/com/myhomelibcorp/a
 resolver = (ROOT / 'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/resource/BookResourceResolver.java').read_text(encoding='utf-8')
 adapter = (ROOT / 'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/cover/ZipArchiveReader.java').read_text(encoding='utf-8')
 ui = (ROOT / 'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java').read_text(encoding='utf-8')
+reader_source = (ROOT / 'myhomelib-application/src/main/java/com/myhomelibcorp/application/reader/ReaderSourceResolver.java').read_text(encoding='utf-8')
 
 checks = {
     'ArchiveReader exposes bounded cancellable materialization':
@@ -17,17 +18,20 @@ checks = {
         'Optional<Path> locateBookContainer(Book book);' in resource_port
         and 'Optional<String> materializeArchiveBookEntry(' in resource_port,
     'Reader resolves physical container without member enumeration':
-        'bookResourcePort.locateBookContainer(book)' in ui,
+        'ReaderSourceResolver.resolve(book, requestedArtifactId, bookResourcePort)' in ui
+        and 'bookResourcePort.locateBookContainer(candidate)' in reader_source,
     'Reader delegates archive copy to bounded application port':
-        'bookResourcePort.materializeArchiveBookEntry(' in ui
-        and 'ArchiveSafetyLimits.MAX_ENTRY_BYTES' in ui
-        and 'bookResourcePort.readBookData(book)' not in ui,
+        'ReaderSourceResolver.materialize(book, physicalPath, bookResourcePort' in ui
+        and 'bookResourcePort.materializeArchiveBookEntry(' in reader_source
+        and 'ArchiveSafetyLimits.MAX_ENTRY_BYTES' in reader_source
+        and 'bookResourcePort.readBookData(book)' not in reader_source,
     'Resolver resolves compatibility once then materializes actual member':
-        'actualEntry = resolveArchiveEntry(archivePath, requestedEntry, book.getFileName()).orElse(null);' in resolver
-        and 'archiveReader.materializeEntry(archivePath, actualEntry, target, maxBytes, cancelled)' in resolver,
-    'ZIP materialization uses staging publish and compression-ratio guard':
+        'actualEntry = resolveArchiveEntry(safeArchive, requestedEntry, book.getFileName()).orElse(null);' in resolver
+        and 'archiveReader.materializeEntry(safeArchive, actualEntry, target, maxBytes, cancelled)' in resolver,
+    'ZIP materialization uses guarded staging publish and compression-ratio guard':
         'materializeZipEntry(' in adapter and 'validateZipEntry(entry, limit);' in adapter
-        and 'publishStaging(staging, absoluteTarget);' in adapter,
+        and 'SafeFilePublication.publishReplacingIfUnchanged(' in adapter
+        and 'snapshotExistingTarget(' in adapter,
     '7z/RAR/stream archives have direct materialization paths': all(token in adapter for token in (
         'materialize7zEntry(', 'materializeRarEntry(', 'materializeStreamArchiveEntry(')),
     'materialization has bounded read loop and cancellation':
@@ -36,9 +40,10 @@ checks = {
         and 'accountBytes(total, read, limit' in adapter,
     'materialization does not use full-entry readAllBytes/transferTo':
         'readAllBytes(' not in adapter and 'transferTo(' not in adapter
-        and 'readAllBytes(' not in ui and 'transferTo(' not in ui,
+        and 'readAllBytes(' not in ui and 'transferTo(' not in ui
+        and 'readAllBytes(' not in reader_source and 'transferTo(' not in reader_source,
     'Reader lifecycle deletes materialized temp':
-        'if (!success) Files.deleteIfExists(temp)' in ui
+        'if (!success) Files.deleteIfExists(temp)' in reader_source
         and 'prepared.closeAbandoned();' in ui
         and 'cleanupMaterializedBookFile();' in ui
         and 'task.cancel(true)' in ui,

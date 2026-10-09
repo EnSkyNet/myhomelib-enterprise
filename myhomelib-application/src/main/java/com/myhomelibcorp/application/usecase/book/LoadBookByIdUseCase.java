@@ -33,17 +33,8 @@ public class LoadBookByIdUseCase {
 
     public Optional<BookDto> execute(BookId bookId) {
         if (operationCoordinator == null) return load(bookId);
-        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
-        try {
-            Optional<BookDto> result = load(bookId);
-            lease.markCompleted("");
-            return result;
-        } catch (RuntimeException | Error failure) {
-            lease.markFailed(failure);
-            throw failure;
-        } finally {
-            lease.close();
-        }
+        return operationCoordinator.executeDetachedShared(
+                LibraryOperationType.QUERY, () -> load(bookId));
     }
 
     private Optional<BookDto> load(BookId bookId) {

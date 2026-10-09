@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.translation;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.textprovider.TextProviderRequestContext;
 import com.myhomelibcorp.application.translation.TranslationQuery;

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.archive;
 
 import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.shared.archive.SafeZipSupport;
 import org.apache.commons.compress.archivers.zip.ZipFile;
 
 import java.io.IOException;
@@ -8,7 +9,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.Charset;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -25,7 +25,6 @@ public final class SafeZipArchive implements AutoCloseable {
             Charset.forName("CP866"),
             Charset.forName("KOI8-R")
     };
-    private static final int MAX_SAMPLED_ENTRIES = 256;
     private final FileChannel channel;
     private final ZipFile zip;
 
@@ -76,7 +75,7 @@ public final class SafeZipArchive implements AutoCloseable {
                 channel.position(0L);
                 try (ZipFile utf8 = buildZip(view, StandardCharsets.UTF_8)) {
                     utf8Readable = true;
-                    rawNamesAreUtf8 = sampledRawNamesAreUtf8(utf8);
+                    rawNamesAreUtf8 = SafeZipSupport.sampledRawNamesAreUtf8(utf8);
                 }
             } catch (IOException | IllegalArgumentException failure) {
                 if (failure instanceof IOException io) lastIo = io;
@@ -92,7 +91,7 @@ public final class SafeZipArchive implements AutoCloseable {
                 try {
                     channel.position(0L);
                     try (ZipFile inspected = buildZip(view, candidate)) {
-                        long score = scoreEntryNames(inspected);
+                        long score = SafeZipSupport.scoreEntryNames(inspected);
                         if (bestCharset == null || score > bestScore) {
                             bestCharset = candidate;
                             bestScore = score;
@@ -121,26 +120,7 @@ public final class SafeZipArchive implements AutoCloseable {
         }
     }
 
-    private static boolean sampledRawNamesAreUtf8(ZipFile zip) {
-        int inspected = 0;
-        var entries = zip.getEntries();
-        while (entries.hasMoreElements() && inspected++ < MAX_SAMPLED_ENTRIES) {
-            var entry = entries.nextElement();
-            if (entry.getGeneralPurposeBit() != null && entry.getGeneralPurposeBit().usesUTF8ForNames()) continue;
-            if (entry.getNameSource() == org.apache.commons.compress.archivers.zip.ZipArchiveEntry.NameSource.UNICODE_EXTRA_FIELD) continue;
-            byte[] raw = entry.getRawName();
-            if (raw == null || raw.length == 0) continue;
-            try {
-                StandardCharsets.UTF_8.newDecoder()
-                        .onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT)
-                        .decode(ByteBuffer.wrap(raw));
-            } catch (java.nio.charset.CharacterCodingException invalidUtf8) {
-                return false;
-            }
-        }
-        return true;
-    }
+
 
     private static ZipFile buildZip(SeekableByteChannel channel, Charset charset) throws IOException {
         return ZipFile.builder()
@@ -149,31 +129,9 @@ public final class SafeZipArchive implements AutoCloseable {
                 .get();
     }
 
-    private static long scoreEntryNames(ZipFile zip) {
-        long score = 0L;
-        int inspected = 0;
-        var entries = zip.getEntries();
-        while (entries.hasMoreElements() && inspected++ < MAX_SAMPLED_ENTRIES) {
-            String name = entries.nextElement().getName();
-            if (name == null) continue;
-            for (int i = 0; i < name.length(); i++) score += score(name.charAt(i));
-        }
-        return score;
-    }
 
-    private static int score(char c) {
-        if (c == '\ufffd') return -24;
-        if (Character.isISOControl(c) && !Character.isWhitespace(c)) return -12;
-        Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
-        if (block == Character.UnicodeBlock.BOX_DRAWING
-                || block == Character.UnicodeBlock.BLOCK_ELEMENTS
-                || block == Character.UnicodeBlock.GEOMETRIC_SHAPES) return -8;
-        if (Character.UnicodeScript.of(c) == Character.UnicodeScript.CYRILLIC) return 4;
-        if (Character.isLetterOrDigit(c)) return 2;
-        if (Character.isWhitespace(c) || c == '/' || c == '.' || c == '-' || c == '_'
-                || c == '(' || c == ')' || c == '[' || c == ']') return 1;
-        return 0;
-    }
+
+
 
     public ZipFile zip() {
         return zip;

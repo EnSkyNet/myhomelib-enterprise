@@ -8,6 +8,7 @@ import com.myhomelibcorp.infrastructure.importer.AbstractBookImporter;
 import com.myhomelibcorp.infrastructure.parser.fb2.Fb2Parser;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
@@ -15,6 +16,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 
+@Lazy
 @Component
 @Slf4j
 public class Fb2Importer extends AbstractBookImporter {

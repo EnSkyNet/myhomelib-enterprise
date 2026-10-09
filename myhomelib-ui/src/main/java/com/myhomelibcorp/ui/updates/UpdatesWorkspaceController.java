@@ -204,7 +204,7 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
             CatalogUpdateItem item, BookDto book, String expectedCollectionId) {
         if (!sameCollection(expectedCollectionId)) {
             return CompletableFuture.failedFuture(new IllegalStateException(
-                    "Активна колекція змінилася до початку завантаження оновлення"));
+                    localizationService.text("ui.error.collection_changed.update_download")));
         }
         return item.type() == CatalogUpdateType.UPDATED_DOWNLOADED_BOOK
                 ? bookDownloadCoordinator.downloadUpdate(book, expectedCollectionId)
@@ -339,7 +339,7 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
 
     private void requireCurrentCollection(String expectedCollectionId) {
         if (!sameCollection(expectedCollectionId)) {
-            throw new IllegalStateException("Активна колекція змінилася під час операції оновлень");
+            throw new IllegalStateException(localizationService.text("ui.error.collection_changed.updates"));
         }
     }
 

@@ -1,8 +1,8 @@
 package com.myhomelibcorp.infrastructure.customfield;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.customfield.CustomFieldRepository;
 import com.myhomelibcorp.domain.model.customfield.CustomFieldDefinition;
 import com.myhomelibcorp.domain.model.customfield.CustomFieldDeletePolicy;
@@ -46,7 +46,7 @@ public class SqliteCustomFieldRepository implements CustomFieldRepository {
     }
 
     @Override
-    @Transactional
+    @Transactional(transactionManager = "collectionTransactionManager")
     public CustomFieldDefinition saveDefinition(CustomFieldDefinition definition) {
         if (definition == null) throw new IllegalArgumentException("Custom field definition is required");
         String options = encode(definition.enumOptions());
@@ -80,7 +80,7 @@ public class SqliteCustomFieldRepository implements CustomFieldRepository {
     }
 
     @Override
-    @Transactional
+    @Transactional(transactionManager = "collectionTransactionManager")
     public void deleteDefinition(long id, CustomFieldDeletePolicy policy) {
         CustomFieldDefinition existing = findDefinition(id)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown custom field definition: " + id));
@@ -113,7 +113,7 @@ public class SqliteCustomFieldRepository implements CustomFieldRepository {
     }
 
     @Override
-    @Transactional
+    @Transactional(transactionManager = "collectionTransactionManager")
     public void setValue(BookId bookId, long definitionId, String value) {
         if (bookId == null) throw new IllegalArgumentException("bookId is required");
         CustomFieldDefinition definition = findDefinition(definitionId)
@@ -146,14 +146,14 @@ public class SqliteCustomFieldRepository implements CustomFieldRepository {
         try {
             List<String> options = json == null || json.isBlank() ? List.of() : mapper.readValue(json, new TypeReference<List<String>>() { });
             return new CustomFieldDefinition(id, name, CustomFieldType.valueOf(type), options);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Invalid custom field enum_options_json for id=" + id, e);
         }
     }
 
     private String encode(List<String> values) {
         try { return mapper.writeValueAsString(values == null ? List.of() : values); }
-        catch (JsonProcessingException e) { throw new IllegalStateException("Cannot serialize custom field options", e); }
+        catch (JacksonException e) { throw new IllegalStateException("Cannot serialize custom field options", e); }
     }
 
     private static String canonical(CustomFieldType type, String value) {

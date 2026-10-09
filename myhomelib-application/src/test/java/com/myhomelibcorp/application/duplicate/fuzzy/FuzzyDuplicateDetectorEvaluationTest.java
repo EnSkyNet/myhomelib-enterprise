@@ -79,6 +79,15 @@ class FuzzyDuplicateDetectorEvaluationTest {
                 .isEmpty();
     }
 
+    @Test
+    void nonFiniteThresholdFallsBackToConservativeDefault() {
+        Book source = book("40000000-0000-0000-0000-000000000001", "Clean Code", "Robert C. Martin", 2008, null);
+        Book weak = book("40000000-0000-0000-0000-000000000002", "Clean Coding Notes", "Robert C Martin", 2008, null);
+
+        assertThat(detector.evaluate(source, weak, Double.NaN))
+                .isEqualTo(detector.evaluate(source, weak, FuzzyDuplicateDetector.DEFAULT_THRESHOLD));
+    }
+
     private static Case positive(String t1, String a1, Integer y1, String i1,
                                  String t2, String a2, Integer y2, String i2) {
         return new Case(book(nextId(), t1, a1, y1, i1), book(nextId(), t2, a2, y2, i2), true);

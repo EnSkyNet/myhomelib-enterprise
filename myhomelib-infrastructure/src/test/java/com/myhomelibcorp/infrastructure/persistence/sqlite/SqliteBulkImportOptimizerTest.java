@@ -1,60 +1,100 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import static org.mockito.Mockito.inOrder;
+import java.nio.file.Path;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SqliteBulkImportOptimizerTest {
 
+    @TempDir
+    Path tempDir;
+
     @Test
-    void restoresExactPreviousPragmasAfterSuccessfulBulkMode() {
-        CollectionManager collections = mock(CollectionManager.class);
-        JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        when(collections.getCurrentJdbcTemplate()).thenReturn(jdbc);
-        when(jdbc.queryForObject("PRAGMA synchronous", Long.class)).thenReturn(2L);
-        when(jdbc.queryForObject("PRAGMA temp_store", Long.class)).thenReturn(1L);
-        when(jdbc.queryForObject("PRAGMA cache_size", Long.class)).thenReturn(-8192L);
-        when(jdbc.queryForObject("PRAGMA mmap_size", Long.class)).thenReturn(268435456L);
+    void skipsConnectionScopedPragmasWhenNoTransactionOwnsTheConnection() {
+        try (Fixture fixture = fixture("outside.db")) {
+            long cacheBefore = pragma(fixture.jdbc, "PRAGMA cache_size");
+            long mmapBefore = pragma(fixture.jdbc, "PRAGMA mmap_size");
 
-        SqliteBulkImportOptimizer optimizer = new SqliteBulkImportOptimizer(collections);
-        optimizer.enableBulkInsertMode();
-        optimizer.disableBulkInsertMode();
+            fixture.optimizer.enableBulkInsertMode();
+            fixture.optimizer.disableBulkInsertMode();
 
-        var order = inOrder(jdbc);
-        order.verify(jdbc).execute("PRAGMA synchronous = NORMAL");
-        order.verify(jdbc).execute("PRAGMA temp_store = MEMORY");
-        order.verify(jdbc).execute("PRAGMA cache_size = -262144");
-        order.verify(jdbc).execute("PRAGMA mmap_size = 2147483648");
-        order.verify(jdbc).execute("PRAGMA synchronous = 2");
-        order.verify(jdbc).execute("PRAGMA temp_store = 1");
-        order.verify(jdbc).execute("PRAGMA cache_size = -8192");
-        order.verify(jdbc).execute("PRAGMA mmap_size = 268435456");
+            assertEquals(cacheBefore, pragma(fixture.jdbc, "PRAGMA cache_size"));
+            assertEquals(mmapBefore, pragma(fixture.jdbc, "PRAGMA mmap_size"));
+        }
     }
 
     @Test
-    void partialEnableFailureRestoresSnapshotImmediately() {
+    void tunesAndRestoresTheSameTransactionBoundConnection() {
+        try (Fixture fixture = fixture("transaction.db")) {
+            TransactionTemplate transaction = new TransactionTemplate(new DataSourceTransactionManager(fixture.dataSource));
+
+            transaction.execute(status -> {
+                long cacheBefore = pragma(fixture.jdbc, "PRAGMA cache_size");
+                long mmapBefore = pragma(fixture.jdbc, "PRAGMA mmap_size");
+
+                fixture.optimizer.enableBulkInsertMode();
+                assertEquals(-32768L, pragma(fixture.jdbc, "PRAGMA cache_size"));
+                assertEquals(67108864L, pragma(fixture.jdbc, "PRAGMA mmap_size"));
+
+                // Nested callers keep a LIFO snapshot and never restore a value from another connection.
+                fixture.optimizer.enableBulkInsertMode();
+                fixture.optimizer.disableBulkInsertMode();
+                assertEquals(-32768L, pragma(fixture.jdbc, "PRAGMA cache_size"));
+                assertEquals(67108864L, pragma(fixture.jdbc, "PRAGMA mmap_size"));
+
+                fixture.optimizer.disableBulkInsertMode();
+                assertEquals(cacheBefore, pragma(fixture.jdbc, "PRAGMA cache_size"));
+                assertEquals(mmapBefore, pragma(fixture.jdbc, "PRAGMA mmap_size"));
+                return null;
+            });
+        }
+    }
+
+    private Fixture fixture(String dbName) {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl("jdbc:sqlite:" + tempDir.resolve(dbName));
+        config.setDriverClassName("org.sqlite.JDBC");
+        config.setMaximumPoolSize(2);
+        config.setMinimumIdle(1);
+        config.setConnectionInitSql(
+                "PRAGMA synchronous=NORMAL; " +
+                "PRAGMA temp_store=MEMORY; " +
+                "PRAGMA cache_size=-8192; " +
+                "PRAGMA mmap_size=268435456;"
+        );
+        HikariDataSource dataSource = new HikariDataSource(config);
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        jdbc.execute("CREATE TABLE IF NOT EXISTS bulk_optimizer_probe(id INTEGER PRIMARY KEY)");
+
         CollectionManager collections = mock(CollectionManager.class);
-        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(collections.getCurrentDataSource()).thenReturn(dataSource);
         when(collections.getCurrentJdbcTemplate()).thenReturn(jdbc);
-        when(jdbc.queryForObject("PRAGMA synchronous", Long.class)).thenReturn(1L);
-        when(jdbc.queryForObject("PRAGMA temp_store", Long.class)).thenReturn(0L);
-        when(jdbc.queryForObject("PRAGMA cache_size", Long.class)).thenReturn(-2000L);
-        when(jdbc.queryForObject("PRAGMA mmap_size", Long.class)).thenReturn(0L);
-        org.mockito.Mockito.doThrow(new IllegalStateException("boom"))
-                .when(jdbc).execute("PRAGMA temp_store = MEMORY");
+        return new Fixture(dataSource, jdbc, new SqliteBulkImportOptimizer(collections));
+    }
 
-        SqliteBulkImportOptimizer optimizer = new SqliteBulkImportOptimizer(collections);
-        optimizer.enableBulkInsertMode();
-        optimizer.disableBulkInsertMode();
+    private static long pragma(JdbcTemplate jdbc, String sql) {
+        Long value = jdbc.queryForObject(sql, Long.class);
+        if (value == null) throw new AssertionError("No value for " + sql);
+        return value;
+    }
 
-        verify(jdbc).execute("PRAGMA synchronous = 1");
-        verify(jdbc).execute("PRAGMA temp_store = 0");
-        verify(jdbc).execute("PRAGMA cache_size = -2000");
-        verify(jdbc).execute("PRAGMA mmap_size = 0");
+    private record Fixture(HikariDataSource dataSource,
+                           JdbcTemplate jdbc,
+                           SqliteBulkImportOptimizer optimizer) implements AutoCloseable {
+        @Override
+        public void close() {
+            dataSource.close();
+        }
     }
 }

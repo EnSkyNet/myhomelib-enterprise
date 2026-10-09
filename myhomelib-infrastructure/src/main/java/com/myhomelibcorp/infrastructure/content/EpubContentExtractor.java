@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.content;
 
+import com.myhomelibcorp.shared.archive.ArchiveEntrySafety;
 import com.myhomelibcorp.application.content.ContentExtractionContext;
 import com.myhomelibcorp.application.content.ContentExtractionRequest;
 import com.myhomelibcorp.application.content.ExtractedContent;
@@ -267,15 +268,8 @@ public final class EpubContentExtractor implements ContentExtractor {
     }
 
     private static void checkEntry(ZipEntry entry, String role) throws IOException {
-        if (entry == null || entry.isDirectory()) return;
-        long size = entry.getSize();
-        if (ArchiveSafetyLimits.declaredEntryTooLarge(size)) {
-            throw new IOException(role + " exceeds archive safety limit: " + entry.getName());
-        }
-        long compressed = entry.getCompressedSize();
-        if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed)) {
-            throw new IOException(role + " has suspicious compression ratio: " + entry.getName());
-        }
+        if (entry == null) return;
+        ArchiveEntrySafety.check(entry.getName(), entry.isDirectory(), entry.getSize(), entry.getCompressedSize(), role);
     }
 
     private static ZipEntry findEntry(ZipFile zip, String wanted) {

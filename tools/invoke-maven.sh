@@ -8,6 +8,32 @@ MIN_MAVEN_PATCH=6
 
 MIN_JAVA_MAJOR=21
 
+# UnixPath/JNU charset is selected before the JVM starts. Running Maven under a
+# POSIX/C locale can therefore make perfectly valid Cyrillic test paths fail
+# even when -Dfile.encoding=UTF-8 is present. Normalize the launcher locale
+# before any Java process is created so builds are deterministic.
+ensure_utf8_locale() {
+  command -v locale >/dev/null 2>&1 || return 0
+  local current candidate candidate_charmap
+  current="$(locale charmap 2>/dev/null || true)"
+  case "$current" in
+    UTF-8|utf8|UTF8|utf-8) return 0 ;;
+  esac
+  for candidate in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8 uk_UA.UTF-8 uk_UA.utf8; do
+    candidate_charmap="$(LANG="$candidate" LC_ALL="$candidate" locale charmap 2>/dev/null || true)"
+    case "$candidate_charmap" in
+      UTF-8|utf8|UTF8|utf-8)
+        export LANG="$candidate" LC_ALL="$candidate"
+        return 0
+        ;;
+    esac
+  done
+  echo "ERROR: No usable UTF-8 locale found; MyHomeLib build/test paths may contain non-ASCII characters." >&2
+  exit 78
+}
+
+ensure_utf8_locale
+
 java_major() {
   local java_bin="${JAVA_HOME:+$JAVA_HOME/bin/java}"
   if [[ -n "${JAVA_HOME:-}" && -x "$java_bin" ]]; then

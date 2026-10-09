@@ -17,6 +17,8 @@ INITIAL_EXTRA = (
     'idx_books_publisher', 'idx_books_year', 'idx_books_lib_id', 'idx_books_library_rate',
     'idx_books_missing_since', 'idx_books_active_language_title', 'idx_books_active_id',
     'idx_book_authors_author_id', 'idx_book_genres_genre_code',
+    'idx_keyword_books_book_id', 'idx_keyword_books_keyword_book',
+    'idx_catalog_book_state_source', 'idx_catalog_book_state_downloaded',
 )
 
 errors: list[str] = []
@@ -49,8 +51,6 @@ need('CREATE INDEX IF NOT EXISTS idx_books_title ON books(title)' not in source,
      'index lifecycle must not hard-code restore SQL')
 need('idx_authors_name_lookup' not in INITIAL_EXTRA,
      'exact author lookup index must remain live for author-cache eviction fallback')
-need('idx_keyword_books_book_id' not in INITIAL_EXTRA,
-     'keyword book-id index must remain live for idempotent keyword replacement')
 
 core = list_literal(source, 'FULL_SNAPSHOT_SUSPEND_INDEXES')
 extra = list_literal(source, 'INITIAL_BASELINE_EXTRA_SUSPEND_INDEXES')
@@ -102,5 +102,5 @@ if errors:
 
 print('IMPORT INDEX LIFECYCLE CHECK: PASS')
 print(' - existing full snapshots suspend only the conservative 3-index set')
-print(' - empty initial baselines additionally suspend 17 pure write-amplification indexes')
-print(' - author/keyword lookup indexes stay live and all captured definitions restore exactly')
+print(' - empty initial baselines additionally suspend 21 pure write-amplification indexes')
+print(' - exact author lookup stays live; fresh-baseline keyword/catalog indexes are deferred and all definitions restore exactly')

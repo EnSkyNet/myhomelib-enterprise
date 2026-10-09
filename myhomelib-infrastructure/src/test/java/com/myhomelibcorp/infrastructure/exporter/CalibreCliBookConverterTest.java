@@ -68,7 +68,7 @@ class CalibreCliBookConverterTest {
         CalibreCliBookConverter converter = availableConverter("epub", ".epub", (argv, workingDirectory, cancelled, timeout) -> {
             args.set(List.copyOf(argv));
             cwd.set(workingDirectory);
-            assertEquals(Duration.ofSeconds(300), timeout);
+            assertEquals(Duration.ofMinutes(30), timeout);
             assertTrue(argv.get(1).endsWith(".fb2"));
             assertTrue(Path.of(argv.get(1)).startsWith(workingDirectory));
             Files.writeString(Path.of(argv.get(2)), "converted");
@@ -87,6 +87,49 @@ class CalibreCliBookConverterTest {
         assertTrue(cwd.get().endsWith("cache/calibre"));
         assertEquals("converted", Files.readString(target));
         assertFalse(Files.exists(Path.of(args.get().get(1))), "Temporary source must be deleted");
+    }
+
+    @Test
+    void legacyFiveMinuteDefaultIsUpgradedSoLongCalibreJobsAreNotKilledPrematurely() throws Exception {
+        previousDataDir = System.getProperty("myhomelib.dataDir");
+        System.setProperty("myhomelib.dataDir", temp.resolve("long-conversion-data").toString());
+        MemorySettings settings = new MemorySettings();
+        settings.put(CalibreCliBookConverter.TIMEOUT_SETTING, "300");
+        AtomicReference<Duration> observedTimeout = new AtomicReference<>();
+        CalibreCliBookConverter converter = new CalibreCliBookConverter(settings, "epub", ".epub",
+                configured -> Optional.of(Path.of("/fake/ebook-convert")),
+                (argv, cwd, cancelled, timeout) -> {
+                    observedTimeout.set(timeout);
+                    Files.writeString(Path.of(argv.get(2)), "converted");
+                    return new CalibreCliBookConverter.CommandResult(0, "");
+                });
+
+        converter.convert(new BookConversionContext(book("large.fb2"), "fb2", "epub",
+                new ByteArrayInputStream("source".getBytes()), temp.resolve("large.epub"), () -> false, 1024));
+
+        assertEquals(Duration.ofMinutes(30), observedTimeout.get(),
+                "The historical 300 s product default must migrate to the long-conversion default");
+    }
+
+    @Test
+    void explicitNonLegacyCalibreTimeoutIsStillHonoured() throws Exception {
+        previousDataDir = System.getProperty("myhomelib.dataDir");
+        System.setProperty("myhomelib.dataDir", temp.resolve("custom-timeout-data").toString());
+        MemorySettings settings = new MemorySettings();
+        settings.put(CalibreCliBookConverter.TIMEOUT_SETTING, "420");
+        AtomicReference<Duration> observedTimeout = new AtomicReference<>();
+        CalibreCliBookConverter converter = new CalibreCliBookConverter(settings, "epub", ".epub",
+                configured -> Optional.of(Path.of("/fake/ebook-convert")),
+                (argv, cwd, cancelled, timeout) -> {
+                    observedTimeout.set(timeout);
+                    Files.writeString(Path.of(argv.get(2)), "converted");
+                    return new CalibreCliBookConverter.CommandResult(0, "");
+                });
+
+        converter.convert(new BookConversionContext(book("custom.fb2"), "fb2", "epub",
+                new ByteArrayInputStream("source".getBytes()), temp.resolve("custom.epub"), () -> false, 1024));
+
+        assertEquals(Duration.ofSeconds(420), observedTimeout.get());
     }
 
     @Test

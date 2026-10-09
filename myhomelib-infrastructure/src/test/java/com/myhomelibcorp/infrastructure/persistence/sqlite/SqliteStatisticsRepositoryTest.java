@@ -33,7 +33,7 @@ class SqliteStatisticsRepositoryTest {
                 null, null, null, null));
         manager.setCurrentDataSource(dataSource);
         manager.setCurrentJdbcTemplate(jdbc);
-        repository = new SqliteStatisticsRepository(manager, new QueryExecutor(manager), new SqliteBusyRetryExecutor());
+        repository = new SqliteStatisticsRepository(manager, new QueryExecutor(manager));
     }
 
     @AfterEach

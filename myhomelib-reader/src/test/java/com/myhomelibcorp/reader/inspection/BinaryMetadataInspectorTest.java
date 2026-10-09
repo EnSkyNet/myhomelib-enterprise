@@ -84,6 +84,46 @@ class BinaryMetadataInspectorTest {
         assertThat(result.language()).isEqualTo("en");
     }
 
+    @Test
+    void boundsCorruptMobiFullNameLengthWithoutIntegerOverflow() throws Exception {
+        Path file = temp.resolve("corrupt-title.mobi");
+        byte[] data = new byte[1024];
+        putU16(data, 76, 1);
+        putU32(data, 78, 86);
+        int r0 = 86;
+        putAscii(data, r0 + 16, "MOBI");
+        putU32(data, r0 + 20, 116);
+        putU32(data, r0 + 28, 65001);
+        putU32(data, r0 + 84, 160);
+        putU32(data, r0 + 88, -1);
+        putAscii(data, r0 + 160, "Bounded title");
+        Files.write(file, data);
+
+        DocumentInspection result = BinaryMetadataInspector.inspect(new FileBookSource(file));
+
+        assertThat(result.parsed()).isTrue();
+        assertThat(result.title()).startsWith("Bounded title");
+    }
+
+    @Test
+    void rejectsOverflowingMobiHeaderLengthWithoutRuntimeIndexFailure() throws Exception {
+        Path file = temp.resolve("overflow-header.mobi");
+        byte[] data = new byte[1024];
+        putU16(data, 76, 1);
+        putU32(data, 78, 86);
+        int r0 = 86;
+        putAscii(data, r0 + 16, "MOBI");
+        putU32(data, r0 + 20, Integer.MAX_VALUE - 17);
+        putU32(data, r0 + 16 + 112, 0x40);
+        Files.write(file, data);
+
+        DocumentInspection result = BinaryMetadataInspector.inspect(new FileBookSource(file));
+
+        assertThat(result.parsed()).isFalse();
+        assertThat(result.warning()).contains("Некоректний MOBI header length");
+        assertThat(result.warning()).doesNotContain("out of bounds", "Index ");
+    }
+
     private static byte[] exthRecord(int type, String value) {
         byte[] text = value.getBytes(StandardCharsets.UTF_8);
         ByteBuffer b = ByteBuffer.allocate(8 + text.length).order(ByteOrder.BIG_ENDIAN);

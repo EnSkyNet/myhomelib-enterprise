@@ -112,6 +112,63 @@ class TtsPlaybackServiceTest {
         assertThat(provider.speakCalls).hasValue(1);
     }
 
+    @Test
+    void brokenAvailabilityProbeDoesNotHideHealthyFallbackProvider() {
+        TtsProvider broken = new TtsProvider() {
+            @Override public String id() { return "broken-probe"; }
+            @Override public String displayName() { return "Broken"; }
+            @Override public boolean isAvailable() { throw new IllegalStateException("probe failed"); }
+            @Override public List<TtsVoice> availableVoices() { throw new AssertionError("must not be called"); }
+            @Override public void speak(String text, String voiceId, double rate) { }
+            @Override public void cancelCurrent() { }
+        };
+        ImmediateProvider healthy = new ImmediateProvider();
+        TtsPlaybackService service = new TtsPlaybackService(List.of(broken, healthy), new AsyncExecutor(pool));
+
+        assertThat(service.availableVoices()).extracting(TtsVoice::displayName).containsExactly("Alpha");
+        assertThat(service.isAvailable()).isTrue();
+    }
+
+    @Test
+    void brokenVoiceEnumerationDoesNotHideHealthyFallbackProvider() {
+        TtsProvider broken = new TtsProvider() {
+            @Override public String id() { return "broken-voices"; }
+            @Override public String displayName() { return "Broken"; }
+            @Override public boolean isAvailable() { return true; }
+            @Override public List<TtsVoice> availableVoices() { throw new IllegalStateException("voices failed"); }
+            @Override public void speak(String text, String voiceId, double rate) { }
+            @Override public void cancelCurrent() { }
+        };
+        ImmediateProvider healthy = new ImmediateProvider();
+        TtsPlaybackService service = new TtsPlaybackService(List.of(broken, healthy), new AsyncExecutor(pool));
+
+        assertThat(service.availableVoices()).extracting(TtsVoice::displayName).containsExactly("Alpha");
+    }
+
+    @Test
+    void startUsesTheSameFallbackProviderWhoseVoicesWereExposed() {
+        AtomicInteger firstSpeakCalls = new AtomicInteger();
+        TtsProvider availableButVoiceless = new TtsProvider() {
+            @Override public String id() { return "voiceless"; }
+            @Override public String displayName() { return "Voiceless"; }
+            @Override public boolean isAvailable() { return true; }
+            @Override public List<TtsVoice> availableVoices() { return List.of(); }
+            @Override public void speak(String text, String voiceId, double rate) { firstSpeakCalls.incrementAndGet(); }
+            @Override public void cancelCurrent() { }
+        };
+        ImmediateProvider healthy = new ImmediateProvider();
+        TtsPlaybackService service = new TtsPlaybackService(List.of(availableButVoiceless, healthy), new AsyncExecutor(pool));
+
+        assertThat(service.availableVoices()).extracting(TtsVoice::id).containsExactly("alpha");
+        TtsPlayback playback = service.start(
+                new TtsPlaybackRequest("Fallback provider must speak.", 0, "en", "alpha", 1.0),
+                new TtsPlaybackListener() { });
+
+        await().atMost(Duration.ofSeconds(2)).until(() -> playback.state() == TtsPlaybackState.COMPLETED);
+        assertThat(firstSpeakCalls).hasValue(0);
+        assertThat(healthy.speakCalls).hasValue(1);
+    }
+
     private static final class AsyncExecutor implements ExecutorPort {
         private final ExecutorService pool;
         private AsyncExecutor(ExecutorService pool) { this.pool = pool; }

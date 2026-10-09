@@ -17,6 +17,7 @@ boot = text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/MyHomeLibApp.ja
 migration_startup = text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/MigrationStartupTask.java')
 search_startup = text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/SearchStartupTask.java')
 controller = text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/CollectionController.java')
+lifecycle_test = text('myhomelib-application/src/test/java/com/myhomelibcorp/application/service/CollectionLifecycleServiceTest.java')
 
 assert 'activateCollectionIndex(Collection collection)' in lifecycle_port
 assert 'markCurrentIndexDirty()' in lifecycle_port and 'markCurrentIndexSynchronized()' in lifecycle_port
@@ -30,7 +31,7 @@ assert 'activeBooks=' in index_lifecycle and 'appendWalState' in index_lifecycle
 assert 'if (!reusable)' in index_lifecycle and 'search.setQueryAvailability(false' in index_lifecycle and 'search.clearIndex();' not in index_lifecycle.split('if (!reusable)',1)[1].split('} else',1)[0], 'dirty target index must be query-disabled while preserving the last committed rollback point'
 assert 'setCommitObserver' in lucene and 'registerCommitObserver' in index_lifecycle, 'successful Lucene commits must refresh the collection freshness marker'
 assert 'activeIndexDirty' in index_lifecycle and 'lastClosedIndexDirty' in index_lifecycle, 'explicit dirty state must survive close/seal'
-assert 'persistDirtyMarker' in index_lifecycle and 'Files.writeString(tmp, "DIRTY"' in index_lifecycle, 'dirty proof must survive same-size/same-timestamp edge cases and process restart'
+assert 'persistDirtyMarker' in index_lifecycle and 'AtomicFileSupport.writeStringReplacing(stateFile, "DIRTY"' in index_lifecycle, 'dirty proof must survive same-size/same-timestamp edge cases and process restart'
 assert 'if (!activeIndexDirty && activeDatabasePath != null && activeStateFile != null)' in index_lifecycle, 'dirty index commits must not refresh freshness marker'
 assert 'if (lastClosedIndexDirty)' in index_lifecycle, 'dirty index must never be sealed reusable after SQLite close'
 assert 'searchIndexLifecycle.markCurrentIndexDirty();' in synchronizer
@@ -44,7 +45,10 @@ activate_pos = lifecycle.index('searchIndexLifecycle.activateCollectionIndex(col
 assert close_pos < switch_pos < seal_pos < activate_pos, 'close/switch/WAL-seal/activate order is unsafe'
 assert 'seriesRepository.syncSeriesFromBooks();' not in lifecycle.split('public boolean initializeCollection',1)[1].split('private static',1)[0], 'startup must not scan/sync all series'
 assert 'bookCommandRepository.repairTransientRemoteStorageRoots' not in lifecycle.split('public boolean initializeCollection',1)[1].split('private static',1)[0], 'startup must not rewrite all remote book roots'
-assert 'boolean shouldRebuild = rebuildIndex && !reusableIndex;' in lifecycle
+assert 'boolean shouldRebuild = rebuildIndex && searchIndexAvailable && !reusableIndex;' in lifecycle, 'startup must not schedule rebuild while the Lucene writer is unavailable'
+assert 'catch (SearchIndexUnavailableException unavailable)' in lifecycle and 'searchIndexAvailable = false;' in lifecycle, 'Lucene lock/unavailable startup must degrade without aborting collection activation'
+assert 'reactivateCurrentSearchIndex(unavailable);' in lifecycle, 'manual rebuild must be able to reopen search after a transient startup lock'
+assert 'manualAsyncRebuildCanReopenIndexAfterStartupLockWasReleased' in lifecycle_test, 'transient Lucene lock recovery must stay regression-covered'
 assert 'if (!searchIndexLifecycle.activateCollectionIndex(previous)) indexRebuilder.rebuildIndex();' in lifecycle
 
 assert 'executeWithStatus(context.activeCollection(), false)' in migration_startup, 'startup migration phase must not hide index rebuild scheduling'
@@ -56,6 +60,7 @@ assert 'rebuildSearchIndexAsync()' not in controller, 'UI must not duplicate lif
 print('COLLECTION SEARCH LIFECYCLE CHECK: PASS')
 print(' - Lucene storage is per-collection with persisted DB/WAL freshness markers')
 print(' - clean indexes are reused; dirty indexes are query-disabled while the last commit is preserved')
+print(' - transient Lucene writer locks degrade startup safely and manual rebuild reactivates search after release')
 print(' - WAL marker is sealed only after previous SQLite datasource closes/checkpoints')
 print(' - bootstrap/UI no longer force unconditional rebuilds')
 print(' - failed post-commit Lucene sync remains explicitly dirty across close/seal')

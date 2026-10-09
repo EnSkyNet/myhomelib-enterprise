@@ -117,6 +117,21 @@ class RichCoverParsersTest {
         assertThat(new EpubCoverParser().parse(epub)).containsExactly(cover);
     }
 
+
+    @Test
+    void extractsEpubCoverWhenInternalPathContainsLiteralPlus() throws Exception {
+        byte[] decoy = new byte[]{(byte)0xff,(byte)0xd8,1,1,1,(byte)0xff,(byte)0xd9};
+        byte[] cover = new byte[]{(byte)0xff,(byte)0xd8,7,8,9,(byte)0xff,(byte)0xd9};
+        Path epub = temp.resolve("plus-cover.epub");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(epub))) {
+            entry(zip, "META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OPS/content.opf\"/></rootfiles></container>".getBytes(StandardCharsets.UTF_8));
+            entry(zip, "OPS/content.opf", "<package><manifest><item id=\"c\" href=\"images/front+image.jpg\" media-type=\"image/jpeg\" properties=\"cover-image\"/></manifest></package>".getBytes(StandardCharsets.UTF_8));
+            entry(zip, "OPS/images/a.jpg", decoy);
+            entry(zip, "OPS/images/front+image.jpg", cover);
+        }
+        assertThat(new EpubCoverParser().parse(epub)).containsExactly(cover);
+    }
+
     @Test
     void extractsMobiCoverUsingExth201() throws Exception {
         byte[] jpeg = new byte[]{(byte)0xff,(byte)0xd8,5,6,(byte)0xff,(byte)0xd9};

@@ -1,13 +1,16 @@
 package com.myhomelibcorp.application.operation;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.EnumMap;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Serializes catalogue-changing and maintenance operations.
@@ -20,6 +23,7 @@ import java.util.function.Consumer;
  * application layer to JavaFX.</p>
  */
 @Service
+@Slf4j
 public final class LibraryOperationCoordinator {
 
     private final Object monitor = new Object();
@@ -48,13 +52,16 @@ public final class LibraryOperationCoordinator {
                     throw conflict(operation);
                 }
                 current.stack.push(operation);
-                active.depth++;
+                active.join(operation);
                 lease = new Lease(this, active.sessionId, operation, false);
             } else {
                 throw conflict(operation);
             }
         }
-        if (rootStarted) publishActiveOperation(operation);
+        if (rootStarted) {
+            logOperationStarted(lease.sessionId, operation, "SYNC");
+            publishActiveOperation(operation);
+        }
         return lease;
     }
 
@@ -71,6 +78,7 @@ public final class LibraryOperationCoordinator {
             active = new ActiveSession(sessionId, operation, 1, false);
             lease = new Lease(this, sessionId, operation, true);
         }
+        logOperationStarted(lease.sessionId, operation, "DETACHED");
         publishActiveOperation(operation);
         return lease;
     }
@@ -81,6 +89,26 @@ public final class LibraryOperationCoordinator {
      * the first lease blocks destructive lifecycle operations, while additional compatible workers
      * can run in parallel without opening a SWITCH queue-gap.
      */
+    /**
+     * Executes one synchronous unit of work under a shared detached lifecycle lease.
+     *
+     * <p>The helper deliberately owns only the common success/failure/close protocol. Callers that
+     * need cancellation or a custom completion detail should keep explicit lease control.</p>
+     */
+    public <T> T executeDetachedShared(LibraryOperationType operation, Supplier<T> work) {
+        Objects.requireNonNull(work, "work");
+        try (Lease lease = acquireDetachedShared(operation)) {
+            try {
+                T result = work.get();
+                lease.markCompleted("");
+                return result;
+            } catch (RuntimeException | Error failure) {
+                lease.markFailed(failure);
+                throw failure;
+            }
+        }
+    }
+
     public Lease acquireDetachedShared(LibraryOperationType operation) {
         Objects.requireNonNull(operation, "operation");
         Lease lease;
@@ -92,13 +120,16 @@ public final class LibraryOperationCoordinator {
                 lease = new Lease(this, sessionId, operation, true);
                 rootStarted = true;
             } else if (active.sharedDetachedRoot && isSharedCompatible(active.rootOperation, operation)) {
-                active.depth++;
+                active.join(operation);
                 lease = new Lease(this, active.sessionId, operation, true);
             } else {
                 throw conflict(operation);
             }
         }
-        if (rootStarted) publishActiveOperation(operation);
+        if (rootStarted) {
+            logOperationStarted(lease.sessionId, operation, "SHARED");
+            publishActiveOperation(operation);
+        }
         return lease;
     }
 
@@ -131,11 +162,14 @@ public final class LibraryOperationCoordinator {
                 lease = new Lease(this, sessionId, operation, true);
                 rootStarted = true;
             } else {
-                active.depth++;
+                active.join(operation);
                 lease = new Lease(this, active.sessionId, operation, true);
             }
         }
-        if (rootStarted) publishActiveOperation(operation);
+        if (rootStarted) {
+            logOperationStarted(lease.sessionId, operation, "SHARED_AWAIT");
+            publishActiveOperation(operation);
+        }
         return lease;
     }
 
@@ -159,6 +193,7 @@ public final class LibraryOperationCoordinator {
             active = new ActiveSession(sessionId, operation, 1, false);
             lease = new Lease(this, sessionId, operation, true);
         }
+        logOperationStarted(lease.sessionId, operation, "DETACHED_AWAIT");
         publishActiveOperation(operation);
         return lease;
     }
@@ -166,6 +201,14 @@ public final class LibraryOperationCoordinator {
     public LibraryOperationType activeOperation() {
         synchronized (monitor) {
             return active == null ? null : active.rootOperation;
+        }
+    }
+
+    /** Returns whether any lease of the requested type is currently part of the active shared session. */
+    public boolean isOperationActive(LibraryOperationType operation) {
+        Objects.requireNonNull(operation, "operation");
+        synchronized (monitor) {
+            return active != null && active.has(operation);
         }
     }
 
@@ -232,6 +275,19 @@ public final class LibraryOperationCoordinator {
                 || (root == LibraryOperationType.READER_STATE && requested == LibraryOperationType.INDEX)) {
             return true;
         }
+        // A background rebuild already owns the stable-collection barrier. User downloads may
+        // join that barrier, but the reverse direction stays blocked: starting a rebuild inside
+        // an arbitrary download session would make post-download Lucene synchronization racy.
+        if (root == LibraryOperationType.INDEX && requested == LibraryOperationType.DOWNLOAD) {
+            return true;
+        }
+        // Conversion is file-local work. It must not freeze reader/session state or prevent an
+        // unrelated online download while the active collection itself remains protected from SWITCH.
+        if (root == LibraryOperationType.CONVERSION
+                && (requested == LibraryOperationType.READER_STATE
+                    || requested == LibraryOperationType.DOWNLOAD)) {
+            return true;
+        }
         return (root == LibraryOperationType.EXPORT && requested == LibraryOperationType.CONVERSION)
                 || (root == LibraryOperationType.CONVERSION && requested == LibraryOperationType.EXPORT)
                 || queryCompatiblePair(root, requested);
@@ -242,9 +298,19 @@ public final class LibraryOperationCoordinator {
         // same active collection. The reverse direction stays blocked so an unrelated mutation cannot
         // join a long-running QUERY root merely because both are collection-scoped.
         if (requested == LibraryOperationType.QUERY) return supportsStableCollectionQuery(root);
-        // Reader state and ordinary queries are both stable collection reads/updates and were already
-        // explicitly allowed to coexist in either acquisition order.
-        return root == LibraryOperationType.QUERY && requested == LibraryOperationType.READER_STATE;
+        // Ordinary QUERY roots are often pre-acquired before UI work reaches the bounded executor.
+        // A burst of navigation/details requests can therefore keep QUERY active while no query is
+        // actually running. File-local/background work in the same stable collection must not be
+        // rejected behind that passive read barrier. Destructive lifecycle operations (SWITCH,
+        // DELETE, RESTORE, CREATE, IMPORT, etc.) remain incompatible and still wait for all leases.
+        if (root == LibraryOperationType.QUERY) {
+            return requested == LibraryOperationType.READER_STATE
+                    || requested == LibraryOperationType.DOWNLOAD
+                    || requested == LibraryOperationType.CONVERSION
+                    || requested == LibraryOperationType.INDEX
+                    || requested == LibraryOperationType.EXPORT;
+        }
+        return false;
     }
 
     /** Operations that keep the same active collection for their complete lifetime. */
@@ -262,6 +328,8 @@ public final class LibraryOperationCoordinator {
                          LibraryOperationOutcome outcome, String detail) {
         boolean becameIdle = false;
         LibraryOperationCompletion completion = null;
+        UUID completedSessionId = null;
+        long completedDurationMs = -1L;
         synchronized (monitor) {
             if (active == null || !active.sessionId.equals(sessionId)) return;
 
@@ -279,9 +347,12 @@ public final class LibraryOperationCoordinator {
             }
 
             active.recordOutcome(outcome, detail);
-            active.depth--;
+            active.leave(operation);
             if (active.depth <= 0) {
                 completion = new LibraryOperationCompletion(active.rootOperation, active.outcome, active.detail);
+                completedSessionId = active.sessionId;
+                completedDurationMs = Math.max(0L, java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
+                        System.nanoTime() - active.startedNanos));
                 active = null;
                 becameIdle = true;
                 monitor.notifyAll();
@@ -289,12 +360,35 @@ public final class LibraryOperationCoordinator {
         }
         // Publish the terminal result before the active-state transition. Consumers that keep an
         // operation-history row can finish it accurately before a queued operation starts.
-        if (completion != null) publishCompletion(completion);
+        if (completion != null) {
+            logOperationCompleted(completedSessionId, completion, completedDurationMs);
+            publishCompletion(completion);
+        }
 
         // A waiter may acquire the next root lease immediately after notifyAll(). Publish the
         // current root state rather than a stale null so observers cannot finish on an idle state
         // while a queued background operation already owns the coordinator.
         if (becameIdle) publishActiveOperation(activeOperation());
+    }
+
+    private static void logOperationStarted(UUID sessionId, LibraryOperationType operation, String mode) {
+        if (operation == LibraryOperationType.QUERY || operation == LibraryOperationType.READER_STATE) {
+            log.debug("LIBRARY_OPERATION_START session={} operation={} mode={}", sessionId, operation, mode);
+        } else {
+            log.info("LIBRARY_OPERATION_START session={} operation={} mode={}", sessionId, operation, mode);
+        }
+    }
+
+    private static void logOperationCompleted(UUID sessionId, LibraryOperationCompletion completion, long durationMs) {
+        if (completion == null) return;
+        LibraryOperationType operation = completion.operation();
+        if (operation == LibraryOperationType.QUERY || operation == LibraryOperationType.READER_STATE) {
+            log.debug("LIBRARY_OPERATION_DONE session={} operation={} outcome={} durationMs={}",
+                    sessionId, operation, completion.outcome(), durationMs);
+        } else {
+            log.info("LIBRARY_OPERATION_DONE session={} operation={} outcome={} durationMs={}",
+                    sessionId, operation, completion.outcome(), durationMs);
+        }
     }
 
     private void publishActiveOperation(LibraryOperationType operation) {
@@ -321,6 +415,8 @@ public final class LibraryOperationCoordinator {
         private final UUID sessionId;
         private final LibraryOperationType rootOperation;
         private final boolean sharedDetachedRoot;
+        private final long startedNanos;
+        private final EnumMap<LibraryOperationType, Integer> operationCounts = new EnumMap<>(LibraryOperationType.class);
         private int depth;
         private LibraryOperationOutcome outcome = LibraryOperationOutcome.COMPLETED;
         private String detail = "";
@@ -330,15 +426,51 @@ public final class LibraryOperationCoordinator {
             this.rootOperation = rootOperation;
             this.depth = depth;
             this.sharedDetachedRoot = sharedDetachedRoot;
+            this.startedNanos = System.nanoTime();
+            operationCounts.put(rootOperation, depth);
+        }
+
+        private void join(LibraryOperationType operation) {
+            depth++;
+            operationCounts.merge(operation, 1, Integer::sum);
+        }
+
+        private void leave(LibraryOperationType operation) {
+            Integer count = operationCounts.get(operation);
+            if (count == null || count <= 0) {
+                throw new IllegalStateException("Operation lease accounting mismatch: " + operation);
+            }
+            if (count == 1) operationCounts.remove(operation);
+            else operationCounts.put(operation, count - 1);
+            depth--;
+        }
+
+        private boolean has(LibraryOperationType operation) {
+            return operationCounts.getOrDefault(operation, 0) > 0;
         }
 
         private void recordOutcome(LibraryOperationOutcome candidate, String candidateDetail) {
             LibraryOperationOutcome effective = candidate == null ? LibraryOperationOutcome.COMPLETED : candidate;
-            if (effective == LibraryOperationOutcome.FAILED
-                    || (effective == LibraryOperationOutcome.CANCELLED && outcome != LibraryOperationOutcome.FAILED)) {
-                outcome = effective;
+            String normalizedDetail = candidateDetail == null ? "" : candidateDetail.trim();
+
+            // Shared detached leases contribute to one root result. Preserve the detail that belongs
+            // to the strongest terminal outcome instead of letting a later successful sibling replace
+            // the diagnostic of an earlier failure/cancellation.
+            if (effective == LibraryOperationOutcome.FAILED) {
+                outcome = LibraryOperationOutcome.FAILED;
+                if (!normalizedDetail.isBlank()) detail = normalizedDetail;
+                return;
             }
-            if (candidateDetail != null && !candidateDetail.isBlank()) detail = candidateDetail;
+            if (outcome == LibraryOperationOutcome.FAILED) return;
+
+            if (effective == LibraryOperationOutcome.CANCELLED) {
+                outcome = LibraryOperationOutcome.CANCELLED;
+                if (!normalizedDetail.isBlank()) detail = normalizedDetail;
+                return;
+            }
+            if (outcome == LibraryOperationOutcome.CANCELLED) return;
+
+            if (!normalizedDetail.isBlank()) detail = normalizedDetail;
         }
     }
 
@@ -369,7 +501,7 @@ public final class LibraryOperationCoordinator {
         }
 
         /** Adds a successful result description to the terminal history event. */
-        public Lease markCompleted(String detail) {
+        public synchronized Lease markCompleted(String detail) {
             if (!closed && outcome != LibraryOperationOutcome.FAILED && outcome != LibraryOperationOutcome.CANCELLED) {
                 outcome = LibraryOperationOutcome.COMPLETED;
                 this.detail = detail == null ? "" : detail;
@@ -378,7 +510,7 @@ public final class LibraryOperationCoordinator {
         }
 
         /** Marks the root operation as cancelled before closing its lease. */
-        public Lease markCancelled(String detail) {
+        public synchronized Lease markCancelled(String detail) {
             if (!closed && outcome != LibraryOperationOutcome.FAILED) {
                 outcome = LibraryOperationOutcome.CANCELLED;
                 this.detail = detail == null ? "" : detail;
@@ -387,12 +519,12 @@ public final class LibraryOperationCoordinator {
         }
 
         /** Marks the root operation as failed before closing its lease. */
-        public Lease markFailed(Throwable failure) {
+        public synchronized Lease markFailed(Throwable failure) {
             return markFailed(rootMessage(failure));
         }
 
         /** Marks the root operation as failed when a result object already carries the failure detail. */
-        public Lease markFailed(String detail) {
+        public synchronized Lease markFailed(String detail) {
             if (!closed) {
                 outcome = LibraryOperationOutcome.FAILED;
                 this.detail = detail == null || detail.isBlank() ? "Невідома помилка" : detail;
@@ -401,8 +533,12 @@ public final class LibraryOperationCoordinator {
         }
 
         @Override
-        public void close() {
+        public synchronized void close() {
             if (closed) return;
+            // Detached leases are explicitly allowed to be completed from another thread. The
+            // synchronized close makes the release/depth decrement exactly-once while still leaving
+            // a synchronous lease retryable by its owner when release() rejects a wrong-thread or
+            // non-LIFO close attempt.
             coordinator.release(sessionId, operation, detached, outcome, detail);
             closed = true;
         }

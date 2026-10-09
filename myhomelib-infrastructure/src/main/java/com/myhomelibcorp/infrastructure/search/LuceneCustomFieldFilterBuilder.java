@@ -42,14 +42,24 @@ final class LuceneCustomFieldFilterBuilder {
     }
 
     private Query numberQuery(String field, CustomFieldSearchFilter f) {
-        double first = Double.parseDouble(f.value());
+        double first = finiteNumber(f.value(), "value");
         return switch (f.operator()) {
             case EQUALS -> DoublePoint.newExactQuery(field, first);
             case AT_LEAST -> DoublePoint.newRangeQuery(field, first, Double.POSITIVE_INFINITY);
             case AT_MOST -> DoublePoint.newRangeQuery(field, Double.NEGATIVE_INFINITY, first);
-            case BETWEEN -> DoublePoint.newRangeQuery(field, first, Double.parseDouble(f.secondValue()));
+            case BETWEEN -> DoublePoint.newRangeQuery(field, first, finiteNumber(f.secondValue(), "secondValue"));
             default -> throw new IllegalArgumentException("Unsupported numeric custom field operator: " + f.operator());
         };
+    }
+
+    private static double finiteNumber(String value, String fieldName) {
+        try {
+            double parsed = Double.parseDouble(value);
+            if (!Double.isFinite(parsed)) throw new NumberFormatException("non-finite");
+            return parsed;
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("Numeric custom field " + fieldName + " must be a finite number", e);
+        }
     }
 
     private Query dateQuery(String field, CustomFieldSearchFilter f) {

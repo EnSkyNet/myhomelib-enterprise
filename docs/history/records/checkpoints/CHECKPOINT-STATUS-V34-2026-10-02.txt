@@ -1,0 +1,41 @@
+MyHomeLib V34 post-real-data checkpoint — 2026-10-02
+
+STATUS: V30–V34 PRODUCT SCOPE COMPLETE / FULL OFFLINE GATES PASS / LARGE REAL-DATA PRIMARY GATES PASS
+
+Implemented after V29:
+- V30 Kobo native sync boundary + V66 sync state + OPDS protocol adapter + Integration Center.
+- V31 signed fail-closed application updater + standalone myhomelib-updater helper.
+- V32 Readwise annotation export + V67 remote checkpoint state.
+- V33 deterministic local metadata recommendations; real-data bounded candidate optimization.
+- V34 exact duplicate comic-page diagnostics (report-only).
+
+Exact-current evidence:
+- Maven clean verify: 21/21 SUCCESS, BUILD SUCCESS, 2:35.
+- Surefire: 2071 tests, 0 failures, 0 errors, 22 skipped.
+- Architecture: 19/19; E2E: 15/15.
+- UI action inventory: 484/484 (273 FXML + 205 programmatic + 6 Web).
+- Action behavior: 483 automated + 1 justified exclusion = 484/484.
+- User-function mapping: 484/484 to 31 flows.
+- Static release: PASS; 67 immutable SQLite migrations.
+- Supply-chain policy: PASS.
+- UK/EN/BG UI/Web/help localization: PASS.
+- Production JAR: 65,631,880 bytes; SHA-256 814ec0b9a1d52759df2297c8a11954f7c4f401feb0a2f75810ac2aeb6702271a.
+
+Large real-data evidence:
+- INPX 707,154 records: fresh import 0 errors; re-import idempotent.
+- V65->V67 real-size migration PASS; final quick_check/integrity_check = ok.
+- Lucene 571,947 active docs; rebuild 38.599 s.
+- Restart: second startup 214 ms, reusable Lucene index.
+- V33 latest 5-sample worst 1.387 s after bounded/index-aware tuning.
+- V34 1000-page CBZ: 1000 scanned, 100 groups, 0 failures, 6.270 s.
+- 3 supplied FB2 ZIP reader probes PASS.
+
+Still external/unavailable:
+- physical Kobo;
+- packaged Windows updater/installer/Calibre/DPI/DPAPI/signing;
+- real Readwise provider/account;
+- unrestricted real-browser PWA (local Chromium policy blocks all URLs);
+- real large CBR/CB7 corpus;
+- candidate-bound GitHub/SBOM/SCA/CodeQL/signing/distribution and target-machine soak.
+
+See docs/release/REAL-DATA-ACCEPTANCE-V34-2026-10-02.md.

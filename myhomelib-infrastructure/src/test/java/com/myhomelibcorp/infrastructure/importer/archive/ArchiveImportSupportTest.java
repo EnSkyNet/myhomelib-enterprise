@@ -1,6 +1,12 @@
 package com.myhomelibcorp.infrastructure.importer.archive;
 
+import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
+import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import org.junit.jupiter.api.Test;
+
+import java.nio.file.Path;
+import java.util.List;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -34,4 +40,33 @@ class ArchiveImportSupportTest {
         assertThat(ArchiveImportSupport.isSafeEntryName("C:/books/book.fb2")).isFalse();
         assertThat(ArchiveImportSupport.isSafeEntryName("books/good.fb2")).isTrue();
     }
+    @Test
+    void supportedEntryCheckRejectsUnsafePathsBeforeImporterLookup() {
+        CountingRegistry registry = new CountingRegistry();
+
+        assertThat(ArchiveImportSupport.isSupportedBookEntry("../book.fb2", registry)).isFalse();
+        assertThat(ArchiveImportSupport.isSupportedBookEntry("books/../book.fb2", registry)).isFalse();
+        assertThat(registry.lookups).isZero();
+        assertThat(ArchiveImportSupport.isSupportedBookEntry("books/book.fb2", registry)).isTrue();
+        assertThat(registry.lookups).isEqualTo(1);
+    }
+
+    private static final class CountingRegistry implements ImporterRegistry {
+        private int lookups;
+
+        @Override
+        public BookImporterPort findImporter(Path file) {
+            lookups++;
+            return new BookImporterPort() {
+                @Override public boolean supports(Path path) { return true; }
+                @Override public Stream<com.myhomelibcorp.domain.model.book.Book> importBooks(Path path) { return Stream.empty(); }
+                @Override public String getFormatName() { return "TEST"; }
+                @Override public long countBooks(Path path) { return 0; }
+            };
+        }
+
+        @Override public List<BookImporterPort> getAllImporters() { return List.of(); }
+        @Override public List<String> getSupportedFormats() { return List.of("TEST"); }
+    }
+
 }

@@ -17,6 +17,7 @@ import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelp
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookArtifactHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookQueryBuilder;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.KeywordIndexSupport;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteInClauseSupport;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteDateTimeCodec;
 import lombok.extern.slf4j.Slf4j;
@@ -215,6 +216,104 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
     @Override
     public Stream<Book> streamAll() {
         return findAllStreaming();
+    }
+
+    /**
+     * Bounded V33 candidate generation for large catalogs. Strong signals are collected first
+     * (series, authors, genres), then deterministic weak-signal fallbacks are added only while
+     * capacity remains. Exact scoring stays in BookSimilarityPolicy.
+     */
+    @Override
+    public Stream<Book> streamSimilarityCandidates(Book source, int requestedResults) {
+        if (source == null) return Stream.empty();
+        int target = Math.max(1, Math.min(50, requestedResults));
+        int candidateLimit = Math.max(1_000, Math.min(5_000, target * 100));
+        LinkedHashSet<String> ids = new LinkedHashSet<>(candidateLimit * 2);
+        String sourceId = source.getId().asString();
+
+        if (source.getSeries() != null && !source.getSeries().isBlank()) {
+            addSimilarityCandidateIds(ids, candidateLimit,
+                    "SELECT id FROM books WHERE deleted=0 AND id<>? "
+                            + "AND series IS NOT NULL AND TRIM(series)<>'' "
+                            + "AND LOWER(TRIM(series))=LOWER(TRIM(?)) ORDER BY id LIMIT ?",
+                    sourceId, source.getSeries(), candidateLimit);
+        }
+
+        List<String> authorIds = source.getAuthors().stream()
+                .map(a -> a.getId().asString()).distinct().limit(SqliteInClauseSupport.MAX_ITEMS).toList();
+        if (!authorIds.isEmpty() && ids.size() < candidateLimit) {
+            int remaining = candidateLimit - ids.size();
+            String sql = "SELECT b.id FROM books b JOIN book_authors ba ON ba.book_id=b.id "
+                    + "WHERE b.deleted=0 AND b.id<>? AND ba.author_id IN ("
+                    + SqliteInClauseSupport.placeholders(authorIds.size()) + ") "
+                    + "GROUP BY b.id ORDER BY COUNT(DISTINCT ba.author_id) DESC, b.id LIMIT ?";
+            List<Object> params = new ArrayList<>(authorIds.size() + 2);
+            params.add(sourceId); params.addAll(authorIds); params.add(remaining);
+            addSimilarityCandidateIds(ids, candidateLimit, sql, params.toArray());
+        }
+
+        List<String> genreIds = source.getGenres().stream()
+                .map(g -> g.getId().asString()).distinct().limit(SqliteInClauseSupport.MAX_ITEMS).toList();
+        if (!genreIds.isEmpty() && ids.size() < candidateLimit) {
+            int remaining = candidateLimit - ids.size();
+            String sql = "SELECT b.id FROM books b JOIN book_genres bg ON bg.book_id=b.id "
+                    + "WHERE b.deleted=0 AND b.id<>? AND bg.genre_code IN ("
+                    + SqliteInClauseSupport.placeholders(genreIds.size()) + ") "
+                    + "GROUP BY b.id ORDER BY COUNT(DISTINCT bg.genre_code) DESC, b.id LIMIT ?";
+            List<Object> params = new ArrayList<>(genreIds.size() + 2);
+            params.add(sourceId); params.addAll(genreIds); params.add(remaining);
+            addSimilarityCandidateIds(ids, candidateLimit, sql, params.toArray());
+        }
+
+        List<String> keywordNames = KeywordIndexSupport.tokenize(source.getKeywords()).stream()
+                .map(KeywordIndexSupport.KeywordToken::normalizedName)
+                .distinct().limit(SqliteInClauseSupport.MAX_ITEMS).toList();
+        if (!keywordNames.isEmpty() && ids.size() < candidateLimit) {
+            int remaining = candidateLimit - ids.size();
+            String sql = "SELECT b.id FROM books b JOIN keyword_books kb ON kb.book_id=b.id "
+                    + "WHERE b.deleted=0 AND b.id<>? AND kb.normalized_name IN ("
+                    + SqliteInClauseSupport.placeholders(keywordNames.size()) + ") "
+                    + "GROUP BY b.id ORDER BY COUNT(DISTINCT kb.normalized_name) DESC, b.id LIMIT ?";
+            List<Object> params = new ArrayList<>(keywordNames.size() + 2);
+            params.add(sourceId); params.addAll(keywordNames); params.add(remaining);
+            addSimilarityCandidateIds(ids, candidateLimit, sql, params.toArray());
+        }
+
+        String language = source.getLanguage() == null ? "und" : source.getLanguage().value();
+        if (!"und".equals(language) && ids.size() < candidateLimit) {
+            int remaining = candidateLimit - ids.size();
+            if (source.getRate() > 0) {
+                addSimilarityCandidateIds(ids, candidateLimit,
+                        "SELECT id FROM books WHERE deleted=0 AND id<>? AND language=? "
+                                + "ORDER BY ABS(rate-?), id LIMIT ?",
+                        sourceId, language, source.getRate(), remaining);
+            } else {
+                addSimilarityCandidateIds(ids, candidateLimit,
+                        "SELECT id FROM books WHERE deleted=0 AND id<>? AND language=? ORDER BY id LIMIT ?",
+                        sourceId, language, remaining);
+            }
+        }
+
+        if (source.getRate() > 0 && ids.size() < candidateLimit) {
+            int remaining = candidateLimit - ids.size();
+            addSimilarityCandidateIds(ids, candidateLimit,
+                    "SELECT id FROM books WHERE deleted=0 AND id<>? AND rate>0 "
+                            + "ORDER BY ABS(rate-?), id LIMIT ?",
+                    sourceId, source.getRate(), remaining);
+        }
+
+        if (ids.isEmpty()) return Stream.empty();
+        List<BookId> candidateIds = ids.stream().limit(candidateLimit).map(BookId::fromString).toList();
+        return findByIds(candidateIds).stream();
+    }
+
+    private void addSimilarityCandidateIds(LinkedHashSet<String> ids, int maxCandidates,
+                                           String sql, Object... params) {
+        if (ids.size() >= maxCandidates) return;
+        for (String id : getJdbcTemplate().queryForList(sql, String.class, params)) {
+            if (id != null && !id.isBlank()) ids.add(id);
+            if (ids.size() >= maxCandidates) break;
+        }
     }
 
     /**

@@ -14,6 +14,7 @@ import java.util.List;
 public class DashboardData {
     private BookDto continueReading;
     private List<ContinueReadingItemDto> continueReadingShelf;
+    private List<NextInSeriesItemDto> nextInSeries;
     private List<BookDto> recentBooks;
     private List<BookDto> recentAdded;
     private List<AuthorDto> favoriteAuthors;  // <-- має бути List<AuthorDto>

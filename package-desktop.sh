@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 TYPE=${1:-app-image}
 shift || true
+RUNTIME_MODULES="java.base,java.desktop,java.instrument,java.management,java.net.http,jdk.management,java.prefs,java.scripting,java.sql.rowset,jdk.compiler,jdk.httpserver,jdk.incubator.vector,jdk.jfr,jdk.unsupported,jdk.charsets,jdk.crypto.ec,jdk.localedata,jdk.zipfs"
 VERSION=${MHL_VERSION:-$(python3 - <<'PY'
 import xml.etree.ElementTree as ET
 root=ET.parse('pom.xml').getroot()
@@ -13,28 +14,45 @@ PY
 [[ -n "$VERSION" ]] || { echo "Cannot determine version from pom.xml" >&2; exit 2; }
 
 if [[ "${MHL_SKIP_BUILD:-0}" != "1" ]]; then
-  ./tools/invoke-maven.sh -pl myhomelib-bootstrap -am package -DskipTests -Pproduction
+  bash ./tools/invoke-maven.sh -pl myhomelib-bootstrap,myhomelib-updater -am package -DskipTests -Pproduction
 fi
-./tools/prepare-runtime-tools.sh
+bash ./tools/prepare-runtime-tools.sh
 JAR="myhomelib-bootstrap/target/myhomelib-bootstrap-${VERSION}.jar"
+UPDATER_JAR="myhomelib-updater/target/myhomelib-updater-${VERSION}.jar"
 [ -f "$JAR" ] || { echo "Missing $JAR" >&2; exit 1; }
+[ -f "$UPDATER_JAR" ] || { echo "Missing $UPDATER_JAR" >&2; exit 1; }
 STAGE="myhomelib-bootstrap/target/jpackage-input"
+CONTENT="myhomelib-bootstrap/target/jpackage-content"
+APP_CONTENT="$CONTENT/app"
 DEST="dist"
-rm -rf "$STAGE"
-mkdir -p "$STAGE" "$DEST"
+rm -rf "$STAGE" "$CONTENT"
+mkdir -p "$STAGE" "$APP_CONTENT/tools/validators" "$APP_CONTENT/tools/updater" "$DEST"
 cp "$JAR" "$STAGE/"
-mkdir -p "$STAGE/tools/validators" "$STAGE/tools/converters/libmobi"
-cp -R "tools/validators/epubcheck" "$STAGE/tools/validators/"
-cp "tools/converters/libmobi/mobitool" "$STAGE/tools/converters/libmobi/mobitool"
-cp "tools/converters/libmobi/build-src/COPYING" "$STAGE/tools/converters/libmobi/COPYING"
-chmod 0755 "$STAGE/tools/converters/libmobi/mobitool"
+cp "$UPDATER_JAR" "$APP_CONTENT/tools/updater/"
+cp -R "tools/validators/epubcheck" "$APP_CONTENT/tools/validators/"
+if [[ -x "tools/converters/libmobi/mobitool" ]]; then
+  LIBMOBI_LICENSE="tools/converters/libmobi/COPYING"
+  [[ -f "$LIBMOBI_LICENSE" ]] || LIBMOBI_LICENSE="tools/converters/libmobi/build-src/COPYING"
+  [[ -f "$LIBMOBI_LICENSE" ]] || {
+    echo "ERROR: refusing to package mobitool without its bundled license file" >&2
+    exit 2
+  }
+  mkdir -p "$APP_CONTENT/tools/converters/libmobi"
+  cp "tools/converters/libmobi/mobitool" "$APP_CONTENT/tools/converters/libmobi/mobitool"
+  cp "$LIBMOBI_LICENSE" "$APP_CONTENT/tools/converters/libmobi/COPYING"
+  chmod 0755 "$APP_CONTENT/tools/converters/libmobi/mobitool"
+fi
 if [[ "$TYPE" == "app-image" ]]; then
   rm -rf "$DEST/MyHomeLib" "$DEST/MyHomeLib.app"
 fi
 jpackage --type "$TYPE" --name MyHomeLib --app-version "$VERSION" \
   --vendor "MyHomeLib Corp" --description "MyHomeLib Enterprise library manager" \
   --input "$STAGE" --main-jar "$(basename "$JAR")" \
-  --dest "$DEST" --java-options "-Dfile.encoding=UTF-8" \
+  --app-content "$APP_CONTENT" --dest "$DEST" --java-options "-Dfile.encoding=UTF-8" \
+  --java-options "-Dspring.profiles.active=prod" \
+  --java-options "-Xms32m" --java-options "-Xmx1024m" \
+  --java-options "-XX:MinHeapFreeRatio=10" --java-options "-XX:MaxHeapFreeRatio=20" \
+  --add-modules "$RUNTIME_MODULES" \
   --jlink-options "--strip-debug --no-man-pages --no-header-files" "$@"
 
 # On Linux, Java 21 uses UTF-8 for Charset.defaultCharset() but UnixPath still

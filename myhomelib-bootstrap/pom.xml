@@ -16,6 +16,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
+        <mhl.test.jvmArgs>${mhl.mockito.agentArg}</mhl.test.jvmArgs>
     </properties>
 
     <dependencies>
@@ -112,17 +113,6 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- JSON logging for ElasticSearch -->
-        <dependency>
-            <groupId>net.logstash.logback</groupId>
-            <artifactId>logstash-logback-encoder</artifactId>
-            <version>8.0</version>
-        </dependency>
-        <!-- Spring Boot Actuator для Health Check -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
 
     </dependencies>
 
@@ -152,6 +142,15 @@
                 <configuration>
                     <mainClass>com.myhomelibcorp.MyHomeLibApp</mainClass>
                     <jvmArguments>-Dfile.encoding=UTF-8 -Dconsole.encoding=UTF-8</jvmArguments>
+                    <!-- Desktop distribution does not use Spring Boot extraction/layer tools. -->
+                    <includeTools>false</includeTools>
+                    <excludes>
+                        <!-- Lombok is an annotation processor only; never ship it in the desktop runtime. -->
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
                 </configuration>
                 <executions>
                     <execution>

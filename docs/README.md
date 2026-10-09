@@ -1,37 +1,45 @@
-# MyHomeLib documentation
+# Документація MyHomeLib
 
-## Active project contract
+## Поточний контракт
 
-The six active project documents intentionally remain in the repository root because build/release checks and support diagnostics treat them as the canonical contract:
+У корені репозиторію навмисно залишаються лише два Markdown entry points:
 
-- `README.md` — entry point and build/run overview;
-- `ARCHITECTURE.md` — architecture and dependency rules;
-- `MYHOMELIB-FEATURES.md` — supported features and deliberate limits;
-- `MYHOMELIB-OPERATIONS.md` — runtime/operations/backup/upgrade guidance;
-- `MYHOMELIB-DEVELOPMENT.md` — development, testing and validation rules;
-- `MYHOMELIB-RELEASE.md` — release policy and current release boundary.
+- `README.md` — старт, build/run, актуальний validation boundary;
+- `ARCHITECTURE.md` — модулі, dependency rules і поточний architecture contract.
 
-## Current release documents
+Актуальні описові документи зібрані в `docs/current/`:
 
-- `release/CURRENT-VALIDATION.md` — exact local validation state;
-- `release/EXTERNAL-ACCEPTANCE-RUNBOOK.md` — canonical live acceptance procedure;
-- `release/EXTERNAL-TEST-PLAN.md` — current six-gate external test plan;
-- `release/WHAT-REMAINS-UA.md` — concise Ukrainian list of external work still required;
-- `release/DEVELOPER-SOURCE-PACKAGE-UA.md` — developer-source package contents;
-- machine-readable performance/baseline JSON files remain in `release/` because validation tools consume them.
+- `FEATURES.md` — підтримувана функціональність і deliberate limits;
+- `OPERATIONS.md` — runtime/data/backup/upgrade/troubleshooting;
+- `DEVELOPMENT.md` — build, tests, performance та contribution gates;
+- `RELEASE.md` — release policy;
+- `USER-FUNCTIONS-UA.md` — повний user-facing каталог українською;
+- `FUNCTIONAL-AUDIT-UA.md` — functional coverage/evidence boundary;
+- `UI-ACTION-COVERAGE.json` / `UI-ACTION-COVERAGE-UA.md` — machine-checkable 100% action inventory;
+- `UI-ACTION-BEHAVIOR-COVERAGE.json` / `UI-ACTION-BEHAVIOR-COVERAGE-UA.md` — strict action-specific behavioral evidence (483 automated + 1 justified exclusion);
+- `TASK-CLOSURE-AUDIT-UA.md` — аудит усіх попередніх NEXT-TASKS;
+- `ARCHITECTURE-AUDIT-UA.md` — останній архітектурний аудит;
+- `CONVERTERS-WINDOWS-UA.md` — актуальний Windows runtime-tools/Calibre/libmobi contract;
+- `LANGUAGE-PACKS.md` — формат і правила runtime language packs;
+- `SMART-COLLECTIONS-PERFORMANCE.md` — чинний performance/design contract Smart Collections.
 
-## Plugin SDK
+## Release evidence
 
-See `plugin-sdk/README.md` and `plugin-sdk/COMPATIBILITY.md`.
+`docs/release/` містить лише матеріали, прив'язані до release/acceptance: `CURRENT-VALIDATION.md`, фінальний deep-audit report, external runbook/test plan, source-package policy, performance evidence та список реально відкритих live tasks.
 
-## Performance notes
+## Історія
 
-`smart-collections-performance.md` and `performance-baseline.json` are retained as focused performance evidence/reference material.
+- `history/HISTORY-UA.md` — канонічний український огляд розвитку;
+- `history/HISTORY.md` — попередній великий англомовний consolidated archive;
+- `history/records/` — exact checkpoint/task/iteration evidence;
+- `history/artifacts/` — історичні patch/list/text artifacts;
+- `history/source-notes/` — legacy notes, якщо присутні;
+- `history/handoffs/` — архівні handoff-пакети попередніх сесій.
 
-## History
+Історичні файли не є поточною специфікацією і не повинні повертатися в корінь репозиторію.
 
-- `history/HISTORY.md` — the single canonical human-readable project history;
-- `history/records/` — exact iteration/checkpoint/task evidence;
-- `history/source-notes/` — original legacy notes retained for traceability.
+## Інші матеріали
 
-Historical files are not active specifications. Do not duplicate new release instructions into history; update the active root/release documents instead.
+Plugin SDK: `plugin-sdk/README.md`, `plugin-sdk/COMPATIBILITY.md`, `plugin-sdk/SAMPLES.md`.  
+Performance references: `performance-baseline.json`, `current/SMART-COLLECTIONS-PERFORMANCE.md`.  
+Runtime F1 help (`myhomelib-ui/src/main/resources/help/`) є частиною продукту, а не project documentation archive. Runtime language JSON лежить у `Lang/`, а його project documentation — у `current/LANGUAGE-PACKS.md`.

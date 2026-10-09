@@ -63,10 +63,19 @@ public record AnnotationExportTemplates(
     private static String ensureItemsPlaceholder(String template, boolean html) {
         if (template.contains("${items}")) return template;
         if (!html) return template + "\n${items}";
-        String lower = template.toLowerCase(java.util.Locale.ROOT);
-        int marker = lower.lastIndexOf("</body>");
-        if (marker < 0) marker = lower.lastIndexOf("</html>");
+        int marker = lastIndexOfIgnoreCase(template, "</body>");
+        if (marker < 0) marker = lastIndexOfIgnoreCase(template, "</html>");
         if (marker < 0) return template + "${items}";
         return template.substring(0, marker) + "${items}" + template.substring(marker);
+    }
+
+    private static int lastIndexOfIgnoreCase(String value, String literal) {
+        var pattern = java.util.regex.Pattern.compile(
+                java.util.regex.Pattern.quote(literal),
+                java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.UNICODE_CASE);
+        var matcher = pattern.matcher(value);
+        int result = -1;
+        while (matcher.find()) result = matcher.start();
+        return result;
     }
 }

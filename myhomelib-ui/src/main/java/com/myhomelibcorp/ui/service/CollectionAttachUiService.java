@@ -4,7 +4,6 @@ import com.myhomelibcorp.application.port.out.collection.LegacyCollectionAttachP
 import com.myhomelibcorp.application.usecase.collection.AttachHlc2CollectionUseCase;
 import com.myhomelibcorp.ui.util.UiExceptionMessages;
 import com.myhomelibcorp.ui.util.UiExecutor;
-import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
 import lombok.RequiredArgsConstructor;
@@ -21,15 +20,14 @@ public class CollectionAttachUiService {
     private final AttachHlc2CollectionUseCase useCase;
     private final DialogService dialogs;
     private final UiBackgroundExecutor executor;
+    private final FileChooserService fileChooserService;
 
     /** Collects user choices on the FX thread, then performs migration/SQLite I/O off the UI thread. */
     public void attach(Window owner, Consumer<LegacyCollectionAttachPort.AttachResult> onComplete) {
-        FileChooser fc = new FileChooser();
-        fc.setTitle(UiText.text("ui.java.collection_attach_ui_service.09fbdd11a8"));
-        fc.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter(UiText.text("ui.java.collection_attach_ui_service.8bcc8b7872"), "*.hlc2", "*.db", "*.sqlite"),
-                new FileChooser.ExtensionFilter(UiText.text("ui.java.collection_attach_ui_service.3efc61c5fd"), "*.*"));
-        File source = fc.showOpenDialog(owner);
+        File source = fileChooserService.chooseFile(owner, UiText.text("ui.java.collection_attach_ui_service.09fbdd11a8"),
+                java.util.List.of(
+                        new FileChooser.ExtensionFilter(UiText.text("ui.java.collection_attach_ui_service.8bcc8b7872"), "*.hlc2", "*.db", "*.sqlite"),
+                        new FileChooser.ExtensionFilter(UiText.text("ui.java.collection_attach_ui_service.3efc61c5fd"), "*.*")));
         if (source == null) return;
 
         String base = source.getName();
@@ -38,11 +36,8 @@ public class CollectionAttachUiService {
         Optional<String> name = dialogs.showTextInput(UiText.text("ui.main.collection.attach_title"), UiText.text("ui.java.collection_attach_ui_service.4073bfd8ec"), UiText.text("common.name.label"), base);
         if (name.isEmpty() || name.get().isBlank()) return;
 
-        DirectoryChooser dc = new DirectoryChooser();
-        dc.setTitle(UiText.text("ui.java.collection_attach_ui_service.c7b4c70a12"));
         File parent = source.getParentFile();
-        if (parent != null && parent.isDirectory()) dc.setInitialDirectory(parent);
-        File root = dc.showDialog(owner);
+        File root = fileChooserService.chooseDirectory(owner, UiText.text("ui.java.collection_attach_ui_service.c7b4c70a12"), parent);
         Path rootPath = root == null ? source.toPath().toAbsolutePath().getParent() : root.toPath();
         Path sourcePath = source.toPath();
         String collectionName = name.get();

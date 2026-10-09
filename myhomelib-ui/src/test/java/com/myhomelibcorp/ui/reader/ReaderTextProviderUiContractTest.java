@@ -29,30 +29,43 @@ class ReaderTextProviderUiContractTest {
     }
 
     @Test
-    void workspaceRequiresExplicitCloudConsentAndCancelsRequestsOnBookLifecycle() throws Exception {
-        String source = Files.readString(Path.of(
+    void workspaceDelegatesTextProviderWorkAndCancelsItOnBookLifecycle() throws Exception {
+        String workspace = Files.readString(Path.of(
                 "src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java"));
+        String coordinator = Files.readString(Path.of(
+                "src/main/java/com/myhomelibcorp/ui/reader/ReaderTextProviderCoordinator.java"));
 
-        assertThat(source).contains(
+        assertThat(workspace).contains(
                 "setOnDictionaryRequested(this::lookupDictionaryFromSelection)",
                 "setOnTranslationRequested(this::translateSelection)",
+                "textProviderCoordinator.lookupDictionary(textProviderContext(), selection)",
+                "textProviderCoordinator.translate(textProviderContext(), selection)",
+                "textProviderCoordinator.cancelRequests();");
+        assertThat(workspace).doesNotContain(
+                "DictionaryLookupService dictionaryLookupService",
+                "TranslationService translationService",
+                "dictionaryCancellation",
+                "translationCancellation");
+
+        assertThat(coordinator).contains(
+                "@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)",
                 "provider.remote() && !dialogService.showConfirmation",
                 "ui.reader.translation.privacy.message",
                 "translationService.translate(query, provider.id()",
-                "cancelTextProviderRequests();",
                 "dictionaryCancellation.compareAndSet(cancellation, null)",
-                "translationCancellation.compareAndSet(cancellation, null)");
-        assertThat(source).doesNotContain(
+                "translationCancellation.compareAndSet(cancellation, null)",
+                "context.current()");
+        assertThat(coordinator).doesNotContain(
                 "com.myhomelibcorp.infrastructure.dictionary",
                 "com.myhomelibcorp.infrastructure.translation");
     }
 
     @Test
     void translationIsNeverTriggeredBySelectionChangeObserver() throws Exception {
-        String source = Files.readString(Path.of(
+        String workspace = Files.readString(Path.of(
                 "src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java"));
 
-        assertThat(source).doesNotContain("setOnSelectionChanged(this::translate");
-        assertThat(source).contains("setOnTranslationRequested(this::translateSelection)");
+        assertThat(workspace).doesNotContain("setOnSelectionChanged(this::translate");
+        assertThat(workspace).contains("setOnTranslationRequested(this::translateSelection)");
     }
 }

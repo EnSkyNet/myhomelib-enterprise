@@ -1,0 +1,31 @@
+WARNING: A restricted method in java.lang.foreign.Linker has been called
+WARNING: java.lang.foreign.Linker::downcallHandle has been called by the unnamed module
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for this module
+
+Oct 03, 2026 5:56:48 PM org.apache.lucene.store.MemorySegmentIndexInputProvider <init>
+INFO: Using MemorySegmentIndexInput and native madvise support with Java 21 or later; to disable start with -Dorg.apache.lucene.store.MMapDirectory.enableMemorySegments=false
+Oct 03, 2026 5:56:48 PM org.apache.lucene.internal.vectorization.VectorizationProvider lookup
+WARNING: Java vector incubator module is not readable. For optimal vector performance, pass '--add-modules jdk.incubator.vector' to enable Vector API.
+	Command being timed: "/mnt/data/myhomelib-work/tools/apache-maven-3.9.16/bin/mvn -o -Dmaven.repo.local=/mnt/data/myhomelib-work/m2/repository -pl myhomelib-benchmark -am -Pperformance -Dmhl.performance.sizes=100000 -Dmhl.performance.readerMb=8 -Dmhl.performance.report=/mnt/data/myhomelib-work/performance-baseline-100k.json -Dtest=PerformanceBaselineTest -Dsurefire.failIfNoSpecifiedTests=false test"
+	User time (seconds): 23.49
+	System time (seconds): 1.01
+	Percent of CPU this job got: 230%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:10.61
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 462192
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 342526
+	Voluntary context switches: 16629
+	Involuntary context switches: 1279
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 196216
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

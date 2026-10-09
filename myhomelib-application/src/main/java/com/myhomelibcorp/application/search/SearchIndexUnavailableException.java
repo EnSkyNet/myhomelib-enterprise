@@ -8,4 +8,8 @@ public class SearchIndexUnavailableException extends IllegalStateException {
     public SearchIndexUnavailableException(String message) {
         super(message);
     }
+
+    public SearchIndexUnavailableException(String message, Throwable cause) {
+        super(message, cause);
+    }
 }

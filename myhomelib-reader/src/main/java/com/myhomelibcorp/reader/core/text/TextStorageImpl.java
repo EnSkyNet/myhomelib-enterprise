@@ -98,7 +98,9 @@ public class TextStorageImpl implements TextStorage {
 
     @Override
     public List<StyleSpan> getSpans(int start, int end) {
-        if (spans.isEmpty() || start >= end) return List.of();
+        int safeStart = Math.max(0, start);
+        int safeEnd = Math.min(text.length(), end);
+        if (spans.isEmpty() || safeStart >= safeEnd) return List.of();
         ensureSpanIndex();
 
         // Find the first span prefix that can still overlap `start`. The prefix
@@ -107,7 +109,7 @@ public class TextStorageImpl implements TextStorage {
         int lo = 0, hi = spanPrefixMaxEnd.length - 1, first = spanPrefixMaxEnd.length;
         while (lo <= hi) {
             int mid = (lo + hi) >>> 1;
-            if (spanPrefixMaxEnd[mid] > start) {
+            if (spanPrefixMaxEnd[mid] > safeStart) {
                 first = mid;
                 hi = mid - 1;
             } else {
@@ -119,12 +121,12 @@ public class TextStorageImpl implements TextStorage {
         List<StyleSpan> result = new ArrayList<>();
         for (int i = first; i < spans.size(); i++) {
             StyleSpan span = spans.get(i);
-            if (span.start() >= end) break;
-            if (span.end() <= start) continue;
-            int adjustedStart = Math.max(span.start(), start);
-            int adjustedEnd = Math.min(span.end(), end);
+            if (span.start() >= safeEnd) break;
+            if (span.end() <= safeStart) continue;
+            int adjustedStart = Math.max(span.start(), safeStart);
+            int adjustedEnd = Math.min(span.end(), safeEnd);
             if (adjustedStart < adjustedEnd) {
-                result.add(new StyleSpan(adjustedStart - start, adjustedEnd - start, span.style()));
+                result.add(new StyleSpan(adjustedStart - safeStart, adjustedEnd - safeStart, span.style()));
             }
         }
         return result;

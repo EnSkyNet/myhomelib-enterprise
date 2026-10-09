@@ -190,10 +190,11 @@ public class Book {
     /** Returns a copy with a complete artifact set and an optional preferred artifact. */
     public Book withArtifacts(List<BookArtifact> newArtifacts, String newPreferredArtifactId) {
         List<BookArtifact> safe = new ArrayList<>(Objects.requireNonNullElse(newArtifacts, List.of()));
-        String preferred = normalizePreferredArtifactId(newPreferredArtifactId, safe);
+        String preferred = resolvePreferredArtifactId(newPreferredArtifactId, safe, this.file);
         BookFile operationalFile = safe.stream()
                 .filter(a -> preferred != null && preferred.equals(a.getId()))
                 .findFirst()
+                .or(() -> safe.stream().filter(BookArtifact::isAvailable).filter(a -> !isDerivedConversion(a)).findFirst())
                 .or(() -> safe.stream().filter(BookArtifact::isAvailable).findFirst())
                 .or(() -> safe.stream().findFirst())
                 .map(BookArtifact::getFile)
@@ -237,12 +238,52 @@ public class Book {
         if (value != null && !value.isBlank() && artifacts.stream().anyMatch(a -> value.equals(a.getId()))) {
             return value;
         }
-        return artifacts.stream().filter(BookArtifact::isAvailable).findFirst()
+        return artifacts.stream().filter(BookArtifact::isAvailable).filter(a -> !isDerivedConversion(a)).findFirst()
+                .or(() -> artifacts.stream().filter(BookArtifact::isLocal).filter(a -> !isDerivedConversion(a)).findFirst())
+                .or(() -> artifacts.stream().filter(BookArtifact::isAvailable).findFirst())
                 .or(() -> artifacts.stream().filter(BookArtifact::isLocal).findFirst())
                 .or(() -> artifacts.stream().findFirst())
                 .map(BookArtifact::getId)
                 .orElse(null);
     }
+
+    private static String resolvePreferredArtifactId(String explicit, List<BookArtifact> artifacts, BookFile legacyProjection) {
+        if (artifacts == null || artifacts.isEmpty()) return null;
+        if (explicit != null && !explicit.isBlank() && artifacts.stream().anyMatch(a -> explicit.equals(a.getId()))) {
+            return explicit;
+        }
+        if (legacyProjection != null) {
+            java.util.Optional<BookArtifact> exactOriginalProjection = artifacts.stream()
+                    .filter(a -> sameStorageProjection(a.getFile(), legacyProjection))
+                    .filter(a -> !isDerivedConversion(a))
+                    .findFirst();
+            if (exactOriginalProjection.isPresent()) return exactOriginalProjection.get().getId();
+        }
+        // Never infer a generated conversion as the primary representation while any
+        // source/imported artifact still exists. A conversion becomes preferred only through
+        // an explicit persisted preference selected by the user.
+        return normalizePreferredArtifactId(null, artifacts);
+    }
+
+    private static boolean sameStorageProjection(BookFile left, BookFile right) {
+        if (left == null || right == null) return false;
+        return Objects.equals(clean(left.getFileName()), clean(right.getFileName()))
+                && Objects.equals(clean(left.getFolder()), clean(right.getFolder()))
+                && Objects.equals(clean(left.getArchiveEntry()), clean(right.getArchiveEntry()))
+                && Objects.equals(clean(left.getCollectionRoot()), clean(right.getCollectionRoot()));
+    }
+
+    private static boolean isDerivedConversion(BookArtifact artifact) {
+        if (artifact == null) return false;
+        String sourceId = artifact.getSourceId();
+        if (sourceId != null && sourceId.regionMatches(true, 0, "conversion:", 0, "conversion:".length())) return true;
+        var metadata = artifact.getMetadata();
+        return metadata != null && (metadata.containsKey("conversion.sourceFormat")
+                || metadata.containsKey("conversion.provider")
+                || metadata.containsKey("conversion.createdAt"));
+    }
+
+    private static String clean(String value) { return value == null ? "" : value; }
 
     // === BUILDER ===
     /** Complete copy for focused edits; relationship lists are detached at snapshot time. */

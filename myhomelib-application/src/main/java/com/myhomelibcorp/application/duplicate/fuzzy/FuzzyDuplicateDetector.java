@@ -27,7 +27,9 @@ public class FuzzyDuplicateDetector {
 
     public Optional<FuzzyDuplicateMatch> evaluate(Book left, Book right, double threshold) {
         if (left == null || right == null || left.getId().equals(right.getId())) return Optional.empty();
-        double boundedThreshold = Math.max(0.0, Math.min(1.0, threshold));
+        double boundedThreshold = Double.isFinite(threshold)
+                ? Math.max(0.0, Math.min(1.0, threshold))
+                : DEFAULT_THRESHOLD;
 
         String leftIsbn = left.getIsbn() == null ? "" : left.getIsbn().toString();
         String rightIsbn = right.getIsbn() == null ? "" : right.getIsbn().toString();

@@ -43,6 +43,7 @@ public record CatalogRecord(
         title = safe(title);
         authors = authors == null ? List.of() : List.copyOf(authors);
         series = safe(series);
+        sequence = finiteOrNull(sequence);
         genres = genres == null ? List.of() : List.copyOf(genres);
         language = safe(language);
         fileFormat = safe(fileFormat);
@@ -55,6 +56,7 @@ public record CatalogRecord(
         translators = translators == null ? List.of() : List.copyOf(translators);
         annotation = safe(annotation);
         keywords = keywords == null ? List.of() : List.copyOf(keywords);
+        rating = finiteOrNull(rating);
         sourceMetadata = sourceMetadata == null ? Map.of() : Map.copyOf(sourceMetadata);
         artifacts = artifacts == null ? List.of() : List.copyOf(artifacts);
         externalIdentities = externalIdentities == null ? List.of() : List.copyOf(externalIdentities);
@@ -62,4 +64,5 @@ public record CatalogRecord(
     }
 
     private static String safe(String value) { return value == null ? "" : value.trim(); }
+    private static Double finiteOrNull(Double value) { return value == null || !Double.isFinite(value) ? null : value; }
 }

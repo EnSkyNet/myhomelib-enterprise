@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.ui.service.BookDisplayText;
 
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
+import com.myhomelibcorp.ui.util.Utf16BoundarySupport;
 import com.myhomelibcorp.application.annotation.AnnotationManagerFilter;
 import com.myhomelibcorp.application.annotation.AnnotationManagerItem;
 import com.myhomelibcorp.application.annotation.AnnotationManagerPage;
@@ -11,7 +12,6 @@ import com.myhomelibcorp.application.annotation.AnnotationManagerService;
 import com.myhomelibcorp.application.content.search.ContentSearchResultItem;
 import com.myhomelibcorp.application.content.search.ContentSearchResultPage;
 import com.myhomelibcorp.application.content.search.ContentSearchService;
-import com.myhomelibcorp.application.content.search.ContentIndexUnavailableException;
 import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.GenreDto;
@@ -21,7 +21,6 @@ import com.myhomelibcorp.application.search.SearchService;
 import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.ui.filter.BookFilterDialogService;
 import com.myhomelibcorp.ui.service.LocalizationService;
-import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.service.MainLayoutService;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
@@ -68,9 +67,7 @@ import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.Locale;
 import java.util.function.Function;
-import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Component
@@ -172,12 +169,10 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
     private static final int BOOK_PAGE_SIZE = 500;
     private static final int ANNOTATION_RESULT_LIMIT = 100;
     private static final int CONTENT_RESULT_LIMIT = 200;
-    private volatile Future<?> contentSearchTask;
-    private SearchRequest activeBookRequest;
+    private ContentSearchCoordinator contentSearchCoordinator;
+    private final SearchBookPagingState bookPaging = new SearchBookPagingState();
     private String activeSmartCollectionId;
     private String activeSmartCollectionName;
-    private long activeBookTotal;
-    private boolean loadingMoreBooks;
 
     private final PauseTransition debounce = new PauseTransition(Duration.millis(300));
     private final UiSubscriptions subscriptions = new UiSubscriptions();
@@ -314,10 +309,10 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
                     setAccessibleText(null);
                     return;
                 }
-                String summary = annotationSummary(item);
+                String summary = SearchAnnotationPresentation.summary(item);
                 String label = item.bookTitle().isBlank() ? summary : item.bookTitle() + " — " + summary;
                 setText(label);
-                setTooltip(new Tooltip(annotationDetails(item)));
+                setTooltip(new Tooltip(SearchAnnotationPresentation.details(item)));
                 setAccessibleText(label);
             }
         });
@@ -469,26 +464,12 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
             flow.getChildren().add(plain);
             return flow;
         }
-        String lower = value.toLowerCase(Locale.ROOT);
-        String wanted = needle.toLowerCase(Locale.ROOT);
-        int from = 0;
-        while (from < value.length()) {
-            int hit = lower.indexOf(wanted, from);
-            if (hit < 0) {
-                Text tail = new Text(value.substring(from));
-                tail.setStyle("-fx-fill: -mhl-text;");
-                flow.getChildren().add(tail);
-                break;
-            }
-            if (hit > from) {
-                Text prefix = new Text(value.substring(from, hit));
-                prefix.setStyle("-fx-fill: -mhl-text;");
-                flow.getChildren().add(prefix);
-            }
-            Text match = new Text(value.substring(hit, hit + wanted.length()));
-            match.setStyle("-fx-fill: -mhl-text; -fx-font-weight: bold;");
-            flow.getChildren().add(match);
-            from = hit + wanted.length();
+        for (SearchHighlightSupport.Segment segment : SearchHighlightSupport.segments(value, needle)) {
+            Text text = new Text(segment.text());
+            text.setStyle(segment.highlighted()
+                    ? "-fx-fill: -mhl-text; -fx-font-weight: bold;"
+                    : "-fx-fill: -mhl-text;");
+            flow.getChildren().add(text);
         }
         return flow;
     }
@@ -605,7 +586,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
             )).thenAccept(result ->
                     UiExecutor.runOnUiThread(() -> {
                         if (!UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) return;
-                        activeBookRequest = result.request();
+                        bookPaging.activate(result.request());
                         updateResults(result.overview(), result.books(), result.annotations());
                     })).exceptionally(ex -> {
                 log.error("Search failed", ex);
@@ -635,7 +616,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
                     } else {
                         navigationPanelController.clearAuthorSearchResults();
                     }
-                    activeBookRequest = result.request();
+                    bookPaging.activate(result.request());
                     setAdvancedResults(result.books(), result.annotations());
                 })).exceptionally(ex -> {
             log.error("Advanced search failed", ex);
@@ -647,43 +628,15 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
     }
 
     private void performContentSearch(String query, SearchScope scope) {
-        String normalized = query == null ? "" : query.trim();
         String collectionId = appState.getCurrentLibraryCollectionId();
-        if (normalized.isBlank() || collectionId == null || collectionId.isBlank()) {
-            updateContentResults(ContentSearchResultPage.empty(CONTENT_RESULT_LIMIT));
-            return;
-        }
         UiAsyncRequestToken token = UiAsyncRequestGuard.snapshot(searchGeneration, appState);
-        contentSearchTask = executor.submitCollectionScopedCancellable(LibraryOperationType.QUERY, () -> {
-            try {
-                ContentSearchResultPage page = contentSearchService.search(collectionId, normalized, 0, CONTENT_RESULT_LIMIT);
-                if (Thread.currentThread().isInterrupted()) return null;
-                UiExecutor.runOnUiThread(() -> {
-                    if (!UiAsyncRequestGuard.isCurrent(token, searchGeneration, appState)) return;
-                    updateContentResults(page);
-                    if (scope == SearchScope.CONTENTS) {
-                        statusLabel.setText(page.total() == 0
-                                ? i18n.text("ui.search.status.nothing_found")
-                                : i18n.format("ui.search.contents.status", page.items().size(), page.total()));
-                    }
-                });
-            } catch (java.util.concurrent.CancellationException cancelled) {
-                // A newer query owns the workspace now.
-            } catch (RuntimeException failure) {
-                if (!Thread.currentThread().isInterrupted()) {
-                    log.error("Content search failed", failure);
-                    UiExecutor.runOnUiThread(() -> {
-                        if (!UiAsyncRequestGuard.isCurrent(token, searchGeneration, appState)) return;
-                        if (failure instanceof ContentIndexUnavailableException) {
-                            statusLabel.setText(i18n.text("ui.search.contents.index_not_ready"));
-                        } else {
-                            statusLabel.setText(i18n.format("ui.search.status.error", UiExceptionSupport.message(failure)));
-                        }
-                    });
-                }
-            }
-            return null;
-        });
+        contentSearchCoordinator().search(
+                collectionId,
+                query,
+                scope == SearchScope.CONTENTS,
+                () -> UiAsyncRequestGuard.isCurrent(token, searchGeneration, appState),
+                this::updateContentResults,
+                status -> statusLabel.setText(status));
     }
 
     private void updateContentResults(ContentSearchResultPage page) {
@@ -700,10 +653,16 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         if (selected != null) workspaceManager.showContentHitInReader(selected.bookId(), selected.artifactId(), selected.matchOffset());
     }
 
+    private ContentSearchCoordinator contentSearchCoordinator() {
+        if (contentSearchCoordinator == null) {
+            contentSearchCoordinator = new ContentSearchCoordinator(executor, contentSearchService, i18n, CONTENT_RESULT_LIMIT);
+        }
+        return contentSearchCoordinator;
+    }
+
     private void cancelContentSearch() {
-        Future<?> task = contentSearchTask;
-        contentSearchTask = null;
-        if (task != null && !task.isDone()) task.cancel(true);
+        ContentSearchCoordinator coordinator = contentSearchCoordinator;
+        if (coordinator != null) coordinator.cancel();
     }
 
     private SearchScope currentSearchScope() {
@@ -855,71 +814,38 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         if (selected != null) workspaceManager.showAnnotationInReader(selected.bookId(), selected.id());
     }
 
-    private static String annotationSummary(AnnotationManagerItem item) {
-        if (item == null) return "";
-        String text = item.note().isBlank() ? item.quote() : item.note();
-        text = text == null ? "" : text.replaceAll("\\s+", " ").trim();
-        if (text.isBlank()) text = item.chapterTitle();
-        if (text == null || text.isBlank()) {
-            text = item.type() == com.myhomelibcorp.application.annotation.AnnotationManagerType.NOTE
-                    ? UiText.text("ui.annotations.type.note")
-                    : UiText.text("ui.annotations.type.highlight");
-        }
-        return text.length() > 140 ? text.substring(0, 137) + "…" : text;
-    }
-
-    private static String annotationDetails(AnnotationManagerItem item) {
-        if (item == null) return "";
-        StringBuilder details = new StringBuilder();
-        if (!item.chapterTitle().isBlank()) details.append(item.chapterTitle());
-        if (!item.quote().isBlank()) {
-            if (!details.isEmpty()) details.append("\n");
-            details.append(item.quote());
-        }
-        if (!item.note().isBlank() && !item.note().equals(item.quote())) {
-            if (!details.isEmpty()) details.append("\n");
-            details.append(item.note());
-        }
-        if (!item.tags().isEmpty()) {
-            if (!details.isEmpty()) details.append("\n");
-            details.append(String.join(", ", item.tags()));
-        }
-        return details.toString();
-    }
-
     @FXML
     private void onLoadMoreBooks() {
-        if (loadingMoreBooks || activeBookRequest == null || booksTableView.getItems().size() >= activeBookTotal) {
+        final int offset = booksTableView.getItems().size();
+        if (!bookPaging.tryBeginLoad(offset)) {
             return;
         }
 
         final UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(searchGeneration, appState);
-        final int offset = booksTableView.getItems().size();
-        final SearchRequest requestSnapshot = activeBookRequest;
-        loadingMoreBooks = true;
+        final SearchRequest requestSnapshot = bookPaging.request();
         updateLoadMoreButton();
         statusLabel.setText(i18n.text("ui.search.status.loading_next"));
 
         executor.submitCollectionScoped(LibraryOperationType.QUERY,
-                () -> searchService.searchPage(requestSnapshot, BOOK_PAGE_SIZE, offset, activeBookTotal)).thenAccept(page ->
+                () -> searchService.searchPage(requestSnapshot, BOOK_PAGE_SIZE, offset, bookPaging.total())).thenAccept(page ->
                 UiExecutor.runOnUiThread(() -> {
                     if (!UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) return;
-                    loadingMoreBooks = false;
+                    bookPaging.finishLoad();
                     if (page != null && !page.content().isEmpty()) {
                         booksTableView.getItems().addAll(page.content());
                         booksTableView.refresh();
                         refreshMasterSelection();
                     }
                     updateBookPagingUi(page == null
-                            ? PageResult.of(List.copyOf(booksTableView.getItems()), activeBookTotal, 0, BOOK_PAGE_SIZE)
+                            ? PageResult.of(List.copyOf(booksTableView.getItems()), bookPaging.total(), 0, BOOK_PAGE_SIZE)
                             : page);
                     long loaded = booksTableView.getItems().size();
-                    statusLabel.setText(i18n.format("ui.search.status.books_loaded", loaded, activeBookTotal));
+                    statusLabel.setText(i18n.format("ui.search.status.books_loaded", loaded, bookPaging.total()));
                 })).exceptionally(ex -> {
             log.error("Loading next search page failed", ex);
             UiExecutor.runOnUiThread(() -> {
                 if (!UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) return;
-                loadingMoreBooks = false;
+                bookPaging.finishLoad();
                 updateLoadMoreButton();
                 statusLabel.setText(i18n.format("ui.search.status.next_page_error", UiExceptionSupport.message(ex)));
             });
@@ -929,26 +855,24 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
 
     private void updateBookPagingUi(PageResult<BookDto> page) {
         if (page != null) {
-            activeBookTotal = page.totalElements();
+            bookPaging.updateTotal(page.totalElements());
         }
         long loaded = booksTableView.getItems().size();
-        booksCountLabel.setText("(" + loaded + " / " + activeBookTotal + ")");
+        booksCountLabel.setText("(" + loaded + " / " + bookPaging.total() + ")");
         updateLoadMoreButton();
     }
 
     private void updateLoadMoreButton() {
         if (loadMoreBooksButton == null) return;
-        boolean visible = activeBookRequest != null && booksTableView.getItems().size() < activeBookTotal;
+        boolean visible = bookPaging.hasMore(booksTableView.getItems().size());
         loadMoreBooksButton.setVisible(visible);
         loadMoreBooksButton.setManaged(visible);
-        loadMoreBooksButton.setDisable(loadingMoreBooks);
-        loadMoreBooksButton.setText(loadingMoreBooks ? i18n.text("ui.search.load_more.loading") : i18n.text("ui.search.load_more.action"));
+        loadMoreBooksButton.setDisable(bookPaging.loading());
+        loadMoreBooksButton.setText(bookPaging.loading() ? i18n.text("ui.search.load_more.loading") : i18n.text("ui.search.load_more.action"));
     }
 
     private void resetBookPaging() {
-        activeBookRequest = null;
-        activeBookTotal = 0;
-        loadingMoreBooks = false;
+        bookPaging.reset();
         updateLoadMoreButton();
     }
 
@@ -1039,7 +963,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
                 i18n.text("ui.search.save.title"),
                 i18n.text("ui.search.save.header"),
                 i18n.text("common.name.label"),
-                query.length() > 30 ? query.substring(0, 30) + "..." : query
+                savedSearchDefaultName(query)
         ).orElse(null);
 
         if (name == null || name.isBlank()) {
@@ -1054,6 +978,13 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
             log.error("Помилка збереження пошуку", e);
             dialogService.showError(i18n.text("common.error"), i18n.format("ui.search.save.error", UiExceptionSupport.message(e)));
         }
+    }
+
+
+    private static String savedSearchDefaultName(String query) {
+        if (query == null || query.length() <= 30) return query;
+        int end = Utf16BoundarySupport.safeCut(query, 30);
+        return query.substring(0, end) + "...";
     }
 
     @FXML
@@ -1192,7 +1123,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> searchService.searchPage(request)).thenAccept(page ->
                 UiExecutor.runOnUiThread(() -> {
                     if (!UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) return;
-                    activeBookRequest = request;
+                    bookPaging.activate(request);
                     setAdvancedResults(page, null);
                     statusLabel.setText(i18n.format("ui.smart_collection.loaded", activeSmartCollectionName,
                             page == null ? 0 : page.totalElements()));

@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.duplicate.merge.BookMergePlan;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.cache.BookCache;
@@ -50,6 +50,7 @@ class SqliteBookMergeAdapterIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT percent FROM reading_progress WHERE book_id=?", Integer.class, A)).isEqualTo(70);
         assertThat(jdbc.queryForObject("SELECT open_count FROM reading_history WHERE book_id=?", Integer.class, A)).isEqualTo(5);
         assertThat(jdbc.queryForObject("SELECT total_reading_seconds FROM reading_stats WHERE book_id=?", Integer.class, A)).isEqualTo(300);
+        assertThat(jdbc.queryForObject("SELECT preferences_json FROM reader_preference_overrides WHERE scope_type='BOOK' AND scope_key=?", String.class, A)).contains("A");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM book_identities WHERE book_id=?", Integer.class, A)).isEqualTo(1);
         assertThat(adapter.findLatestActiveMerge(BookId.fromString(A))).isPresent();
         assertThat(Files.exists(fileA)).isTrue();
@@ -68,6 +69,7 @@ class SqliteBookMergeAdapterIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT percent FROM reading_progress WHERE book_id=?", Integer.class, A)).isEqualTo(20);
         assertThat(jdbc.queryForObject("SELECT open_count FROM reading_history WHERE book_id=?", Integer.class, A)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT total_reading_seconds FROM reading_stats WHERE book_id=?", Integer.class, A)).isEqualTo(100);
+        assertThat(jdbc.queryForObject("SELECT preferences_json FROM reader_preference_overrides WHERE scope_type='BOOK' AND scope_key=?", String.class, A)).contains("A");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM book_identities WHERE book_id=?", Integer.class, B)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT preferred_artifact_id FROM book_artifact_preferences WHERE book_id=?", String.class, A)).isEqualTo("artifact-a");
         assertThat(jdbc.queryForObject("SELECT preferred_artifact_id FROM book_artifact_preferences WHERE book_id=?", String.class, B)).isEqualTo("artifact-b");
@@ -129,5 +131,6 @@ class SqliteBookMergeAdapterIntegrationTest {
                 VALUES (?, '2026-08-01','2026-09-01',100,1,0,20,20),(?, '2026-08-02','2026-09-02',200,2,0,70,70)
                 """, A, B);
         jdbc.update("INSERT INTO reader_book_preferences(book_id,preferences_json) VALUES (?, '{\"font\":\"A\"}'),(?, '{\"font\":\"B\"}')", A, B);
+        jdbc.update("INSERT INTO reader_preference_overrides(scope_type,scope_key,preferences_json) VALUES('BOOK',?,'{\"font\":\"A\"}'),('BOOK',?,'{\"font\":\"B\"}')", A, B);
     }
 }

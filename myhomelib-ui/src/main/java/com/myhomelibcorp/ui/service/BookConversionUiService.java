@@ -14,48 +14,59 @@ import javafx.application.Platform;
 import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
-import javafx.stage.DirectoryChooser;
 import javafx.stage.Window;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** User-facing conversion workflow backed by the provider-neutral conversion SPI. */
 @Component
 @Slf4j
 public final class BookConversionUiService {
+    private static final int MAX_BATCH_CONCURRENCY = 2;
     private final ConvertBookUseCase convertBook;
     private final UiBackgroundExecutor background;
     private final DialogService dialogs;
     private final OperationCenterService operations;
     private final ApplicationState applicationState;
+    private final FileChooserService fileChooserService;
 
     public BookConversionUiService(ConvertBookUseCase convertBook,
                                    UiBackgroundExecutor background,
                                    DialogService dialogs,
                                    OperationCenterService operations,
-                                   ApplicationState applicationState) {
+                                   ApplicationState applicationState,
+                                   FileChooserService fileChooserService) {
         this.convertBook = convertBook;
         this.background = background;
         this.dialogs = dialogs;
         this.operations = operations;
         this.applicationState = applicationState;
+        this.fileChooserService = fileChooserService;
     }
 
+    /** Converts the current book when no canonical checkbox selection was supplied. */
     public void show(Window owner, BookDto book) {
-        if (book == null || book.getId() == null || book.getId().isBlank()) {
-            dialogs.showWarning(UiText.text("ui.java.book_conversion_ui_service.79797becbd"), UiText.text("ui.java.book_conversion_ui_service.433c9e6d1d"));
-            return;
-        }
+        show(owner, book, List.of());
+    }
 
+    /**
+     * Converts all checkbox-selected books. If nothing is checked, falls back to the current row.
+     * This deliberately reuses {@link BookSelectionService} as the only batch-selection model.
+     */
+    public void show(Window owner, BookDto currentBook, List<BookId> selectedIds) {
         String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
         if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
             dialogs.showWarning(UiText.text("ui.java.book_conversion_ui_service.79797becbd"),
@@ -63,22 +74,120 @@ public final class BookConversionUiService {
             return;
         }
 
-        Map<String, List<ConvertBookUseCase.CapabilityView>> available = new LinkedHashMap<>();
-        BookId bookId = BookId.fromString(book.getId());
-        convertBook.capabilityMatrix(bookId, expectedCollectionId).stream()
-                .filter(ConvertBookUseCase.CapabilityView::available)
-                .sorted(Comparator.comparing(view -> view.capability().targetFormat()))
-                .forEach(view -> available.computeIfAbsent(view.capability().targetFormat(), ignored -> new java.util.ArrayList<>()).add(view));
+        List<BookId> checked = normalizeSelection(selectedIds);
+        if (!checked.isEmpty()) {
+            showBatch(owner, checked, expectedCollectionId);
+            return;
+        }
+        showSingle(owner, currentBook, expectedCollectionId);
+    }
+
+    private void showSingle(Window owner, BookDto book, String expectedCollectionId) {
+        if (book == null || book.getId() == null || book.getId().isBlank()) {
+            dialogs.showWarning(UiText.text("ui.java.book_conversion_ui_service.79797becbd"),
+                    UiText.text("ui.java.book_conversion_ui_service.433c9e6d1d"));
+            return;
+        }
+
+        Map<String, List<ConvertBookUseCase.CapabilityView>> available = availableTargets(
+                BookId.fromString(book.getId()), expectedCollectionId);
         if (available.isEmpty()) {
             dialogs.showWarning(UiText.text("ui.java.book_conversion_ui_service.79797becbd"),
                     UiText.text("ui.java.book_conversion_ui_service.dac9da37c6"));
             return;
         }
 
+        ComboBox<String> format = formatSelector(available.keySet());
+        Label provider = providerLabel(format, available);
+        GridPane grid = new GridPane();
+        grid.setHgap(10); grid.setVgap(10);
+        grid.add(new Label(UiText.text("ui.annotations.book_filter")), 0, 0);
+        grid.add(new Label(book.getTitle() == null ? "" : book.getTitle()), 1, 0);
+        grid.add(new Label(UiText.text("ui.java.book_conversion_ui_service.743e6748a4")), 0, 1);
+        grid.add(format, 1, 1);
+        grid.add(provider, 1, 2);
+        GridPane.setHgrow(format, Priority.ALWAYS);
+
+        if (!confirmConversion(owner, grid)) return;
+        Path outputDirectory = chooseOutputDirectory(owner);
+        if (outputDirectory == null || !isCurrentCollection(expectedCollectionId)) {
+            if (outputDirectory != null) {
+                dialogs.showWarning(UiText.text("ui.java.book_conversion_ui_service.79797becbd"),
+                        UiText.text("ui.java.book_conversion_ui_service.dac9da37c6"));
+            }
+            return;
+        }
+        runConversion(book, format.getValue(), outputDirectory, expectedCollectionId);
+    }
+
+    private void showBatch(Window owner, List<BookId> bookIds, String expectedCollectionId) {
+        List<String> commonFormats = commonFormats(bookIds, expectedCollectionId);
+        if (commonFormats.isEmpty()) {
+            dialogs.showWarning(UiText.text("ui.java.book_conversion_ui_service.79797becbd"),
+                    UiText.text("ui.conversion.batch.no_common_format"));
+            return;
+        }
+
+        ComboBox<String> format = formatSelector(commonFormats);
+        GridPane grid = new GridPane();
+        grid.setHgap(10); grid.setVgap(10);
+        grid.add(new Label(UiText.text("ui.conversion.batch.selection")), 0, 0);
+        grid.add(new Label(Integer.toString(bookIds.size())), 1, 0);
+        grid.add(new Label(UiText.text("ui.java.book_conversion_ui_service.743e6748a4")), 0, 1);
+        grid.add(format, 1, 1);
+        GridPane.setHgrow(format, Priority.ALWAYS);
+
+        if (!confirmConversion(owner, grid)) return;
+        Path outputDirectory = chooseOutputDirectory(owner);
+        if (outputDirectory == null || !isCurrentCollection(expectedCollectionId)) {
+            if (outputDirectory != null) {
+                dialogs.showWarning(UiText.text("ui.java.book_conversion_ui_service.79797becbd"),
+                        UiText.text("ui.java.book_conversion_ui_service.dac9da37c6"));
+            }
+            return;
+        }
+        runConversions(bookIds, format.getValue(), outputDirectory, expectedCollectionId);
+    }
+
+    private Map<String, List<ConvertBookUseCase.CapabilityView>> availableTargets(
+            BookId bookId, String expectedCollectionId) {
+        Map<String, List<ConvertBookUseCase.CapabilityView>> available = new LinkedHashMap<>();
+        convertBook.capabilityMatrix(bookId, expectedCollectionId).stream()
+                .filter(ConvertBookUseCase.CapabilityView::available)
+                .sorted(Comparator.comparing(view -> view.capability().targetFormat()))
+                .forEach(view -> available.computeIfAbsent(view.capability().targetFormat(),
+                        ignored -> new ArrayList<>()).add(view));
+        return available;
+    }
+
+    private List<String> commonFormats(List<BookId> bookIds, String expectedCollectionId) {
+        LinkedHashSet<String> common = null;
+        for (BookId bookId : bookIds) {
+            Set<String> targets = availableTargets(bookId, expectedCollectionId).keySet();
+            if (common == null) common = new LinkedHashSet<>(targets);
+            else common.retainAll(targets);
+            if (common.isEmpty()) return List.of();
+        }
+        if (common == null) return List.of();
+        return common.stream().sorted().toList();
+    }
+
+    private static List<BookId> normalizeSelection(List<BookId> selectedIds) {
+        if (selectedIds == null || selectedIds.isEmpty()) return List.of();
+        LinkedHashSet<BookId> unique = new LinkedHashSet<>();
+        for (BookId id : selectedIds) if (id != null) unique.add(id);
+        return List.copyOf(unique);
+    }
+
+    private static ComboBox<String> formatSelector(java.util.Collection<String> formats) {
         ComboBox<String> format = new ComboBox<>();
-        format.getItems().setAll(available.keySet());
+        format.getItems().setAll(formats);
         format.getSelectionModel().selectFirst();
-        CheckBox preferred = new CheckBox(UiText.text("ui.java.book_conversion_ui_service.5ee327cabf"));
+        return format;
+    }
+
+    private static Label providerLabel(ComboBox<String> format,
+                                       Map<String, List<ConvertBookUseCase.CapabilityView>> available) {
         Label provider = new Label();
         provider.setWrapText(true);
         Runnable updateProvider = () -> {
@@ -95,57 +204,50 @@ public final class BookConversionUiService {
         };
         format.valueProperty().addListener((obs, old, value) -> updateProvider.run());
         updateProvider.run();
+        return provider;
+    }
 
-        GridPane grid = new GridPane();
-        grid.setHgap(10); grid.setVgap(10);
-        grid.add(new Label(UiText.text("ui.annotations.book_filter")), 0, 0); grid.add(new Label(book.getTitle() == null ? "" : book.getTitle()), 1, 0);
-        grid.add(new Label(UiText.text("ui.java.book_conversion_ui_service.743e6748a4")), 0, 1); grid.add(format, 1, 1);
-        grid.add(provider, 1, 2);
-        grid.add(preferred, 1, 3);
-        GridPane.setHgrow(format, Priority.ALWAYS);
-
+    private static boolean confirmConversion(Window owner, GridPane content) {
         Dialog<ButtonType> dialog = new Dialog<>();
         DialogLocalization.prepare(dialog);
         if (owner != null) dialog.initOwner(owner);
         dialog.setTitle(UiText.text("ui.java.book_conversion_ui_service.79797becbd"));
         dialog.setHeaderText(UiText.text("ui.java.book_conversion_ui_service.cdb7bf971e"));
-        ButtonType convert = new ButtonType(UiText.text("ui.java.book_conversion_ui_service.7469f9d505"), ButtonBar.ButtonData.OK_DONE);
-        ButtonType cancel = new ButtonType(UiText.text("ui.fxml.import_workspace.cancel"), ButtonBar.ButtonData.CANCEL_CLOSE);
+        ButtonType convert = new ButtonType(UiText.text("ui.java.book_conversion_ui_service.7469f9d505"),
+                ButtonBar.ButtonData.OK_DONE);
+        ButtonType cancel = new ButtonType(UiText.text("ui.fxml.import_workspace.cancel"),
+                ButtonBar.ButtonData.CANCEL_CLOSE);
         dialog.getDialogPane().getButtonTypes().setAll(convert, cancel);
-        dialog.getDialogPane().setContent(grid);
-        if (dialog.showAndWait().filter(convert::equals).isEmpty()) return;
-
-        DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle(UiText.text("ui.java.book_conversion_ui_service.f9317efd35"));
-        File selected = chooser.showDialog(owner);
-        if (selected == null) return;
-        if (!isCurrentCollection(expectedCollectionId)) {
-            dialogs.showWarning(UiText.text("ui.java.book_conversion_ui_service.79797becbd"),
-                    UiText.text("ui.java.book_conversion_ui_service.dac9da37c6"));
-            return;
-        }
-        runConversion(book, format.getValue(), selected.toPath(), preferred.isSelected(), expectedCollectionId);
+        dialog.getDialogPane().setContent(content);
+        return dialog.showAndWait().filter(convert::equals).isPresent();
     }
 
-    private void runConversion(BookDto book, String format, Path outputDirectory, boolean makePreferred,
+    private Path chooseOutputDirectory(Window owner) {
+        File selected = fileChooserService.chooseDirectory(owner, UiText.text("ui.java.book_conversion_ui_service.f9317efd35"));
+        return selected == null ? null : selected.toPath();
+    }
+
+    private void runConversion(BookDto book, String format, Path outputDirectory,
                                String expectedCollectionId) {
         AtomicBoolean cancelled = new AtomicBoolean(false);
-        String operationId = operations.start(UiText.text("ui.java.book_conversion_ui_service.21a9f9188e") + safeTitle(book), expectedCollectionId, OperationKind.BOOK_CONVERSION,
-                OperationStage.CONVERTING, false);
+        String operationId = operations.start(UiText.text("ui.java.book_conversion_ui_service.21a9f9188e") + safeTitle(book),
+                expectedCollectionId, OperationKind.BOOK_CONVERSION, OperationStage.CONVERTING,
+                true, () -> cancelled.set(true));
 
-        background.submitCollectionScoped(LibraryOperationType.CONVERSION,
-                () -> convertBook.execute(new ConvertBookUseCase.Request(
-                BookId.fromString(book.getId()), format, outputDirectory, makePreferred,
-                ConvertBookUseCase.DEFAULT_MAX_INPUT_BYTES, ConvertBookUseCase.DEFAULT_MAX_OUTPUT_BYTES, cancelled::get),
-                        expectedCollectionId))
+        background.submitCollectionScopedOperation(LibraryOperationType.CONVERSION,
+                () -> executeConversion(BookId.fromString(book.getId()), format, outputDirectory,
+                        expectedCollectionId, cancelled))
                 .whenComplete((result, error) -> Platform.runLater(() -> {
+                    Throwable failure = error == null ? null : unwrap(error);
                     if (!isCurrentCollection(expectedCollectionId)) {
-                        if (error != null) operations.fail(operationId, unwrap(error));
-                        else operations.complete(operationId, UiText.text("ui.java.book_conversion_ui_service.d11255b49b") + result.artifact().displayName());
+                        finishDetached(operationId, result, failure);
                         return;
                     }
-                    if (error != null) {
-                        Throwable failure = unwrap(error);
+                    if (failure instanceof java.util.concurrent.CancellationException) {
+                        operations.cancel(operationId, UiText.text("ui.import.stage.cancelled"));
+                        return;
+                    }
+                    if (failure != null) {
                         log.error("Book conversion failed: bookId={}, targetFormat={}, collectionId={}, outputDirectory={}, cause={}",
                                 book.getId(), format, expectedCollectionId, outputDirectory,
                                 UiExceptionSupport.technicalMessage(failure), failure);
@@ -154,13 +256,117 @@ public final class BookConversionUiService {
                                 UiText.text("ui.java.book_conversion_ui_service.78400b9a85") + message(failure));
                         return;
                     }
-                    operations.complete(operationId, UiText.text("ui.java.book_conversion_ui_service.d11255b49b") + result.artifact().displayName());
+                    operations.complete(operationId,
+                            UiText.text("ui.java.book_conversion_ui_service.d11255b49b") + result.artifact().displayName());
                     dialogs.showInfo(UiText.text("ui.java.book_conversion_ui_service.79797becbd"),
                             UiText.text("ui.java.book_conversion_ui_service.bda46803b0") + format.toUpperCase(java.util.Locale.ROOT)
                                     + UiText.text("ui.java.book_conversion_ui_service.bf9f97a3ce") + result.artifact().displayName()
                                     + UiText.text("ui.java.book_conversion_ui_service.57cb7ad0be") + converterName(result.converterId()));
                 }));
     }
+
+    /** Shared Operation Center row; individual conversions still run under normal collection-scoped leases. */
+    private void runConversions(List<BookId> bookIds, String format, Path outputDirectory,
+                                String expectedCollectionId) {
+        List<BookId> normalized = normalizeSelection(bookIds);
+        if (normalized.isEmpty()) return;
+
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+        String operationId = operations.start(UiText.text("ui.conversion.batch.operation").formatted(normalized.size()),
+                expectedCollectionId, OperationKind.BOOK_CONVERSION, OperationStage.CONVERTING,
+                true, () -> cancelled.set(true));
+
+        List<CompletableFuture<BatchOutcome>> futures = new ArrayList<>(normalized.size());
+        for (int i = 0; i < normalized.size(); i++) futures.add(new CompletableFuture<>());
+
+        int lanes = Math.min(MAX_BATCH_CONCURRENCY, normalized.size());
+        List<CompletableFuture<Void>> laneTails = new ArrayList<>(lanes);
+        for (int i = 0; i < lanes; i++) laneTails.add(CompletableFuture.completedFuture(null));
+
+        // Keep only a small number of external converters in flight. Enqueuing the entire batch
+        // into the shared UI executor would let a large selection starve navigation/Reader work.
+        for (int i = 0; i < normalized.size(); i++) {
+            BookId bookId = normalized.get(i);
+            CompletableFuture<BatchOutcome> outcome = futures.get(i);
+            int lane = i % lanes;
+            CompletableFuture<Void> next = laneTails.get(lane).thenCompose(ignored -> {
+                if (cancelled.get()) {
+                    outcome.complete(new BatchOutcome(bookId, null,
+                            new java.util.concurrent.CancellationException("Batch book conversion cancelled")));
+                    return CompletableFuture.completedFuture(null);
+                }
+                try {
+                    return background.submitCollectionScopedOperation(LibraryOperationType.CONVERSION,
+                                    () -> executeConversion(bookId, format, outputDirectory,
+                                            expectedCollectionId, cancelled))
+                            .handle((result, error) -> {
+                                outcome.complete(new BatchOutcome(bookId, result,
+                                        error == null ? null : unwrap(error)));
+                                return null;
+                            });
+                } catch (Throwable schedulingFailure) {
+                    outcome.complete(new BatchOutcome(bookId, null, unwrap(schedulingFailure)));
+                    return CompletableFuture.completedFuture(null);
+                }
+            });
+            laneTails.set(lane, next);
+        }
+
+        CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
+                .whenComplete((ignored, aggregateError) -> Platform.runLater(() -> {
+                    List<BatchOutcome> outcomes = futures.stream().map(CompletableFuture::join).toList();
+                    long failures = outcomes.stream().filter(outcome -> outcome.failure() != null
+                            && !(outcome.failure() instanceof java.util.concurrent.CancellationException)).count();
+                    long cancelledCount = outcomes.stream().filter(outcome ->
+                            outcome.failure() instanceof java.util.concurrent.CancellationException).count();
+                    long successes = outcomes.size() - failures - cancelledCount;
+
+                    if (cancelled.get() || cancelledCount > 0) {
+                        operations.cancel(operationId, UiText.text("ui.import.stage.cancelled"));
+                        return;
+                    }
+                    if (failures > 0) {
+                        outcomes.stream().filter(outcome -> outcome.failure() != null).forEach(outcome ->
+                                log.error("Batch book conversion failed: bookId={}, targetFormat={}, collectionId={}, outputDirectory={}, cause={}",
+                                        outcome.bookId(), format, expectedCollectionId, outputDirectory,
+                                        UiExceptionSupport.technicalMessage(outcome.failure()), outcome.failure()));
+                        String summary = UiText.text("ui.conversion.batch.partial").formatted(successes, failures);
+                        operations.fail(operationId, summary);
+                        if (isCurrentCollection(expectedCollectionId)) {
+                            dialogs.showError(UiText.text("ui.java.book_conversion_ui_service.79797becbd"), summary);
+                        }
+                        return;
+                    }
+
+                    String summary = UiText.text("ui.conversion.batch.completed").formatted(successes);
+                    operations.complete(operationId, summary);
+                    if (isCurrentCollection(expectedCollectionId)) {
+                        dialogs.showInfo(UiText.text("ui.java.book_conversion_ui_service.79797becbd"), summary);
+                    }
+                }));
+    }
+
+    private ConvertBookUseCase.Result executeConversion(BookId bookId, String format, Path outputDirectory,
+                                                        String expectedCollectionId, AtomicBoolean cancelled) throws Exception {
+        return convertBook.execute(new ConvertBookUseCase.Request(
+                        bookId, format, outputDirectory,
+                        ConvertBookUseCase.DEFAULT_MAX_INPUT_BYTES,
+                        ConvertBookUseCase.DEFAULT_MAX_OUTPUT_BYTES,
+                        cancelled::get), expectedCollectionId);
+    }
+
+    private void finishDetached(String operationId, ConvertBookUseCase.Result result, Throwable failure) {
+        if (failure instanceof java.util.concurrent.CancellationException) {
+            operations.cancel(operationId, UiText.text("ui.import.stage.cancelled"));
+        } else if (failure != null) {
+            operations.fail(operationId, failure);
+        } else {
+            operations.complete(operationId,
+                    UiText.text("ui.java.book_conversion_ui_service.d11255b49b") + result.artifact().displayName());
+        }
+    }
+
+    private record BatchOutcome(BookId bookId, ConvertBookUseCase.Result result, Throwable failure) { }
 
     private static String converterName(String id) {
         String normalized = id == null ? "" : id.trim().toLowerCase(java.util.Locale.ROOT);

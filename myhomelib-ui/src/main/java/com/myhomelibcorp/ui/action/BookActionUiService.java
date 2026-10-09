@@ -10,6 +10,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
+import com.myhomelibcorp.ui.readinglist.ReadingListBookActionUiService;
 import javafx.application.Platform;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Menu;
@@ -29,6 +30,7 @@ public class BookActionUiService {
     private final RunBookActionUseCase runBookActionUseCase;
     private final DialogService dialogs;
     private final ApplicationState appState;
+    private final ReadingListBookActionUiService readingListBookActionUiService;
 
     public ContextMenu createContextMenu(BookViewModel book) {
         if (book == null || book.getId() == null || book.isGroupHeader()) return null;
@@ -36,15 +38,18 @@ public class BookActionUiService {
                 .filter(BookActionProfile::enabled)
                 .filter(profile -> !profile.commands().isEmpty())
                 .toList();
-        if (profiles.isEmpty()) return null;
         ContextMenu context = new ContextMenu();
-        Menu actions = new Menu(UiText.text("ui.java.book_action_ui_service.ce75e3d4fd"));
-        for (BookActionProfile profile : profiles) {
-            MenuItem item = new MenuItem(profile.name());
-            item.setOnAction(e -> run(book, profile));
-            actions.getItems().add(item);
+        if (!profiles.isEmpty()) {
+            Menu actions = new Menu(UiText.text("ui.java.book_action_ui_service.ce75e3d4fd"));
+            for (BookActionProfile profile : profiles) {
+                MenuItem item = new MenuItem(profile.name());
+                item.setOnAction(e -> run(book, profile));
+                actions.getItems().add(item);
+            }
+            context.getItems().add(actions);
         }
-        context.getItems().add(actions);
+
+        context.getItems().add(readingListBookActionUiService.createMenu(book));
         return context;
     }
 

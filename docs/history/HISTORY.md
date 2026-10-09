@@ -2264,3 +2264,39 @@ Project documentation was normalized after the final audited source checkpoint:
 - the build/readiness guards were updated to enforce the new canonical documentation layout.
 
 This reorganization did not change production Java code, runtime resources, Maven project files or build/package scripts.
+
+## V34 External Test R2 — post-R1 regression — 2026-10-03
+
+The post-R1 pass closed the three recorded P0 code defects without opening V35 scope: repeated same-format conversion now reuses a stable derived-artifact row without changing the preferred artifact; re-clicking an already-selected author row redispatches navigation after Operations/Reader; and remote-only Book Details is a normal not-downloaded state with an explicit download action instead of a parser failure. Missing/corrupt local artifacts remain technical local-file states.
+
+Cancellable collection-scoped UI callers now handle synchronous library-operation conflicts/rejections instead of allowing an exception to escape a JavaFX handler. UK/EN/BG localization and the UI action registries were refreshed for the new action. Exact-current UI regression is 370/370 PASS; Application, Infrastructure, Reader, Bootstrap, E2E and Architecture suites were completed in bounded offline runs with no failures/errors. A synthetic memory baseline was recorded, but production pool/cache/Xmx limits were not lowered without same-machine evidence.
+
+A single root `clean verify` is not claimed for R2 because this execution environment forcibly terminates long commands at five minutes; completed module/chunk coverage and that limitation are documented in `docs/release/POST-R1-R2-VALIDATION-2026-10-03-UA.md`. Windows/device/provider/browser live gates remain external.
+
+## V34 External Test R9 — live-acceptance evidence cohesion hardening — 2026-10-04
+
+Without changing production Java/POM/runtime behavior, R9 closes two fail-open risks in post-R5 final aggregation. Windows functional and memory reports must now share one `acceptanceSessionId`, identical host/user fingerprints and OS identity; mixed Windows sessions/hosts are rejected. `--external-final` now validates the real `myhomelib-7.1-final-external-acceptance` schema/backlog/evidence/candidate-binding contract, so a shallow `overall=PASS` JSON cannot close the gate.
+
+RED→GREEN regressions plus readiness/static-release/architecture/completeness/UI/localization/help/supply-chain/hygiene gates pass. Memory defaults are unchanged. No new R9 one-shot Maven PASS is claimed because exact-current attempts were terminated by the external ~5-minute execution limit before reactor summary; frozen R7 **2087/0/0/23, BUILD SUCCESS** remains the unchanged Java baseline until exact-R9 CI/Windows evidence is produced. Details: `docs/release/POST-R8-R9-VALIDATION-2026-10-04-UA.md`.
+
+## V34 External Test R14 — INDEX/DOWNLOAD concurrency + R13 release-audit closure — 2026-10-04
+
+Real use exposed a gap between two operations shown as «Оновлення пошукового індексу»: catalogue Lucene rebuild already used a shared INDEX barrier, while the independent full-text rebuild still acquired exclusive INDEX and blocked online DOWNLOAD. R14 moves full-text rebuild to the same shared INDEX root, defers post-download catalogue/full-text repair off the caller thread while INDEX is active, reference-counts STALE ownership, and removes low-level Lucene rebuild's ability to publish a false fresh marker before application orchestration drains concurrent work.
+
+RED regressions reproduced the exclusive INDEX conflict, synchronous full-text scheduling and stale-hold ownership bug. The final concurrency suite is green, including UI collection-scope submission and real Lucene content-index lifecycle.
+
+A full release audit also found three R13 migration tests still expecting schema 67 after V68. Those stale expectations are updated to 68. Exact-current root offline `clean verify` now completes: **2097 tests, 0 failures, 0 errors, 23 skipped; 21/21 reactor projects SUCCESS; BUILD SUCCESS; 02:38 min**. R13 conversion-primary repair, V68 data repair, EPUB metadata fallback, bundled FBC route and R12 lazy FB2 details regressions remain green.
+
+## V34 External Test R15 — real Windows UX/concurrency/conversion hardening — 2026-10-04
+
+Real Windows R13 evidence showed that the R12 parser optimization did not close the user-visible wait: Book Details still shared workers with online requests that could sit in HTTP timeout/502 paths for minutes. R15 separates NETWORK and INTERACTIVE execution lanes, cancels superseded details work, adds a 5 s deep-analysis watchdog and resource cleanup, and makes production download/details/conversion logs identify book/title/file/route/duration. On all 18 supplied real FB2 books with 24 intentionally blocked network tasks, interactive inspection completed in **751 ms total**; the 17.7 MiB compilation took **241 ms**.
+
+The same audit found why a portable containing `fbc.exe` could still spend ~16.5 min converting: the bundled vendor path was not guaranteed by runtime discovery, allowing AUTO to fall into Calibre. The locator now explicitly recognizes `tools/converters/fbc-windows-amd64/fbc.exe`, and default AUTO FB2/FB2_ZIP→EPUB does not silently use the slow fallback. Conversion/FBC milestones are production-INFO logged. R14 INDEX/DOWNLOAD concurrency and R13 primary/V68/EPUB fixes are retained. Affected regression suites and the Windows-classifier 15-module packaging build pass; R14 remains the last uninterrupted full-root baseline because exact-R15 root runs exceed the environment's 5-minute command cap.
+
+## V34 External Test R16 — second Windows defect-driven orchestration/local-first repair — 2026-10-04
+
+The second real Windows pass exposed that R15 had fixed parser latency without fully fixing operation ownership and stale storage state. The supplied log showed 120–245 s ConnectionScript waits, repeated attempts to materialize books already present on disk, a conversion rejected before converter startup because a passive QUERY owned the shared barrier, disappearing covers after rapid navigation, and a shutdown burst of cancelled author QUERY tasks.
+
+R16 makes same-collection passive/stable operations coexist while destructive collection lifecycle actions still remain serialized; INDEX→DOWNLOAD and QUERY→DOWNLOAD/CONVERSION/INDEX paths are explicitly covered. Download preflight is local-first and rechecks physical storage immediately before HTTP, including the legacy online FB2 archive path and server-renamed ZIP entries. Post-download Lucene/full-text repair is deferred while INDEX is active. Cover work has a cancellable interactive lane with stale-result guards and retryable current-request state. Author workspace requests are latest-request-wins. ConnectionScript read waits are capped to 30 s and automatic GET retries default to zero. Conversion uses a dedicated operation lane, retaining the R15 fail-closed FBC route.
+
+Real supplied corpus evidence: local archive reconciliation **18/18**, cover extraction **18/18**; the large 17.7 MiB compilation cover extraction is ~121 ms in the probe. Exact-current uninterrupted offline root `clean verify`: **2106 tests / 0 failures / 0 errors / 23 skipped; 21/21 reactor projects SUCCESS; BUILD SUCCESS; 02:39 min**. Windows live retest remains required for the exact packaged candidate.

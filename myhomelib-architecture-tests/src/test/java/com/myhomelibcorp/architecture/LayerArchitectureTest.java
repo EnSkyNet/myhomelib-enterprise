@@ -32,9 +32,15 @@ class LayerArchitectureTest {
     private static final String SHARED = "com.myhomelibcorp.shared..";
     private static final String DOMAIN = "com.myhomelibcorp.domain..";
     private static final String APPLICATION = "com.myhomelibcorp.application..";
+    private static final String EPUB_OPTIMIZER = "com.myhomelibcorp.epub.optimizer..";
+    private static final String ORGANIZER = "com.myhomelibcorp.organizer..";
+    private static final String CONVERTER_TOOLCHAIN = "com.myhomelibcorp.converter.toolchain..";
     private static final String PLUGIN = "com.myhomelibcorp.plugin.api..";
+    private static final String PLUGIN_SAMPLES = "com.myhomelibcorp.plugins.samples..";
+    private static final String CALIBRE_PLUGIN = "com.myhomelibcorp.plugins.calibre..";
     private static final String INFRASTRUCTURE = "com.myhomelibcorp.infrastructure..";
     private static final String UI = "com.myhomelibcorp.ui..";
+    private static final String UPDATER = "com.myhomelibcorp.updater..";
     private static final String READER = "com.myhomelibcorp.reader..";
     private static final String MCP = "com.myhomelibcorp.mcp..";
     private static final String OPDS = "com.myhomelibcorp.opds..";
@@ -49,10 +55,16 @@ class LayerArchitectureTest {
             "myhomelib-shared",
             "myhomelib-domain",
             "myhomelib-application",
+            "myhomelib-epub-optimizer",
+            "myhomelib-library-organizer",
+            "myhomelib-converter-toolchain",
             "myhomelib-plugin-api",
+            "myhomelib-plugin-samples",
+            "myhomelib-converter-calibre-plugin",
             "myhomelib-infrastructure",
             "myhomelib-reader",
             "myhomelib-ui",
+            "myhomelib-updater",
             "myhomelib-opds",
             "myhomelib-web",
             "myhomelib-bootstrap",
@@ -108,8 +120,12 @@ class LayerArchitectureTest {
                 .should().dependOnClassesThat().resideInAnyPackage(
                         DOMAIN,
                         APPLICATION,
+                        EPUB_OPTIMIZER,
+                        ORGANIZER,
+                        CONVERTER_TOOLCHAIN,
                         PLUGIN,
-                        PLUGIN,
+                        PLUGIN_SAMPLES,
+                        CALIBRE_PLUGIN,
                         INFRASTRUCTURE,
                         UI,
                         READER,
@@ -130,6 +146,12 @@ class LayerArchitectureTest {
                 .that().resideInAnyPackage(DOMAIN)
                 .should().dependOnClassesThat().resideInAnyPackage(
                         APPLICATION,
+                        EPUB_OPTIMIZER,
+                        ORGANIZER,
+                        CONVERTER_TOOLCHAIN,
+                        PLUGIN,
+                        PLUGIN_SAMPLES,
+                        CALIBRE_PLUGIN,
                         INFRASTRUCTURE,
                         UI,
                         READER,
@@ -150,6 +172,12 @@ class LayerArchitectureTest {
         noClasses()
                 .that().resideInAnyPackage(APPLICATION)
                 .should().dependOnClassesThat().resideInAnyPackage(
+                        EPUB_OPTIMIZER,
+                        ORGANIZER,
+                        CONVERTER_TOOLCHAIN,
+                        PLUGIN,
+                        PLUGIN_SAMPLES,
+                        CALIBRE_PLUGIN,
                         INFRASTRUCTURE,
                         UI,
                         READER,
@@ -170,9 +198,70 @@ class LayerArchitectureTest {
         noClasses()
                 .that().resideInAnyPackage(PLUGIN)
                 .should().dependOnClassesThat().resideInAnyPackage(
+                        EPUB_OPTIMIZER, ORGANIZER, CONVERTER_TOOLCHAIN, PLUGIN_SAMPLES, CALIBRE_PLUGIN,
                         INFRASTRUCTURE, UI, READER, MCP, OPDS, WEB,
                         "javafx..", "java.sql..", "javax.sql..",
                         "org.springframework..", "org.apache.lucene.."
+                )
+                .check(CLASSES);
+    }
+
+    @Test
+    void epubOptimizerOnlyDependsOnSharedProductCode() {
+        noClasses()
+                .that().resideInAnyPackage(EPUB_OPTIMIZER)
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        DOMAIN, APPLICATION, ORGANIZER, CONVERTER_TOOLCHAIN, PLUGIN,
+                        PLUGIN_SAMPLES, CALIBRE_PLUGIN, INFRASTRUCTURE, UI, READER,
+                        MCP, OPDS, WEB, "javafx..", "java.sql..", "javax.sql..", "org.apache.lucene.."
+                )
+                .check(CLASSES);
+    }
+
+    @Test
+    void organizerStaysInsideApplicationDomainSharedAndOptimizerBoundary() {
+        noClasses()
+                .that().resideInAnyPackage(ORGANIZER)
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        CONVERTER_TOOLCHAIN, PLUGIN, PLUGIN_SAMPLES, CALIBRE_PLUGIN,
+                        INFRASTRUCTURE, UI, READER, MCP, OPDS, WEB,
+                        "javafx..", "java.sql..", "javax.sql..", "org.apache.lucene.."
+                )
+                .check(CLASSES);
+    }
+
+    @Test
+    void converterToolchainStaysInsideApplicationDomainSharedAndOptimizerBoundary() {
+        noClasses()
+                .that().resideInAnyPackage(CONVERTER_TOOLCHAIN)
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        ORGANIZER, PLUGIN, PLUGIN_SAMPLES, CALIBRE_PLUGIN,
+                        INFRASTRUCTURE, UI, READER, MCP, OPDS, WEB,
+                        "javafx..", "java.sql..", "javax.sql..", "org.apache.lucene.."
+                )
+                .check(CLASSES);
+    }
+
+    @Test
+    void pluginSamplesDoNotReachRuntimeImplementations() {
+        noClasses()
+                .that().resideInAnyPackage(PLUGIN_SAMPLES)
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        SHARED, DOMAIN, EPUB_OPTIMIZER, ORGANIZER, CONVERTER_TOOLCHAIN,
+                        CALIBRE_PLUGIN, INFRASTRUCTURE, UI, READER, MCP, OPDS, WEB,
+                        "javafx..", "java.sql..", "javax.sql..", "org.springframework..", "org.apache.lucene.."
+                )
+                .check(CLASSES);
+    }
+
+    @Test
+    void calibrePluginDependsOnlyOnPluginApiAndStableProductContracts() {
+        noClasses()
+                .that().resideInAnyPackage(CALIBRE_PLUGIN)
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        EPUB_OPTIMIZER, ORGANIZER, CONVERTER_TOOLCHAIN, PLUGIN_SAMPLES,
+                        INFRASTRUCTURE, UI, READER, MCP, OPDS, WEB,
+                        "javafx..", "java.sql..", "javax.sql..", "org.springframework..", "org.apache.lucene.."
                 )
                 .check(CLASSES);
     }
@@ -194,6 +283,9 @@ class LayerArchitectureTest {
                         UI,
                         READER,
                         OPDS,
+                        PLUGIN,
+                        PLUGIN_SAMPLES,
+                        CALIBRE_PLUGIN,
                         "javafx.."
                 )
                 .check(CLASSES);
@@ -205,10 +297,42 @@ class LayerArchitectureTest {
                 .that().resideInAnyPackage(UI)
                 .should().dependOnClassesThat().resideInAnyPackage(
                         INFRASTRUCTURE,
+                        CONVERTER_TOOLCHAIN,
+                        PLUGIN_SAMPLES,
+                        CALIBRE_PLUGIN,
                         OPDS,
                         "java.sql..",
                         "javax.sql..",
                         "org.springframework.jdbc..",
+                        "org.apache.lucene.."
+                )
+                .check(CLASSES);
+    }
+
+    @Test
+    void updaterIsStandaloneJdkOnlyHelper() {
+        noClasses()
+                .that().resideInAnyPackage(UPDATER)
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        SHARED,
+                        DOMAIN,
+                        APPLICATION,
+                        EPUB_OPTIMIZER,
+                        ORGANIZER,
+                        CONVERTER_TOOLCHAIN,
+                        PLUGIN,
+                        PLUGIN_SAMPLES,
+                        CALIBRE_PLUGIN,
+                        INFRASTRUCTURE,
+                        UI,
+                        READER,
+                        MCP,
+                        OPDS,
+                        WEB,
+                        "org.springframework..",
+                        "javafx..",
+                        "java.sql..",
+                        "javax.sql..",
                         "org.apache.lucene.."
                 )
                 .check(CLASSES);
@@ -221,6 +345,12 @@ class LayerArchitectureTest {
                 .should().dependOnClassesThat().resideInAnyPackage(
                         DOMAIN,
                         APPLICATION,
+                        EPUB_OPTIMIZER,
+                        ORGANIZER,
+                        CONVERTER_TOOLCHAIN,
+                        PLUGIN,
+                        PLUGIN_SAMPLES,
+                        CALIBRE_PLUGIN,
                         INFRASTRUCTURE,
                         UI,
                         MCP,
@@ -257,6 +387,12 @@ class LayerArchitectureTest {
                 .should().dependOnClassesThat().resideInAnyPackage(
                         DOMAIN,
                         APPLICATION,
+                        EPUB_OPTIMIZER,
+                        ORGANIZER,
+                        CONVERTER_TOOLCHAIN,
+                        PLUGIN,
+                        PLUGIN_SAMPLES,
+                        CALIBRE_PLUGIN,
                         INFRASTRUCTURE,
                         UI,
                         READER,
@@ -291,6 +427,12 @@ class LayerArchitectureTest {
         noClasses()
                 .that().resideInAnyPackage(OPDS)
                 .should().dependOnClassesThat().resideInAnyPackage(
+                        EPUB_OPTIMIZER,
+                        ORGANIZER,
+                        CONVERTER_TOOLCHAIN,
+                        PLUGIN,
+                        PLUGIN_SAMPLES,
+                        CALIBRE_PLUGIN,
                         INFRASTRUCTURE,
                         UI,
                         READER,

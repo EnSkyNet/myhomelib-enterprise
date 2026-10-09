@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.search;
 
+import com.myhomelibcorp.application.search.SearchIndexUnavailableException;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.lucene.analysis.Analyzer;
@@ -22,6 +23,8 @@ import java.nio.file.Path;
 @Slf4j
 final class LuceneIndexWriterFactory {
     private static final int LOCK_ATTEMPTS = 5;
+    static final double RAM_BUFFER_SIZE_MB = 256.0;
+    static final int MAX_BUFFERED_DOCS = 10_000;
 
     private LuceneIndexWriterFactory() { }
 
@@ -53,7 +56,11 @@ final class LuceneIndexWriterFactory {
                 throw new IllegalStateException("Cannot open Lucene index", e);
             }
         }
-        throw new IllegalStateException("Cannot obtain Lucene index lock after " + LOCK_ATTEMPTS + " attempts", lastLock);
+        try { directory.close(); } catch (IOException closeFailure) {
+            if (lastLock != null) lastLock.addSuppressed(closeFailure);
+        }
+        throw new SearchIndexUnavailableException(
+                "Пошуковий індекс зайнятий іншим процесом; бібліотеку можна використовувати без пошуку", lastLock);
     }
 
     private static OpenedIndex openResources(Directory directory, Analyzer analyzer, IndexWriterConfig.OpenMode mode)
@@ -71,8 +78,8 @@ final class LuceneIndexWriterFactory {
     static IndexWriterConfig config(Analyzer analyzer, IndexWriterConfig.OpenMode mode) {
         IndexWriterConfig config = new IndexWriterConfig(analyzer);
         config.setOpenMode(mode);
-        config.setRAMBufferSizeMB(512.0);
-        config.setMaxBufferedDocs(10_000);
+        config.setRAMBufferSizeMB(RAM_BUFFER_SIZE_MB);
+        config.setMaxBufferedDocs(MAX_BUFFERED_DOCS);
         config.setCommitOnClose(false);
         config.setUseCompoundFile(false);
         TieredMergePolicy mergePolicy = new TieredMergePolicy();

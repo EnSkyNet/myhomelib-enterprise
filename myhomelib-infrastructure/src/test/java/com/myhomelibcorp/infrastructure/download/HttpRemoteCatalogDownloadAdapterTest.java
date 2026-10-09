@@ -123,6 +123,61 @@ class HttpRemoteCatalogDownloadAdapterTest {
 
 
     @Test
+    void malformedResumeRangeFallsBackToFreshCatalogDownload() throws Exception {
+        byte[] archive = validInpx("20260927");
+        int prefix = Math.min(32, archive.length / 2);
+        AtomicInteger requests = new AtomicInteger();
+        AtomicReference<String> firstRange = new AtomicReference<>();
+        AtomicReference<String> secondRange = new AtomicReference<>();
+        server = start(exchange -> {
+            int request = requests.incrementAndGet();
+            if (request == 1) {
+                firstRange.set(exchange.getRequestHeaders().getFirst("Range"));
+                exchange.getResponseHeaders().add("Content-Type", "application/zip");
+                exchange.getResponseHeaders().add("ETag", "\"catalog-v9\"");
+                exchange.getResponseHeaders().add("Content-Range", "bytes 0-" + (archive.length - 1) + "/" + archive.length);
+                respond(exchange, 206, archive);
+                return;
+            }
+            secondRange.set(exchange.getRequestHeaders().getFirst("Range"));
+            exchange.getResponseHeaders().add("Content-Type", "application/zip");
+            exchange.getResponseHeaders().add("ETag", "\"catalog-v9\"");
+            respond(exchange, 200, archive);
+        });
+
+        String url = baseUrl() + "catalog.inpx";
+        Path part = temp.resolve("cache/catalog-updates/catalog-" + shortHash(url) + ".inpx.part");
+        Files.createDirectories(part.getParent());
+        Files.write(part, Arrays.copyOf(archive, prefix));
+        writeResumeMetadata(part.resolveSibling(part.getFileName() + ".meta"), url, "\"catalog-v9\"");
+
+        ApplicationSettingsPort fastRetrySettings = new ApplicationSettingsPort() {
+            @Override public String get(String key, String defaultValue) { return defaultValue; }
+            @Override public void put(String key, String value) { }
+            @Override public void remove(String key) { }
+            @Override public Map<String, String> findByPrefix(String prefix) { return Map.of(); }
+            @Override public int getInt(String key, int defaultValue) {
+                return switch (key) {
+                    case "online.retryBaseDelayMs" -> 100;
+                    case "online.retryJitterPercent" -> 0;
+                    default -> defaultValue;
+                };
+            }
+        };
+        Collection collection = new Collection("c1", "Online", temp, null, 1, null, null, url, "");
+
+        RemoteCatalogUpdatePlan plan = new HttpRemoteCatalogDownloadAdapter(fastRetrySettings).downloadUpdates(
+                collection, url, "", new AtomicBoolean(false), ignored -> {});
+
+        assertThat(requests.get()).isEqualTo(2);
+        assertThat(firstRange.get()).isEqualTo("bytes=" + prefix + "-");
+        assertThat(secondRange.get()).isNull();
+        assertThat(plan.packages()).hasSize(1);
+        assertThat(Files.readAllBytes(plan.packages().getFirst().file())).isEqualTo(archive);
+        assertThat(part).doesNotExist();
+    }
+
+    @Test
     void refusesRegularFileReplacementBetweenCatalogResumeSnapshotAndAppend() throws Exception {
         byte[] archive = validInpx("20260921");
         int prefix = Math.min(32, archive.length / 2);
@@ -157,6 +212,53 @@ class HttpRemoteCatalogDownloadAdapterTest {
         assertThat(requests.get()).isGreaterThanOrEqualTo(1);
         assertThat(Files.readString(part)).isEqualTo("FOREIGN-CATALOG");
     }
+
+    @Test
+    void retriesFullCatalogDownloadWhenTruncatedResponseHasNoResumeValidator() throws Exception {
+        byte[] archive = validInpx("20260928");
+        int prefix = Math.max(1, archive.length / 3);
+        AtomicInteger requests = new AtomicInteger();
+        AtomicReference<String> retryRange = new AtomicReference<>();
+        AtomicReference<String> retryIfRange = new AtomicReference<>();
+        server = start(exchange -> {
+            int request = requests.incrementAndGet();
+            if (request == 1) {
+                exchange.getResponseHeaders().add("Content-Type", "application/zip");
+                exchange.sendResponseHeaders(200, archive.length);
+                exchange.getResponseBody().write(archive, 0, prefix);
+                return;
+            }
+            retryRange.set(exchange.getRequestHeaders().getFirst("Range"));
+            retryIfRange.set(exchange.getRequestHeaders().getFirst("If-Range"));
+            exchange.getResponseHeaders().add("Content-Type", "application/zip");
+            respond(exchange, 200, archive);
+        });
+
+        ApplicationSettingsPort fastRetrySettings = new ApplicationSettingsPort() {
+            @Override public String get(String key, String defaultValue) { return defaultValue; }
+            @Override public void put(String key, String value) { }
+            @Override public void remove(String key) { }
+            @Override public Map<String, String> findByPrefix(String prefix) { return Map.of(); }
+            @Override public int getInt(String key, int defaultValue) {
+                return switch (key) {
+                    case "online.retryBaseDelayMs" -> 1;
+                    case "online.retryJitterPercent" -> 0;
+                    default -> defaultValue;
+                };
+            }
+        };
+        String url = baseUrl() + "catalog.inpx";
+        Collection collection = new Collection("c1", "Online", temp, null, 1, null, null, url, "");
+
+        RemoteCatalogUpdatePlan plan = new HttpRemoteCatalogDownloadAdapter(fastRetrySettings).downloadUpdates(
+                collection, url, "", new AtomicBoolean(false), ignored -> {});
+
+        assertThat(requests.get()).isEqualTo(2);
+        assertThat(retryRange.get()).isNull();
+        assertThat(retryIfRange.get()).isNull();
+        assertThat(Files.readAllBytes(plan.packages().getFirst().file())).isEqualTo(archive);
+    }
+
 
     @Test
     void stalePartialWithoutValidatorIsDiscardedInsteadOfBlindlyAppended() throws Exception {

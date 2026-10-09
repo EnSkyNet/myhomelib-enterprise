@@ -1,6 +1,9 @@
 package com.myhomelibcorp.reader.render.comic;
 
 import com.myhomelibcorp.reader.api.ReaderPosition;
+import com.myhomelibcorp.reader.render.api.PagedReaderPosition;
+import com.myhomelibcorp.reader.render.javafx.ArgbFxImageSupport;
+import com.myhomelibcorp.reader.render.support.PagedRenderCoordinator;
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
 import javafx.collections.FXCollections;
@@ -18,8 +21,6 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.image.ImageView;
-import javafx.scene.image.PixelFormat;
-import javafx.scene.image.WritableImage;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
@@ -29,29 +30,15 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Future;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
 /** JavaFX CBZ/CBR reader with lazy pages, spread mode, manga RTL and thumbnails. */
 public final class ComicReaderView extends BorderPane implements AutoCloseable {
     private final Function<String, String> text;
-    private final ThreadPoolExecutor renderExecutor = new ThreadPoolExecutor(
-            1, 1, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), r -> {
-                Thread thread = new Thread(r, "comic-reader-render");
-                thread.setDaemon(true);
-                return thread;
-            });
-    private final AtomicLong generation = new AtomicLong();
-    private final AtomicLong singleRenderGeneration = new AtomicLong();
-    private final java.util.Set<Future<?>> renderTasks = ConcurrentHashMap.newKeySet();
+    private final PagedRenderCoordinator renderCoordinator =
+            new PagedRenderCoordinator("comic-reader-render");
 
     private final Button back = new Button();
     private final Button previous = new Button("‹");
@@ -84,7 +71,6 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
     private FitMode fitMode = FitMode.PAGE;
     private boolean dualPageMode;
     private boolean rtlMode;
-    private Future<?> singleRenderTask;
     private Consumer<ReaderPosition> onPositionChanged = ignored -> { };
     private Runnable onBack = () -> { };
     private Runnable onAddBookmark = () -> { };
@@ -196,7 +182,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
         }
         closeDocument();
         session = prepared;
-        pageIndex = ComicPagePosition.restorePageIndex(savedPosition, prepared.pageCount());
+        pageIndex = PagedReaderPosition.restorePageIndex(savedPosition, prepared.pageCount());
         rebuildPageItems();
         updateState();
         renderSingleSpread();
@@ -206,13 +192,13 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
     public boolean isOpen() { return session != null; }
     public int pageCount() { return session == null ? 0 : session.pageCount(); }
     public int currentPageIndex() { return pageIndex; }
-    public ReaderPosition currentPosition() { return ComicPagePosition.toReaderPosition(pageIndex); }
-    public double progressPercent() { return ComicPagePosition.progressPercent(pageIndex, pageCount()); }
+    public ReaderPosition currentPosition() { return PagedReaderPosition.toReaderPosition(pageIndex); }
+    public double progressPercent() { return PagedReaderPosition.progressPercent(pageIndex, pageCount()); }
 
     public void goToPosition(ReaderPosition position) {
         ComicDocumentSession current = session;
         if (current == null) return;
-        goToPage(ComicPagePosition.restorePageIndex(position, current.pageCount()));
+        goToPage(PagedReaderPosition.restorePageIndex(position, current.pageCount()));
     }
 
     public void goToPage(int requested) {
@@ -265,9 +251,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
     }
 
     private void switchContinuous(boolean enabled) {
-        generation.incrementAndGet();
-        cancelOutstandingRenders();
-        cancelSingleRender();
+        renderCoordinator.invalidate();
         rebuildPageItems();
         if (enabled) {
             setCenter(continuousList);
@@ -331,10 +315,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
 
     private void rerenderVisible() {
         if (session == null) return;
-        generation.incrementAndGet();
-        singleRenderGeneration.incrementAndGet();
-        cancelOutstandingRenders();
-        cancelSingleRender();
+        renderCoordinator.invalidate();
         if (continuous.isSelected()) {
             continuousList.refresh();
             thumbnails.refresh();
@@ -347,18 +328,16 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
     private void renderSingleSpread() {
         ComicDocumentSession current = session;
         if (current == null || continuous.isSelected()) return;
-        cancelSingleRender();
-        long configToken = generation.get();
-        long token = singleRenderGeneration.incrementAndGet();
+        PagedRenderCoordinator.SingleRenderToken token = renderCoordinator.beginSingleRender();
         int start = spreadStart(pageIndex);
         List<Integer> pages = spreadPages(start);
         progress.setVisible(true);
         progress.setManaged(true);
-        singleRenderTask = submitTrackedRender(() -> {
+        Future<?> task = renderCoordinator.submit(() -> {
             try {
                 List<ComicRenderedPage> rendered = renderPages(current, pages, false);
                 Platform.runLater(() -> {
-                    if (session != current || configToken != generation.get() || token != singleRenderGeneration.get()
+                    if (session != current || !renderCoordinator.isCurrent(token)
                             || spreadStart(pageIndex) != start) return;
                     applySpread(spread, firstImage, secondImage, rendered, false);
                     progress.setVisible(false);
@@ -368,7 +347,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
                 Thread.currentThread().interrupt();
             } catch (Exception error) {
                 Platform.runLater(() -> {
-                    if (session == current && configToken == generation.get() && token == singleRenderGeneration.get()) {
+                    if (session == current && renderCoordinator.isCurrent(token)) {
                         progress.setVisible(false);
                         progress.setManaged(false);
                         onError.accept(error);
@@ -376,6 +355,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
                 });
             }
         });
+        renderCoordinator.trackSingle(task);
     }
 
     private Callback<ListView<Integer>, ListCell<Integer>> thumbnailCellFactory() {
@@ -397,14 +377,14 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
                 if (empty || page == null || session == null) { setGraphic(null); return; }
                 setGraphic(image);
                 ComicDocumentSession current = session;
-                long token = generation.get();
-                task = submitTrackedRender(() -> {
+                long token = renderCoordinator.generation();
+                task = renderCoordinator.submit(() -> {
                     try {
                         ComicRenderedPage rendered = current.render(page, 128, 180);
                         Platform.runLater(() -> {
-                            if (session != current || token != generation.get() || requested != page
+                            if (session != current || !renderCoordinator.isCurrent(token) || requested != page
                                     || !Objects.equals(getItem(), page)) return;
-                            image.setImage(toFxImage(rendered));
+                            image.setImage(ArgbFxImageSupport.toWritableImage(rendered));
                             image.setFitWidth(128);
                             image.setFitHeight(180);
                         });
@@ -412,7 +392,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
                         Thread.currentThread().interrupt();
                     } catch (Exception error) {
                         Platform.runLater(() -> {
-                            if (session == current && token == generation.get() && requested == page) {
+                            if (session == current && renderCoordinator.isCurrent(token) && requested == page) {
                                 setGraphic(null);
                                 setContentDisplay(ContentDisplay.TEXT_ONLY);
                                 setText(t("ui.reader.comic.render_error"));
@@ -446,13 +426,13 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
                 setGraphic(box);
                 setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
                 ComicDocumentSession current = session;
-                long token = generation.get();
+                long token = renderCoordinator.generation();
                 List<Integer> pages = spreadPages(start);
-                task = submitTrackedRender(() -> {
+                task = renderCoordinator.submit(() -> {
                     try {
                         List<ComicRenderedPage> rendered = renderPages(current, pages, false);
                         Platform.runLater(() -> {
-                            if (session != current || token != generation.get() || requestedStart != start
+                            if (session != current || !renderCoordinator.isCurrent(token) || requestedStart != start
                                     || !Objects.equals(getItem(), start)) return;
                             applySpread(box, first, second, rendered, false);
                         });
@@ -460,7 +440,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
                         Thread.currentThread().interrupt();
                     } catch (Exception error) {
                         Platform.runLater(() -> {
-                            if (session == current && token == generation.get() && requestedStart == start) {
+                            if (session == current && renderCoordinator.isCurrent(token) && requestedStart == start) {
                                 setGraphic(null);
                                 setContentDisplay(ContentDisplay.TEXT_ONLY);
                                 setText(t("ui.reader.comic.render_error"));
@@ -500,10 +480,10 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
             box.getChildren().clear();
             return;
         }
-        first.setImage(toFxImage(rendered.getFirst()));
+        first.setImage(ArgbFxImageSupport.toWritableImage(rendered.getFirst()));
         configureDisplay(first, rendered.getFirst(), thumbnail);
         if (rendered.size() > 1) {
-            second.setImage(toFxImage(rendered.get(1)));
+            second.setImage(ArgbFxImageSupport.toWritableImage(rendered.get(1)));
             configureDisplay(second, rendered.get(1), thumbnail);
             if (rtlMode) box.getChildren().setAll(second, first);
             else box.getChildren().setAll(first, second);
@@ -547,47 +527,8 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
         zoomReset.setText(Math.round(zoom * 100) + "%");
     }
 
-    private Future<?> submitTrackedRender(Runnable action) {
-        renderExecutor.purge();
-        AtomicReference<Future<?>> handle = new AtomicReference<>();
-        try {
-            Future<?> submitted = renderExecutor.submit(() -> {
-                try {
-                    action.run();
-                } finally {
-                    Future<?> completed = handle.get();
-                    if (completed != null) renderTasks.remove(completed);
-                }
-            });
-            handle.set(submitted);
-            renderTasks.add(submitted);
-            if (submitted.isDone()) renderTasks.remove(submitted);
-            return submitted;
-        } catch (RejectedExecutionException error) {
-            throw error;
-        }
-    }
-
-    private void cancelOutstandingRenders() {
-        for (Future<?> task : List.copyOf(renderTasks)) {
-            if (!task.isDone()) task.cancel(true);
-        }
-        renderTasks.removeIf(Future::isDone);
-        renderExecutor.purge();
-    }
-
-    private void cancelSingleRender() {
-        Future<?> task = singleRenderTask;
-        singleRenderTask = null;
-        if (task != null && !task.isDone()) task.cancel(true);
-        renderExecutor.purge();
-    }
-
     public void closeDocument() {
-        generation.incrementAndGet();
-        singleRenderGeneration.incrementAndGet();
-        cancelOutstandingRenders();
-        cancelSingleRender();
+        renderCoordinator.invalidate();
         ComicDocumentSession current = session;
         session = null;
         progress.setVisible(false);
@@ -602,9 +543,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
     }
 
     private void closeSessionAfterPendingRenders(ComicDocumentSession current) {
-        try {
-            renderExecutor.submit(current::close);
-        } catch (RejectedExecutionException executorClosed) {
+        if (!renderCoordinator.enqueueAfterPending(current::close)) {
             current.close();
         }
     }
@@ -621,14 +560,6 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
         return image;
     }
 
-    private static WritableImage toFxImage(ComicRenderedPage rendered) {
-        int width = rendered.width();
-        int height = rendered.height();
-        WritableImage image = new WritableImage(width, height);
-        var writer = image.getPixelWriter();
-        writer.setPixels(0, 0, width, height, PixelFormat.getIntArgbInstance(), rendered.argb(), 0, width);
-        return image;
-    }
 
     private static String message(Throwable error) {
         if (error == null) return "";
@@ -641,7 +572,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
         if (closed) return;
         closed = true;
         closeDocument();
-        renderExecutor.shutdown();
+        renderCoordinator.close();
     }
 
     private enum FitMode { NONE, WIDTH, PAGE }

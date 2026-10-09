@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.backup;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -49,12 +49,13 @@ class VersionedUserDataTransferAdapterTest {
         sourceSettings.put("filter.global.language", "uk");
         Files.writeString(tempDir.resolve("appdata/config/reader-preferences.json"), "{\"fontFamily\":\"Serif\"}");
         source.jdbc().update("INSERT INTO reader_book_preferences(book_id,preferences_json) VALUES(?,?)", "old-1", "{\"fontFamily\":\"Mono\"}");
+        source.jdbc().update("INSERT INTO reader_preference_overrides(scope_type,scope_key,preferences_json) VALUES('BOOK','old-1','{\"fontFamily\":\"Mono\"}'),('SERIES','series a','{\"theme\":\"dark\"}'),('FORMAT','epub','{\"fontFamily\":\"Serif\"}')");
 
         Path exported = tempDir.resolve("user-data.json");
         VersionedUserDataTransferAdapter sourceAdapter = new VersionedUserDataTransferAdapter(manager(source), sourceSettings, mapper);
         var exportResult = sourceAdapter.exportTo(exported);
-        assertThat(exportResult.schemaVersion()).isEqualTo(4);
-        assertThat(Files.readString(exported)).contains("\"libId\" : \"L100\"").contains("\"schemaVersion\" : 4");
+        assertThat(exportResult.schemaVersion()).isEqualTo(6);
+        assertThat(Files.readString(exported)).contains("\"libId\" : \"L100\"").contains("\"schemaVersion\" : 6");
 
         var manifest = mapper.readTree(exported.toFile());
         assertThat(manifest.path("bookState").size()).isEqualTo(1);
@@ -66,6 +67,10 @@ class VersionedUserDataTransferAdapterTest {
         assertThat(manifest.path("groupMemberships").size()).isEqualTo(1);
         assertThat(manifest.path("savedSearches").size()).isEqualTo(1);
         assertThat(manifest.path("readerSettings").path("perBook").size()).isEqualTo(1);
+        assertThat(manifest.path("readerSettings").path("scoped").size()).isEqualTo(3);
+        assertThat(manifest.path("readerSettings").path("scoped").toString()).contains("L100").contains("SERIES").contains("FORMAT");
+        assertThat(manifest.path("readingLists").size()).isZero();
+        assertThat(manifest.path("readingListItems").size()).isZero();
 
         // Simulate a freshly imported catalogue: the internal UUID/id changed, LibID did not.
         Db target = db(tempDir.resolve("target.db"));
@@ -77,7 +82,7 @@ class VersionedUserDataTransferAdapterTest {
         VersionedUserDataTransferAdapter targetAdapter = new VersionedUserDataTransferAdapter(manager(target), targetSettings, mapper);
         var result = targetAdapter.restoreFrom(exported);
 
-        assertThat(result.sourceSchemaVersion()).isEqualTo(4);
+        assertThat(result.sourceSchemaVersion()).isEqualTo(6);
         assertThat(result.unmatchedBooks()).isZero();
         assertThat(target.jdbc().queryForMap("SELECT rate,progress,review FROM books WHERE id='new-77'"))
                 .containsEntry("rate", 8).containsEntry("progress", 42).containsEntry("review", "great");
@@ -90,11 +95,100 @@ class VersionedUserDataTransferAdapterTest {
         String perBook = target.jdbc().queryForObject(
                 "SELECT preferences_json FROM reader_book_preferences WHERE book_id='new-77'", String.class);
         assertThat(perBook).contains("Mono");
+        assertThat(target.jdbc().queryForObject(
+                "SELECT preferences_json FROM reader_preference_overrides WHERE scope_type='BOOK' AND scope_key='new-77'", String.class)).contains("Mono");
+        assertThat(target.jdbc().queryForObject(
+                "SELECT preferences_json FROM reader_preference_overrides WHERE scope_type='SERIES' AND scope_key='series a'", String.class)).contains("dark");
+        assertThat(target.jdbc().queryForObject(
+                "SELECT preferences_json FROM reader_preference_overrides WHERE scope_type='FORMAT' AND scope_key='epub'", String.class)).contains("Serif");
 
         // Repeated restore is idempotent for singleton/membership/bookmark data.
         targetAdapter.restoreFrom(exported);
         assertThat(target.jdbc().queryForObject("SELECT COUNT(*) FROM bookmarks WHERE id='bm1'", Integer.class)).isEqualTo(1);
         assertThat(target.jdbc().queryForObject("SELECT COUNT(*) FROM book_groups WHERE book_id='new-77'", Integer.class)).isEqualTo(1);
+    }
+
+
+    @Test
+    void restoreSanitizesOutOfRangeUserProgressState() throws Exception {
+        System.setProperty("myhomelib.dataDir", tempDir.resolve("appdata-sanitized-restore").toString());
+        Db target = db(tempDir.resolve("target-sanitized-restore.db"));
+        createSchema(target.jdbc());
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('new-safe','SAFE-1',0,0,NULL)");
+
+        String identity = "\"libId\":\"SAFE-1\",\"sourceBookId\":\"old-safe\"";
+        String json = portableWithBookState(
+                "{" + identity + ",\"rate\":3,\"progress\":150,\"review\":\"x\"}")
+                .replace("\"readingProgress\":[]", "\"readingProgress\":[{" + identity
+                        + ",\"paragraphId\":\"p\",\"charOffset\":-9,\"percent\":-17.5,"
+                        + "\"updatedAt\":\"2026-10-07T00:00:00Z\",\"paragraphIndex\":-3}]")
+                .replace("\"readingStats\":[]", "\"readingStats\":[{" + identity
+                        + ",\"firstReadAt\":\"2026-10-01T00:00:00Z\","
+                        + "\"lastReadAt\":\"2026-10-07T00:00:00Z\",\"totalReadingSeconds\":-100,"
+                        + "\"readingSessions\":-4,\"startPercent\":-5,\"endPercent\":120,"
+                        + "\"currentPercent\":999}]")
+                .replace("\"bookmarks\":[]", "\"bookmarks\":[{" + identity
+                        + ",\"id\":\"bm-safe\",\"paragraphId\":\"p\",\"charOffset\":-8,"
+                        + "\"position\":150.0,\"createdAt\":\"2026-10-07T00:00:00Z\"}]");
+        Path manifest = tempDir.resolve("sanitized-restore.json");
+        Files.writeString(manifest, json);
+
+        VersionedUserDataTransferAdapter adapter =
+                new VersionedUserDataTransferAdapter(manager(target), new MapSettings(), mapper);
+        adapter.restoreFrom(manifest);
+
+        assertThat(target.jdbc().queryForObject("SELECT progress FROM books WHERE id='new-safe'", Integer.class))
+                .isEqualTo(100);
+        assertThat(target.jdbc().queryForMap("SELECT char_offset,percent,paragraph_index FROM reading_progress WHERE book_id='new-safe'"))
+                .containsEntry("char_offset", 0)
+                .containsEntry("percent", 0.0)
+                .containsEntry("paragraph_index", 0);
+        assertThat(target.jdbc().queryForMap("SELECT total_reading_seconds,reading_sessions,start_percent,end_percent,current_percent FROM reading_stats WHERE book_id='new-safe'"))
+                .containsEntry("total_reading_seconds", 0)
+                .containsEntry("reading_sessions", 0)
+                .containsEntry("start_percent", 0)
+                .containsEntry("end_percent", 100)
+                .containsEntry("current_percent", 100);
+        assertThat(target.jdbc().queryForMap("SELECT char_offset,position FROM bookmarks WHERE id='bm-safe'"))
+                .containsEntry("char_offset", 0)
+                .containsEntry("position", 100.0);
+    }
+
+
+    @Test
+    void readingListsRoundTripPreservesMembershipOrderAndNeverFuzzyMatchesUnresolvedBook() throws Exception {
+        System.setProperty("myhomelib.dataDir", tempDir.resolve("appdata-reading-lists").toString());
+        Files.createDirectories(tempDir.resolve("appdata-reading-lists/config"));
+        Db source = db(tempDir.resolve("source-reading-lists.db"));
+        createSchema(source.jdbc());
+        source.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('old-1','RL-1',0,0,NULL),('old-2','RL-2',0,0,NULL),('old-3','RL-3',0,0,NULL)");
+        source.jdbc().update("INSERT INTO reading_lists(id,name,description,created_at,updated_at) VALUES('list-1','Queue','Ordered','2026-10-01 09:00:00.000','2026-10-01 09:00:00.000')");
+        source.jdbc().update("INSERT INTO reading_list_items(list_id,book_id,position,added_at) VALUES('list-1','old-1',0,'2026-10-01 09:01:00.000'),('list-1','old-2',1,'2026-10-01 09:02:00.000'),('list-1','old-3',2,'2026-10-01 09:03:00.000')");
+
+        Path manifestFile = tempDir.resolve("reading-lists.json");
+        VersionedUserDataTransferAdapter sourceAdapter = new VersionedUserDataTransferAdapter(manager(source), new MapSettings(), mapper);
+        sourceAdapter.exportTo(manifestFile);
+        var manifest = mapper.readTree(manifestFile.toFile());
+        assertThat(manifest.path("readingLists").size()).isEqualTo(1);
+        assertThat(manifest.path("readingListItems").size()).isEqualTo(3);
+        assertThat(manifest.path("readingListItems").get(1).path("libId").asString()).isEqualTo("RL-2");
+
+        Db target = db(tempDir.resolve("target-reading-lists.db"));
+        createSchema(target.jdbc());
+        // RL-2 intentionally does not exist. A same-title/fuzzy replacement is impossible by contract.
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('new-1','RL-1',0,0,NULL),('new-3','RL-3',0,0,NULL),('unrelated','OTHER',0,0,NULL)");
+        VersionedUserDataTransferAdapter targetAdapter = new VersionedUserDataTransferAdapter(manager(target), new MapSettings(), mapper);
+
+        var restored = targetAdapter.restoreFrom(manifestFile);
+
+        assertThat(restored.sourceSchemaVersion()).isEqualTo(6);
+        assertThat(restored.unmatchedBooks()).isGreaterThanOrEqualTo(1);
+        assertThat(target.jdbc().queryForObject("SELECT name FROM reading_lists WHERE id='list-1'", String.class)).isEqualTo("Queue");
+        assertThat(target.jdbc().queryForList("SELECT book_id FROM reading_list_items WHERE list_id='list-1' ORDER BY position", String.class))
+                .containsExactly("new-1", "new-3");
+        assertThat(target.jdbc().queryForList("SELECT position FROM reading_list_items WHERE list_id='list-1' ORDER BY position", Integer.class))
+                .containsExactly(0, 1);
+        assertThat(target.jdbc().queryForObject("SELECT COUNT(*) FROM reading_list_items WHERE book_id='unrelated'", Integer.class)).isZero();
     }
 
 
@@ -392,9 +486,31 @@ class VersionedUserDataTransferAdapterTest {
         VersionedUserDataTransferAdapter adapter = new VersionedUserDataTransferAdapter(manager(target), new MapSettings(), mapper);
         var result = adapter.restoreFrom(file);
         assertThat(result.sourceSchemaVersion()).isEqualTo(1);
-        assertThat(result.effectiveSchemaVersion()).isEqualTo(4);
+        assertThat(result.effectiveSchemaVersion()).isEqualTo(6);
         assertThat(target.jdbc().queryForObject("SELECT rate FROM books WHERE id='new'", Integer.class)).isEqualTo(7);
         assertThat(target.jdbc().queryForObject("SELECT paragraph_id FROM reading_progress WHERE book_id='new'", String.class)).isEqualTo("p");
+    }
+
+    @Test
+    void restoreTruncationNeverLeavesDanglingHighSurrogate() throws Exception {
+        System.setProperty("myhomelib.dataDir", tempDir.resolve("appdata-unicode-truncate").toString());
+        Db target = db(tempDir.resolve("target-unicode-truncate.db"));
+        createSchema(target.jdbc());
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('new','UNICODE',0,0,NULL)");
+
+        String review = "a".repeat(9_999) + "\uD83D\uDE00" + "tail";
+        String row = "{\"libId\":\"UNICODE\",\"sourceBookId\":\"new\",\"rate\":0,\"progress\":0,\"review\":"
+                + mapper.writeValueAsString(review) + "}";
+        Path manifest = tempDir.resolve("unicode-truncate.json");
+        Files.writeString(manifest, portableWithBookState(row));
+
+        VersionedUserDataTransferAdapter adapter =
+                new VersionedUserDataTransferAdapter(manager(target), new MapSettings(), mapper);
+        adapter.restoreFrom(manifest);
+
+        String restored = target.jdbc().queryForObject("SELECT review FROM books WHERE id='new'", String.class);
+        assertThat(restored).isEqualTo("a".repeat(9_999));
+        assertThat(Character.isHighSurrogate(restored.charAt(restored.length() - 1))).isFalse();
     }
 
     @Test
@@ -460,6 +576,9 @@ class VersionedUserDataTransferAdapterTest {
         j.execute("CREATE TABLE saved_searches(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,query TEXT NOT NULL,filters TEXT,created_at TEXT NOT NULL,last_used TEXT NOT NULL,use_count INTEGER DEFAULT 0)");
         j.execute("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT)");
         j.execute("CREATE TABLE reader_book_preferences(book_id TEXT PRIMARY KEY,preferences_json TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+        j.execute("CREATE TABLE reader_preference_overrides(scope_type TEXT NOT NULL,scope_key TEXT NOT NULL,preferences_json TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(scope_type,scope_key))");
+        j.execute("CREATE TABLE reading_lists(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,description TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)");
+        j.execute("CREATE TABLE reading_list_items(list_id TEXT NOT NULL,book_id TEXT NOT NULL,position INTEGER NOT NULL,added_at TEXT NOT NULL,PRIMARY KEY(list_id,book_id),UNIQUE(list_id,position))");
     }
 
     private record Db(SQLiteDataSource dataSource, JdbcTemplate jdbc) { }

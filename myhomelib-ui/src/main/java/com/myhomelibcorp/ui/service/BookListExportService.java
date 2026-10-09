@@ -19,11 +19,14 @@ public class BookListExportService {
     private final ApplicationState state;
     private final DialogService dialogs;
     private final UiBackgroundExecutor executor;
+    private final FileChooserService fileChooserService;
 
-    public BookListExportService(ApplicationState state, DialogService dialogs, UiBackgroundExecutor executor) {
+    public BookListExportService(ApplicationState state, DialogService dialogs, UiBackgroundExecutor executor,
+                                 FileChooserService fileChooserService) {
         this.state = state;
         this.dialogs = dialogs;
         this.executor = executor;
+        this.fileChooserService = fileChooserService;
     }
 
     public void export(Window owner, String format) {
@@ -35,11 +38,8 @@ public class BookListExportService {
             return;
         }
         String f = format.toLowerCase(Locale.ROOT);
-        FileChooser fc = new FileChooser();
-        fc.setTitle(UiText.text("ui.main.fxml.export_current_list"));
-        fc.setInitialFileName("books." + f);
-        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter(f.toUpperCase(Locale.ROOT), "*." + f));
-        File file = fc.showSaveDialog(owner);
+        File file = fileChooserService.chooseFileToSave(owner, UiText.text("ui.main.fxml.export_current_list"),
+                "books." + f, List.of(new FileChooser.ExtensionFilter(f.toUpperCase(Locale.ROOT), "*." + f)));
         if (file == null) return;
 
         executor.submit(() -> {

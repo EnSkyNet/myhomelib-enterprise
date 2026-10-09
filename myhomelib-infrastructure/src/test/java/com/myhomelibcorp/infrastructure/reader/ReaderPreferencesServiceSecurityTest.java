@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.reader;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.domain.model.reader.ReaderPreferences;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ReaderPreferencesServiceSecurityTest {
     @TempDir Path tempDir;
@@ -31,8 +32,10 @@ class ReaderPreferencesServiceSecurityTest {
             ReaderPreferencesService service = new ReaderPreferencesService(mapper, new ReaderPreferencesJsonCodec(mapper));
 
             assertThat(service.loadPreferences()).isEqualTo(ReaderPreferences.builder().build());
-            service.savePreferences(ReaderPreferences.builder().theme("dark").build());
-            service.resetPreferences();
+            assertThatThrownBy(() -> service.savePreferences(ReaderPreferences.builder().theme("dark").build()))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(service::resetPreferences)
+                    .isInstanceOf(IllegalStateException.class);
 
             assertThat(Files.readString(outside, StandardCharsets.UTF_8)).isEqualTo("FOREIGN");
             assertThat(Files.isSymbolicLink(preferences)).isTrue();
@@ -56,7 +59,8 @@ class ReaderPreferencesServiceSecurityTest {
             ReaderPreferencesService service = new ReaderPreferencesService(mapper, new ReaderPreferencesJsonCodec(mapper));
 
             assertThat(service.loadPreferences()).isEqualTo(ReaderPreferences.builder().build());
-            service.savePreferences(ReaderPreferences.builder().theme("light").build());
+            assertThatThrownBy(() -> service.savePreferences(ReaderPreferences.builder().theme("light").build()))
+                    .isInstanceOf(IllegalStateException.class);
 
             assertThat(Files.readString(preferences, StandardCharsets.UTF_8)).isEqualTo(corrupt);
         } finally {

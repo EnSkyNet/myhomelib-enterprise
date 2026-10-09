@@ -7,6 +7,7 @@ empty file-backed database when Maven dependencies are not available yet.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import sqlite3
@@ -117,8 +118,79 @@ def packaging_checks() -> list[str]:
         errors.append("package-desktop.ps1: invalid jpackage option --win-per-user; use --win-per-user-install")
     portable_windows = (ROOT / "package-portable.ps1").read_text(encoding="utf-8")
     portable_unix = (ROOT / "package-portable.sh").read_text(encoding="utf-8")
+    prepare_windows = (ROOT / "tools/prepare-runtime-tools.ps1").read_text(encoding="utf-8")
+    smoke_runtime_windows = (ROOT / "tools/smoke-runtime-tools.ps1").read_text(encoding="utf-8")
+    release_windows = (ROOT / "release.ps1").read_text(encoding="utf-8")
+    package_desktop_unix = (ROOT / "package-desktop.sh").read_text(encoding="utf-8")
+    desktop_memory_options = ("-Xms32m", "-Xmx1024m", "-XX:MinHeapFreeRatio=10", "-XX:MaxHeapFreeRatio=20")
+    desktop_runtime_options = ("-Dfile.encoding=UTF-8", "-Dspring.profiles.active=prod")
+    for option in desktop_runtime_options:
+        if option not in package_desktop_unix:
+            errors.append(f"package-desktop.sh: missing desktop runtime option {option}")
+        if option not in windows_script:
+            errors.append(f"package-desktop.ps1: missing desktop runtime option {option}")
+    for option in desktop_memory_options:
+        if option not in package_desktop_unix:
+            errors.append(f"package-desktop.sh: missing desktop memory option {option}")
+        if option not in windows_script:
+            errors.append(f"package-desktop.ps1: missing desktop memory option {option}")
+    for script, label in ((package_desktop_unix, "package-desktop.sh"), (windows_script, "package-desktop.ps1")):
+        if "--add-modules" not in script:
+            errors.append(f"{label}: missing explicit jlink runtime module set")
+        for required_module in ("java.desktop", "java.net.http", "java.sql.rowset", "jdk.crypto.ec", "jdk.httpserver", "jdk.zipfs"):
+            if required_module not in script:
+                errors.append(f"{label}: runtime module set is missing {required_module}")
+        for dev_module in ("jdk.javadoc", "jdk.jshell", "jdk.jconsole", "jdk.jpackage", "jdk.jdeps"):
+            if dev_module in script:
+                errors.append(f"{label}: desktop runtime must not bundle development module {dev_module}")
+    release_unix = (ROOT / "release.sh").read_text(encoding="utf-8")
+    # Source ZIPs and copied worktrees may lose executable bits on helper scripts.
+    # Release orchestration must invoke non-top-level shell helpers through bash.
+    for contract, label in ((
+            "bash ./tools/invoke-maven.sh", "package-desktop.sh"), (
+            "bash ./tools/prepare-runtime-tools.sh", "package-desktop.sh"), (
+            "bash ./tools/invoke-maven.sh", "release.sh"), (
+            "bash ./tools/smoke-runtime-tools.sh", "release.sh")):
+        source = package_desktop_unix if label == "package-desktop.sh" else release_unix
+        if contract not in source:
+            errors.append(f"{label}: helper shell scripts must be launched through bash ({contract})")
+    if 'export MHL_REQUIRE_LIBMOBI=1' not in release_unix:
+        errors.append("release.sh: full release must require bundled libmobi runtime")
+    if '$env:MHL_REQUIRE_LIBMOBI = "1"' not in release_windows:
+        errors.append("release.ps1: full release must require bundled libmobi runtime")
+    if 'MHL_REQUIRE_LIBMOBI' not in prepare_windows or 'MHL_REQUIRE_LIBMOBI' not in smoke_runtime_windows:
+        errors.append("Windows runtime-tool scripts: missing strict/optional libmobi packaging contract")
+    for token in ("fbc-windows-amd64", "convert --to epub3", "reader-rich.fb2", "EPUB produced by packaged FBC failed EPUBCheck"):
+        if token not in smoke_runtime_windows:
+            errors.append(f"tools/smoke-runtime-tools.ps1: missing real packaged FBC conversion smoke token {token!r}")
+    if '$libmobiLicense' not in windows_script:
+        errors.append("package-desktop.ps1: bundled mobitool must be staged only with its license")
+    if 'MHL_REQUIRE_LIBMOBI' not in (ROOT / "tools/prepare-runtime-tools.sh").read_text(encoding="utf-8"):
+        errors.append("prepare-runtime-tools.sh: missing strict/optional libmobi packaging contract")
+    if '[[ -x "tools/converters/libmobi/mobitool" ]]' not in package_desktop_unix:
+        errors.append("package-desktop.sh: optional bundled mobitool must be staged conditionally")
+
     if "myhomelib2.ini" not in portable_windows:
         errors.append("package-portable.ps1: portable archive must include myhomelib2.ini beside launcher")
+    for compatibility_launcher in ("Start-MyHomeLib.cmd", "MyHomeLib.vbs"):
+        if compatibility_launcher not in portable_windows:
+            errors.append(f"package-portable.ps1: missing compatibility launcher {compatibility_launcher}")
+        if compatibility_launcher not in (ROOT / "smoke-portable.ps1").read_text(encoding="utf-8"):
+            errors.append(f"smoke-portable.ps1: compatibility launcher is not exercised: {compatibility_launcher}")
+    if 'bundledRuntimePresent' not in (ROOT / "smoke-portable.ps1").read_text(encoding="utf-8"):
+        errors.append("smoke-portable.ps1: bundled Java runtime absence is not checked")
+    if 'MHL_REQUIRE_FBC' not in portable_windows:
+        errors.append("package-portable.ps1: Windows portable build must require bundled fb2cng/fbc")
+    canonical_portable_name = 'MyHomeLib-R18-$Version-portable-windows-$portableArch.zip'
+    if canonical_portable_name not in portable_windows:
+        errors.append("package-portable.ps1: R18 Windows portable must use the canonical release artifact name")
+    if "'^(amd64|x86_64)$' { 'x64'; break }" not in portable_windows:
+        errors.append("package-portable.ps1: Windows AMD64 architecture must normalize to x64 in the artifact name")
+    smoke_portable_windows = (ROOT / "smoke-portable.ps1").read_text(encoding="utf-8")
+    if 'MyHomeLib-R18-$Version-portable-windows-*.zip' not in smoke_portable_windows:
+        errors.append("smoke-portable.ps1: canonical R18 Windows portable name is not enforced")
+    if 'MHL_REQUIRE_FBC' not in prepare_windows:
+        errors.append("tools/prepare-runtime-tools.ps1: missing strict portable fb2cng/fbc contract")
     if "myhomelib2.ini" not in portable_unix:
         errors.append("package-portable.sh: portable archive must include myhomelib2.ini beside launcher")
 
@@ -157,10 +229,48 @@ def packaging_checks() -> list[str]:
             errors.append(f"{label}: Maven 3.9.6+ guard is missing")
         if "JDK 21+" not in text:
             errors.append(f"{label}: JDK 21+ guard is missing")
+    if "locale charmap" not in invoke_sh or "C.UTF-8" not in invoke_sh or "ensure_utf8_locale" not in invoke_sh:
+        errors.append("tools/invoke-maven.sh: UTF-8 launcher-locale guard is missing")
+    package_desktop_sh = (ROOT / "package-desktop.sh").read_text(encoding="utf-8")
+    package_desktop_ps = (ROOT / "package-desktop.ps1").read_text(encoding="utf-8")
+    prepare_runtime_ps = (ROOT / "tools/prepare-runtime-tools.ps1").read_text(encoding="utf-8")
+    if "tools/converters/libmobi/COPYING" not in package_desktop_sh or "build-src/COPYING" not in package_desktop_sh:
+        errors.append("package-desktop.sh: libmobi runtime/source license fallback is missing")
+    if "libmobi\\COPYING" not in package_desktop_ps or "build-src\\COPYING" not in package_desktop_ps:
+        errors.append("package-desktop.ps1: libmobi runtime/source license fallback is missing")
+    if "RuntimeLicense" not in prepare_runtime_ps or "SourceLicense" not in prepare_runtime_ps:
+        errors.append("tools/prepare-runtime-tools.ps1: libmobi runtime/source license fallback is missing")
+    if '"tools.zip"' not in prepare_runtime_ps or "Expand-Archive" not in prepare_runtime_ps or '"tools.7z"' not in prepare_runtime_ps:
+        errors.append("tools/prepare-runtime-tools.ps1: tools.zip/tools.7z compatibility-bundle support is missing")
+    libmobi_binary = ROOT / "tools/converters/libmobi/mobitool.exe"
+    runtime_license = ROOT / "tools/converters/libmobi/COPYING"
+    source_license = ROOT / "tools/converters/libmobi/build-src/COPYING"
+    if libmobi_binary.is_file() and not runtime_license.is_file() and not source_license.is_file():
+        errors.append("tools/converters/libmobi: tracked mobitool.exe has no distributable COPYING")
+    if runtime_license.is_file():
+        manifest = ROOT / "tools/CONVERTERS-SHA256.txt"
+        expected = None
+        if manifest.is_file():
+            for line in manifest.read_text(encoding="utf-8", errors="replace").splitlines():
+                parts = line.strip().split(None, 1)
+                if len(parts) == 2 and parts[1].replace("\\", "/").endswith("tools/converters/libmobi/build-src/COPYING"):
+                    expected = parts[0].lower()
+                    break
+        if expected is None:
+            errors.append("tools/CONVERTERS-SHA256.txt: expected libmobi COPYING digest is missing")
+        else:
+            actual = hashlib.sha256(runtime_license.read_bytes()).hexdigest()
+            if actual != expected:
+                errors.append("tools/converters/libmobi/COPYING: SHA-256 differs from expected libmobi license digest")
 
     workflow = (ROOT / ".github/workflows/ci-release.yml").read_text(encoding="utf-8")
     if "smoke-portable.ps1" not in workflow or "smoke-portable.sh" not in workflow:
         errors.append("ci-release.yml: every platform must smoke the extracted portable archive")
+    if "dist/MyHomeLib-R18-*-portable-windows-*.zip" not in workflow:
+        errors.append("ci-release.yml: canonical R18 Windows portable is not uploaded as a release artifact")
+    stage23_release = (ROOT / "tools/stage23-cross-platform-release-check.py").read_text(encoding="utf-8")
+    if 'MyHomeLib-R18-{version}-portable-windows-*.zip' not in stage23_release:
+        errors.append("stage23-cross-platform-release-check.py: canonical R18 Windows portable is not validated")
     windows_acceptance = ROOT / "tools/windows-installer-acceptance.ps1"
     if not windows_acceptance.is_file():
         errors.append("tools/windows-installer-acceptance.ps1: Windows installer lifecycle gate is missing")
@@ -248,6 +358,62 @@ def packaging_checks() -> list[str]:
             if contract not in final_text:
                 errors.append(f"v71-final-external-acceptance-check.py: missing final acceptance contract {contract!r}")
 
+    post_r5_checker = ROOT / "tools/post-r5-live-acceptance-check.py"
+    post_r5_checker_test = ROOT / "tools/post-r5-live-acceptance-check-test.py"
+    post_r5_recorder = ROOT / "tools/post-r5-live-evidence.py"
+    post_r5_windows = ROOT / "tools/windows-post-r5-functional-acceptance.ps1"
+    post_r5_memory = ROOT / "tools/windows-target-memory-soak.ps1"
+    post_r5_runbook = ROOT / "docs/release/POST-R5-LIVE-ACCEPTANCE-RUNBOOK-UA.md"
+    for path in (post_r5_checker, post_r5_checker_test, post_r5_recorder, post_r5_windows, post_r5_memory, post_r5_runbook):
+        if not path.is_file():
+            errors.append(f"{path.relative_to(ROOT)}: post-R5 live acceptance contract is missing")
+    if post_r5_checker.is_file():
+        text = post_r5_checker.read_text(encoding="utf-8")
+        for contract in ["windows-post-r5-functional", "physical-kobo", "real-readwise",
+                         "pwa-real-browser", "real-comic-corpus", "windows-memory-soak",
+                         "soakDurationSeconds", "duplicate evidence content", "evidenceSha256", "candidateSha",
+                         "gcCollectionCount", "gcTotalTimeMs", "workingSetPeakBytes",
+                         "gcCollectionDelta", "gcTotalTimeDeltaMs", "acceptanceSessionId",
+                         "hostFingerprintSha256", "validate_windows_cohesion",
+                         "myhomelib-7.1-final-external-acceptance", "candidate-binding",
+                         "windowsIntegrityCandidateSha"]:
+            if contract not in text:
+                errors.append(f"post-r5-live-acceptance-check.py: missing contract {contract!r}")
+    if post_r5_windows.is_file():
+        text = post_r5_windows.read_text(encoding="utf-8")
+        for contract in ["WBD-01", "WBD-06", "CAL-01", "CAL-09", "WIN-01", "WIN-12",
+                         "mhl-calibre-*", "calibre-parallel", "Elapsed.TotalSeconds",
+                         "evidenceSha256", "Get-FileHash",
+                         "Get-VerifiedMyHomeLibWindowsAcceptanceHostBinding"]:
+            if contract not in text:
+                errors.append(f"windows-post-r5-functional-acceptance.ps1: missing contract {contract!r}")
+    if post_r5_memory.is_file():
+        text = post_r5_memory.read_text(encoding="utf-8")
+        for contract in ["MEM-01", "MEM-10", "SoakSeconds -lt 3600", "GC.heap_info",
+                         "VM.native_memory summary", "jstat", "gcTotalTimeMs", "gcCollectionDelta",
+                         "workingSetPeakBytes", "sampleCount", "evidenceSha256", "Get-FileHash",
+                         "Get-VerifiedMyHomeLibWindowsAcceptanceHostBinding"]:
+            if contract not in text:
+                errors.append(f"windows-target-memory-soak.ps1: missing contract {contract!r}")
+
+    # Mockito 5 must be attached explicitly as a Java agent on JDK 21+ test modules.
+    # Dynamic self-attachment is deprecated and becomes a future-JDK failure mode.
+    root_pom = (ROOT / "pom.xml").read_text(encoding="utf-8")
+    if "<mhl.mockito.agentArg>-javaagent:${settings.localRepository}/org/mockito/mockito-core/" not in root_pom:
+        errors.append("pom.xml: explicit Mockito javaagent definition is missing")
+    for module in sorted(ROOT.glob("myhomelib-*")):
+        test_root = module / "src/test"
+        pom = module / "pom.xml"
+        if not test_root.is_dir() or not pom.is_file():
+            continue
+        uses_mockito = any("org.mockito" in source.read_text(encoding="utf-8", errors="replace")
+                           for source in test_root.rglob("*.java"))
+        if not uses_mockito:
+            continue
+        pom_text = pom.read_text(encoding="utf-8")
+        if "<mhl.test.jvmArgs>${mhl.mockito.agentArg}</mhl.test.jvmArgs>" not in pom_text:
+            errors.append(f"{module.name}/pom.xml: Mockito tests must use the explicit mhl.mockito.agentArg")
+
     checksum_script = (ROOT / "checksums.sh").read_text(encoding="utf-8")
     if "sort -z" in checksum_script or 'sha256sum "$rel"' in checksum_script:
         errors.append("checksums.sh: contains GNU-specific checksum pipeline; macOS portability would be broken")
@@ -261,8 +427,9 @@ def main() -> int:
     shell_count, shell_errors = shell_checks()
     packaging_errors = packaging_checks()
 
-    java_count = sum(1 for _ in ROOT.rglob("*.java"))
-    test_count = sum(1 for p in ROOT.rglob("*.java") if "/src/test/" in p.as_posix())
+    java_sources = [p for p in ROOT.rglob("*.java") if not any(part in {"target", ".git"} for part in p.parts)]
+    java_count = len(java_sources)
+    test_count = sum(1 for p in java_sources if "/src/test/" in p.as_posix())
     all_errors = xml_errors + handler_errors + migration_errors + shell_errors + packaging_errors
 
     print(f"XML (POM + FXML): {xml_count}; errors: {len(xml_errors)}")

@@ -68,7 +68,11 @@ if ([string]::IsNullOrWhiteSpace($CurrentMsi)) {
     $CurrentMsi = $msiMatches[0].FullName
 }
 if ([string]::IsNullOrWhiteSpace($PortableArchive)) {
-    $portableMatches = @(Get-ChildItem -Path $candidateDir -Filter "myhomelib-*-windows-*.zip" -File -ErrorAction SilentlyContinue)
+    # Current R18 candidates use the canonical name. Legacy names remain readable
+    # so historical 7.1 evidence can still be independently re-verified.
+    $canonicalPortable = @(Get-ChildItem -Path $candidateDir -Filter "MyHomeLib-R18-*-portable-windows-*.zip" -File -ErrorAction SilentlyContinue)
+    $legacyPortable = @(Get-ChildItem -Path $candidateDir -Filter "myhomelib-*-windows-*.zip" -File -ErrorAction SilentlyContinue)
+    $portableMatches = @($canonicalPortable) + @($legacyPortable)
     if ($portableMatches.Count -ne 1) { throw "Expected exactly one candidate portable ZIP under $candidateDir, found $($portableMatches.Count)" }
     $PortableArchive = $portableMatches[0].FullName
 }

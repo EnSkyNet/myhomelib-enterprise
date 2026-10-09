@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import org.junit.jupiter.api.Test;
 
@@ -31,4 +32,17 @@ class MainBookCommandCoordinatorSelectionTest {
         assertThat(coordinator.hasSelectedBook()).isFalse();
         assertThat(changes).hasValue(2);
     }
+    @Test
+    void selectedBookIdsUseCanonicalCheckboxSelectionSnapshot() {
+        ApplicationState state = new ApplicationState();
+        BookSelectionService selection = new BookSelectionService(state);
+        MainBookCommandCoordinator coordinator = new MainBookCommandCoordinator(
+                state, null, null, null, null, null, selection, null, null, null);
+        BookId first = BookId.generate();
+        BookId second = BookId.generate();
+        selection.setSelectedIds(java.util.List.of(first, second), true);
+
+        assertThat(coordinator.selectedBookIds()).containsExactly(first, second);
+    }
+
 }

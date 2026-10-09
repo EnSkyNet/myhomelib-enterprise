@@ -92,9 +92,9 @@ class MainToolbarWrapFxTest {
     private static void applyBundledTranslations(Parent root, String language) throws Exception {
         try (var input = MainToolbarWrapFxTest.class.getResourceAsStream("/lang/default/" + language + ".json")) {
             assertThat(input).isNotNull();
-            var json = new com.fasterxml.jackson.databind.ObjectMapper().readTree(input);
+            var json = new tools.jackson.databind.ObjectMapper().readTree(input);
             @SuppressWarnings("unchecked")
-            Map<String, String> translations = new com.fasterxml.jackson.databind.ObjectMapper()
+            Map<String, String> translations = new tools.jackson.databind.ObjectMapper()
                     .convertValue(json.get("translations"), Map.class);
             translateNode(root, translations);
         }

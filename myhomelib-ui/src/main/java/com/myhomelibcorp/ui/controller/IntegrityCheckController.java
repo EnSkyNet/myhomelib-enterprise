@@ -18,6 +18,7 @@ import com.myhomelibcorp.application.progress.OperationProgress;
 import com.myhomelibcorp.ui.operation.OperationKind;
 import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiExecutor;
@@ -58,6 +59,7 @@ public class IntegrityCheckController {
     private final OperationCenterService operationCenter;
     private final ApplicationState appState;
     private final ContentIndexMaintenanceService contentIndexMaintenance;
+    private final FileChooserService fileChooserService;
 
     @FXML private Button checkButton;
     @FXML private ProgressIndicator progressIndicator;
@@ -465,11 +467,11 @@ public class IntegrityCheckController {
             dialogService.showWarning(UiText.text("ui.fxml.integrity_check.export"), UiText.text("ui.java.integrity_check_controller.821faba7dc"));
             return;
         }
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle(UiText.text("ui.java.integrity_check_controller.48c91023ee"));
-        chooser.setInitialFileName("myhomelib-library-health.txt");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(UiText.text("ui.java.integrity_check_controller.ca4976f2f4"), "*.txt"));
-        File target = chooser.showSaveDialog(detailArea.getScene() == null ? null : detailArea.getScene().getWindow());
+        File target = fileChooserService.chooseFileToSave(
+                detailArea.getScene() == null ? null : detailArea.getScene().getWindow(),
+                UiText.text("ui.java.integrity_check_controller.48c91023ee"),
+                "myhomelib-library-health.txt",
+                List.of(new FileChooser.ExtensionFilter(UiText.text("ui.java.integrity_check_controller.ca4976f2f4"), "*.txt")));
         if (target == null) return;
         try {
             AtomicFileSupport.writeStringReplacing(target.toPath(), lastReportText, StandardCharsets.UTF_8);

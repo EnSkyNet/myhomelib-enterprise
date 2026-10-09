@@ -1,7 +1,7 @@
 package com.myhomelibcorp.infrastructure.catalog.reader;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.github.luben.zstd.ZstdInputStream;
 import com.myhomelibcorp.application.catalog.importing.*;
 import com.myhomelibcorp.application.imports.diagnostics.ImportIssue;
@@ -201,7 +201,7 @@ public class MetabibCatalogReader implements CatalogReader {
         if (sequence.isObject()) {
             JsonNode number = sequence.path("number");
             if (number.has("value") && number.get("value").isNumber()) sequenceNumber = number.get("value").asDouble();
-            else if (number.has("text")) sequenceNumber = parseDouble(number.get("text").asText());
+            else if (number.has("text")) sequenceNumber = parseDouble(number.get("text").asString());
         }
 
         List<String> genres = new ArrayList<>();
@@ -240,8 +240,8 @@ public class MetabibCatalogReader implements CatalogReader {
         sourceMetadata.put("library", recordLibrary);
         sourceMetadata.put("locator.kind", locatorKind);
         sourceMetadata.put("locator.source", locatorSource);
-        if (locator.has("index")) sourceMetadata.put("locator.index", locator.path("index").asText());
-        if (locator.has("book_id")) sourceMetadata.put("locator.book_id", locator.path("book_id").asText());
+        if (locator.has("index")) sourceMetadata.put("locator.index", locator.path("index").asString());
+        if (locator.has("book_id")) sourceMetadata.put("locator.book_id", locator.path("book_id").asString());
         sourceMetadata.put("record.number", Long.toString(recordNumber));
         // Versioned raw structured metadata prevents irreversible loss of extended metabib fields.
         sourceMetadata.put("metabib.record.schema", RECORD_SCHEMA);
@@ -403,9 +403,9 @@ public class MetabibCatalogReader implements CatalogReader {
                     String prefix = "occurrence." + i + ".";
                     putIfNonBlank(metadata, prefix + "archive", text(occurrence, "archive"));
                     putIfNonBlank(metadata, prefix + "entry", text(occurrence, "entry"));
-                    if (occurrence.path("index").canConvertToInt()) metadata.put(prefix + "index", occurrence.path("index").asText());
-                    if (occurrence.path("compressed_size").canConvertToLong()) metadata.put(prefix + "compressed_size", occurrence.path("compressed_size").asText());
-                    if (occurrence.path("uncompressed_size").canConvertToLong()) metadata.put(prefix + "uncompressed_size", occurrence.path("uncompressed_size").asText());
+                    if (occurrence.path("index").canConvertToInt()) metadata.put(prefix + "index", occurrence.path("index").asString());
+                    if (occurrence.path("compressed_size").canConvertToLong()) metadata.put(prefix + "compressed_size", occurrence.path("compressed_size").asString());
+                    if (occurrence.path("uncompressed_size").canConvertToLong()) metadata.put(prefix + "uncompressed_size", occurrence.path("uncompressed_size").asString());
                     putIfNonBlank(metadata, prefix + "modified", text(occurrence, "modified"));
                 }
             }
@@ -456,7 +456,7 @@ public class MetabibCatalogReader implements CatalogReader {
 
     private static JsonNode firstClaimValue(JsonNode group, String name) {
         JsonNode array = group.path(name);
-        if (!array.isArray() || array.isEmpty()) return com.fasterxml.jackson.databind.node.MissingNode.getInstance();
+        if (!array.isArray() || array.isEmpty()) return tools.jackson.databind.node.MissingNode.getInstance();
         return array.get(0).path("value");
     }
     private static List<JsonNode> claimValues(JsonNode group, String name) {
@@ -477,10 +477,10 @@ public class MetabibCatalogReader implements CatalogReader {
     }
     private static String scalarText(JsonNode node) {
         if (node == null || node.isMissingNode() || node.isNull()) return "";
-        if (node.isTextual() || node.isNumber() || node.isBoolean()) return node.asText().trim();
+        if (node.isString() || node.isNumber() || node.isBoolean()) return node.asString().trim();
         if (node.isObject()) {
             for (String candidate : List.of("text", "value", "name", "raw")) {
-                JsonNode x = node.get(candidate); if (x != null && x.isValueNode()) return x.asText().trim();
+                JsonNode x = node.get(candidate); if (x != null && x.isValueNode()) return x.asString().trim();
             }
         }
         return "";
@@ -502,7 +502,7 @@ public class MetabibCatalogReader implements CatalogReader {
         state = state.toLowerCase(Locale.ROOT);
         return state.equals("deleted") || state.equals("removed") || state.equals("true") || state.equals("1") || state.equals("yes");
     }
-    static String text(JsonNode node, String field) { JsonNode x = node == null ? null : node.get(field); return x == null || x.isNull() ? "" : x.asText("").trim(); }
+    static String text(JsonNode node, String field) { JsonNode x = node == null ? null : node.get(field); return x == null || x.isNull() ? "" : x.asString("").trim(); }
     private static Double parseDouble(String value) { try { return value == null || value.isBlank() ? null : Double.valueOf(value.trim()); } catch (Exception e) { return null; } }
     private static String extensionOf(String name) { int dot = name == null ? -1 : name.lastIndexOf('.'); return dot >= 0 && dot + 1 < name.length() ? name.substring(dot + 1).toLowerCase(Locale.ROOT) : ""; }
     private static String firstNonBlank(String... values) { for (String v : values) if (v != null && !v.isBlank()) return v.trim(); return ""; }

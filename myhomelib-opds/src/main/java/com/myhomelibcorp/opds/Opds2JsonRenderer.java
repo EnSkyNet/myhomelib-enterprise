@@ -1,5 +1,6 @@
 package com.myhomelibcorp.opds;
 
+import com.myhomelibcorp.shared.text.JsonStrings;
 import com.myhomelibcorp.application.opds.OpdsBookDto;
 import com.myhomelibcorp.application.opds.OpdsFacetDto;
 import com.myhomelibcorp.application.opds.OpdsPage;
@@ -174,28 +175,7 @@ final class Opds2JsonRenderer {
         return List.copyOf(result);
     }
 
-    private static String quote(String value) {
-        String text = safe(value);
-        StringBuilder out = new StringBuilder(text.length() + 8).append('"');
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            switch (c) {
-                case '"' -> out.append("\\\"");
-                case '\\' -> out.append("\\\\");
-                case '\b' -> out.append("\\b");
-                case '\f' -> out.append("\\f");
-                case '\n' -> out.append("\\n");
-                case '\r' -> out.append("\\r");
-                case '\t' -> out.append("\\t");
-                default -> {
-                    if (c < 0x20) out.append(String.format("\\u%04x", (int) c));
-                    else out.append(c);
-                }
-            }
-        }
-        return out.append('"').toString();
-    }
-
+    private static String quote(String value) { return JsonStrings.quote(value); }
     private String t(String language, String key, Object... args) { return text.text(language, key, args); }
     private static String nonBlank(String value, String fallback) { return blank(value) ? fallback : value; }
     private static boolean blank(String value) { return value == null || value.isBlank(); }

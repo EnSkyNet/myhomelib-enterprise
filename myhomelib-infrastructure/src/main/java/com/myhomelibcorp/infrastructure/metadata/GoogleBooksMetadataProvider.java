@@ -1,10 +1,8 @@
 package com.myhomelibcorp.infrastructure.metadata;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import com.myhomelibcorp.application.metadata.MetadataCandidate;
 import com.myhomelibcorp.application.metadata.MetadataProvider;
 import com.myhomelibcorp.application.metadata.MetadataProviderErrorKind;
@@ -14,6 +12,7 @@ import com.myhomelibcorp.application.metadata.MetadataRequestContext;
 import com.myhomelibcorp.application.metadata.MetadataSource;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.domain.model.valueobject.Isbn;
+import com.myhomelibcorp.infrastructure.download.OnlineHttpClientProvider;
 import com.myhomelibcorp.infrastructure.download.OnlineHttpPolicy;
 import static com.myhomelibcorp.infrastructure.metadata.MetadataProviderSupport.*;
 
@@ -58,14 +57,21 @@ public final class GoogleBooksMetadataProvider implements MetadataProvider {
     private final Cache<MetadataQuery, List<MetadataCandidate>> cache;
     private final AtomicLong nextRequestNanos = new AtomicLong(System.nanoTime());
 
-    @Autowired
     public GoogleBooksMetadataProvider(ApplicationSettingsPort settings, ObjectMapper objectMapper) {
-        this(
-                settings,
-                objectMapper,
-                new OnlineHttpPolicy(Objects.requireNonNull(settings, "settings")).create(null),
+        this(settings, objectMapper, new OnlineHttpClientProvider(settings).shared());
+    }
+
+    @Autowired
+    public GoogleBooksMetadataProvider(ApplicationSettingsPort settings, ObjectMapper objectMapper,
+                                       OnlineHttpClientProvider httpClients) {
+        this(settings, objectMapper,
+                Objects.requireNonNull(httpClients, "httpClients").shared(),
                 DEFAULT_VOLUMES_ENDPOINT,
                 DEFAULT_WEB_BASE);
+    }
+
+    private GoogleBooksMetadataProvider(ApplicationSettingsPort settings, ObjectMapper objectMapper, HttpClient client) {
+        this(settings, objectMapper, client, DEFAULT_VOLUMES_ENDPOINT, DEFAULT_WEB_BASE);
     }
 
     GoogleBooksMetadataProvider(
@@ -79,11 +85,7 @@ public final class GoogleBooksMetadataProvider implements MetadataProvider {
         this.client = Objects.requireNonNull(client, "client");
         this.volumesEndpoint = requireHttpUri(volumesEndpoint, "volumesEndpoint");
         this.webBase = requireHttpUri(webBase, "webBase");
-        int cacheMinutes = clamp(settings.getInt("metadata.googleBooks.cacheMinutes", 30), 1, 24 * 60);
-        this.cache = Caffeine.newBuilder()
-                .maximumSize(500)
-                .expireAfterWrite(cacheMinutes, TimeUnit.MINUTES)
-                .build();
+        this.cache = candidateCache(settings.getInt("metadata.googleBooks.cacheMinutes", 30));
     }
 
     @Override
@@ -165,34 +167,8 @@ public final class GoogleBooksMetadataProvider implements MetadataProvider {
 
     private List<MetadataCandidate> handleResponse(HttpResponse<String> response, MetadataQuery query)
             throws MetadataProviderException {
-        int status = response.statusCode();
-        if (status == 429) throw MetadataProviderException.rateLimited(parseRetryAfter(response));
-        if (status == 408 || status == 504) throw MetadataProviderException.timeout();
-        if (status == 400 || status == 401 || status == 403) {
-            throw new MetadataProviderException(
-                    MetadataProviderErrorKind.AUTHENTICATION,
-                    "Google Books request was rejected");
-        }
-        if (status >= 500) {
-            throw new MetadataProviderException(
-                    MetadataProviderErrorKind.UNAVAILABLE,
-                    "Google Books is unavailable");
-        }
-        if (status < 200 || status >= 300) {
-            throw new MetadataProviderException(
-                    MetadataProviderErrorKind.FAILED,
-                    "Google Books request failed with HTTP " + status);
-        }
-
-        JsonNode root;
-        try {
-            root = objectMapper.readTree(response.body() == null ? "" : response.body());
-        } catch (JsonProcessingException invalidJson) {
-            throw new MetadataProviderException(
-                    MetadataProviderErrorKind.INVALID_RESPONSE,
-                    "Google Books returned invalid JSON",
-                    invalidJson);
-        }
+        requireSuccessfulResponse(response, PROVIDER_NAME, status -> status == 400 || status == 401 || status == 403);
+        JsonNode root = parseJson(objectMapper, response, PROVIDER_NAME);
         if (root == null || !root.isObject()) {
             throw new MetadataProviderException(
                     MetadataProviderErrorKind.INVALID_RESPONSE,
@@ -225,11 +201,11 @@ public final class GoogleBooksMetadataProvider implements MetadataProvider {
 
     private Optional<MetadataCandidate> mapCandidate(JsonNode item, MetadataQuery query, int rank) {
         if (item == null || !item.isObject()) return Optional.empty();
-        String id = clean(item.path("id").asText(""));
+        String id = clean(item.path("id").asString(""));
         JsonNode info = item.get("volumeInfo");
         if (id.isBlank() || info == null || !info.isObject()) return Optional.empty();
 
-        String title = clean(info.path("title").asText(""));
+        String title = clean(info.path("title").asString(""));
         if (title.isBlank()) return Optional.empty();
         List<String> authors = textArray(info.get("authors"));
         List<String> isbns = validIsbns(info.get("industryIdentifiers"));
@@ -237,14 +213,14 @@ public final class GoogleBooksMetadataProvider implements MetadataProvider {
         if (query.hasIsbn() && !exactIsbn) return Optional.empty();
         String isbn = exactIsbn ? query.isbn() : preferredIsbn(isbns);
 
-        Integer year = publishedYear(info.path("publishedDate").asText(""));
-        String publisher = clean(info.path("publisher").asText(""));
-        String language = clean(info.path("language").asText(""));
-        String annotation = clean(info.path("description").asText(""));
+        Integer year = publishedYear(info.path("publishedDate").asString(""));
+        String publisher = clean(info.path("publisher").asString(""));
+        String language = clean(info.path("language").asString(""));
+        String annotation = clean(info.path("description").asString(""));
         String coverUrl = firstHttpUri(
-                info.path("imageLinks").path("thumbnail").asText(""),
-                info.path("imageLinks").path("smallThumbnail").asText(""));
-        String recordUrl = firstHttpUri(info.path("infoLink").asText(""), fallbackRecordUrl(id));
+                info.path("imageLinks").path("thumbnail").asString(""),
+                info.path("imageLinks").path("smallThumbnail").asString(""));
+        String recordUrl = firstHttpUri(info.path("infoLink").asString(""), fallbackRecordUrl(id));
         double confidence = confidence(query, title, authors, exactIsbn, rank);
 
         try {
@@ -291,16 +267,7 @@ public final class GoogleBooksMetadataProvider implements MetadataProvider {
             List<String> authors,
             boolean exactIsbn,
             int rank) {
-        if (exactIsbn) return 0.99;
-        double score = 0.56 + Math.max(0.0, 0.20 - (Math.min(rank, 20) * 0.01));
-        if (query.hasTitle() && normalizeForMatch(title).equals(normalizeForMatch(query.title()))) score += 0.12;
-        if (query.hasAuthor()) {
-            String expected = normalizeForMatch(query.author());
-            if (authors.stream().map(MetadataProviderSupport::normalizeForMatch).anyMatch(expected::equals)) {
-                score += 0.10;
-            }
-        }
-        return Math.min(0.98, roundConfidence(score));
+        return MetadataProviderSupport.rankedMatchConfidence(query, title, authors, exactIsbn, rank, 0.56);
     }
 
     private static List<String> validIsbns(JsonNode node) {
@@ -308,9 +275,9 @@ public final class GoogleBooksMetadataProvider implements MetadataProvider {
         LinkedHashSet<String> values = new LinkedHashSet<>();
         for (JsonNode identifier : node) {
             if (identifier == null || !identifier.isObject()) continue;
-            String type = clean(identifier.path("type").asText(""));
+            String type = clean(identifier.path("type").asString(""));
             if (!"ISBN_10".equals(type) && !"ISBN_13".equals(type)) continue;
-            Isbn.tryParse(identifier.path("identifier").asText(""))
+            Isbn.tryParse(identifier.path("identifier").asString(""))
                     .map(Isbn::value)
                     .ifPresent(values::add);
         }

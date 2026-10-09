@@ -22,7 +22,7 @@ public record WebReaderDocument(
         chapters = chapters == null ? List.of() : List.copyOf(chapters);
         if (selectedChapter < 0) selectedChapter = 0;
         if (resumeChapter < 0) resumeChapter = 0;
-        resumePercent = Math.max(0.0, Math.min(100.0, resumePercent));
+        resumePercent = Double.isFinite(resumePercent) ? Math.max(0.0, Math.min(100.0, resumePercent)) : 0.0;
     }
 
     public WebReaderChapter currentChapter() {

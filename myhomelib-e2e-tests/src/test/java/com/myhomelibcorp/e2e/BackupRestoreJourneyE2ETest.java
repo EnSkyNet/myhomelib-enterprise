@@ -1,6 +1,6 @@
 package com.myhomelibcorp.e2e;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.backup.UserDataTransferPort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.infrastructure.backup.VersionedUserDataTransferAdapter;
@@ -45,6 +45,9 @@ class BackupRestoreJourneyE2ETest {
         source.jdbc().update("INSERT INTO groups(name,allow_delete) VALUES('Favorites',0)");
         source.jdbc().update("INSERT INTO book_groups(book_id,group_id) SELECT 'old-id',id FROM groups WHERE name='Favorites'");
         source.jdbc().update("INSERT INTO reader_book_preferences(book_id,preferences_json) VALUES('old-id','{\"fontFamily\":\"Mono\"}')");
+        source.jdbc().update("INSERT INTO reader_preference_overrides(scope_type,scope_key,preferences_json) VALUES('BOOK','old-id','{\"fontFamily\":\"Mono\"}'),('SERIES','series e2e','{\"theme\":\"dark\"}'),('FORMAT','epub','{\"fontFamily\":\"Serif\"}')");
+        source.jdbc().update("INSERT INTO reading_lists(id,name,description) VALUES('list-1','Queue','E2E')");
+        source.jdbc().update("INSERT INTO reading_list_items(list_id,book_id,position) VALUES('list-1','old-id',0)");
 
         MapSettings sourceSettings = new MapSettings();
         sourceSettings.put("filter.global.language", "uk");
@@ -68,6 +71,11 @@ class BackupRestoreJourneyE2ETest {
         assertThat(target.jdbc().queryForObject("SELECT progress FROM books WHERE id='new-id'", Integer.class)).isEqualTo(61);
         assertThat(target.jdbc().queryForObject("SELECT paragraph_id FROM reading_progress WHERE book_id='new-id'", String.class)).isEqualTo("p-7");
         assertThat(target.jdbc().queryForObject("SELECT COUNT(*) FROM book_groups WHERE book_id='new-id'", Integer.class)).isEqualTo(1);
+        assertThat(target.jdbc().queryForObject("SELECT name FROM reading_lists WHERE id='list-1'", String.class)).isEqualTo("Queue");
+        assertThat(target.jdbc().queryForObject("SELECT book_id FROM reading_list_items WHERE list_id='list-1' AND position=0", String.class)).isEqualTo("new-id");
+        assertThat(target.jdbc().queryForObject("SELECT preferences_json FROM reader_preference_overrides WHERE scope_type='BOOK' AND scope_key='new-id'", String.class)).contains("Mono");
+        assertThat(target.jdbc().queryForObject("SELECT preferences_json FROM reader_preference_overrides WHERE scope_type='SERIES' AND scope_key='series e2e'", String.class)).contains("dark");
+        assertThat(target.jdbc().queryForObject("SELECT preferences_json FROM reader_preference_overrides WHERE scope_type='FORMAT' AND scope_key='epub'", String.class)).contains("Serif");
         assertThat(targetSettings.get("filter.global.language", "")).isEqualTo("uk");
     }
 
@@ -138,6 +146,10 @@ class BackupRestoreJourneyE2ETest {
         j.execute("CREATE TABLE saved_searches(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,query TEXT NOT NULL,filters TEXT,created_at TEXT NOT NULL,last_used TEXT NOT NULL,use_count INTEGER DEFAULT 0)");
         j.execute("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT)");
         j.execute("CREATE TABLE reader_book_preferences(book_id TEXT PRIMARY KEY,preferences_json TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+        j.execute("CREATE TABLE reader_preference_overrides(scope_type TEXT NOT NULL,scope_key TEXT NOT NULL,preferences_json TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(scope_type,scope_key))");
+        j.execute("CREATE TABLE reading_lists(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+        j.execute("CREATE UNIQUE INDEX ux_reading_lists_normalized_name ON reading_lists(lower(trim(name)))");
+        j.execute("CREATE TABLE reading_list_items(list_id TEXT NOT NULL,book_id TEXT NOT NULL,position INTEGER NOT NULL,added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(list_id,book_id),UNIQUE(list_id,position))");
     }
 
     private record Db(SQLiteDataSource dataSource, JdbcTemplate jdbc) { }

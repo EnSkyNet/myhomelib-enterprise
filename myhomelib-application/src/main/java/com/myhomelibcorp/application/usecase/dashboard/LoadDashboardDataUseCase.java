@@ -14,6 +14,7 @@ import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.repository.StatisticsRepository;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.application.usecase.reading.ContinueReadingService;
+import com.myhomelibcorp.application.usecase.reading.NextInSeriesService;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +38,7 @@ public class LoadDashboardDataUseCase {
     private final ExecutorPort executorPort;
     private final SessionService sessionService;
     private final ContinueReadingService continueReadingService;
+    private final NextInSeriesService nextInSeriesService;
     private final LibraryOperationCoordinator operationCoordinator;
 
     public CompletableFuture<DashboardData> execute() {
@@ -83,9 +85,10 @@ public class LoadDashboardDataUseCase {
             });
 
             var continueShelfFuture = executorPort.submit(() -> continueReadingService.recent(10));
+            var nextInSeriesFuture = executorPort.submit(() -> nextInSeriesService.next(10));
 
             CompletableFuture<DashboardData> result = CompletableFuture
-                    .allOf(statsFuture, recentFuture, addedFuture, favAuthorsFuture, continueFuture, continueShelfFuture)
+                    .allOf(statsFuture, recentFuture, addedFuture, favAuthorsFuture, continueFuture, continueShelfFuture, nextInSeriesFuture)
                     .thenApply(v -> DashboardData.builder()
                             .statistics(statsFuture.join())
                             .recentBooks(recentFuture.join())
@@ -93,6 +96,9 @@ public class LoadDashboardDataUseCase {
                             .favoriteAuthors(favAuthorsFuture.join())
                             .continueReading(continueFuture.join())
                             .continueReadingShelf(continueShelfFuture.join())
+                            .nextInSeries(nextInSeriesFuture.join().stream()
+                                    .filter(item -> continueShelfFuture.join().stream().noneMatch(c -> c.bookId().equals(item.bookId())))
+                                    .toList())
                             .build());
             return result.whenComplete((value, failure) -> {
                 if (failure == null) lease.markCompleted("");

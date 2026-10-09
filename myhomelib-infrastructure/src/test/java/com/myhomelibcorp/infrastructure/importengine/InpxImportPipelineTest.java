@@ -137,8 +137,8 @@ class InpxImportPipelineTest {
         long result = pipeline.importFile(testFile, 100, tempDir);
 
         assertThat(result).isZero();
-        verify(bulkOptimizer).enableBulkInsertMode();
-        verify(bulkOptimizer).disableBulkInsertMode();
+        verify(bulkOptimizer, never()).enableBulkInsertMode();
+        verify(bulkOptimizer, never()).disableBulkInsertMode();
     }
 
     @Test
@@ -272,8 +272,8 @@ class InpxImportPipelineTest {
                 "https://example.test/catalog.inpx", true, null, null);
 
         assertThat(result).isNotNull();
-        verify(bulkOptimizer).enableBulkInsertMode();
-        verify(bulkOptimizer).disableBulkInsertMode();
+        verify(bulkOptimizer, never()).enableBulkInsertMode();
+        verify(bulkOptimizer, never()).disableBulkInsertMode();
     }
     @Test
     void existingCatalogUsesConstantTimeExistenceProbeAndSkipsAuthorEmptyCheck(@TempDir Path tempDir) throws Exception {

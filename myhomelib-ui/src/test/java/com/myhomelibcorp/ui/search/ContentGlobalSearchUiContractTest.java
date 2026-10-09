@@ -19,15 +19,17 @@ class ContentGlobalSearchUiContractTest {
         assertThat(fxml).contains("searchModeChoice", "contentSection", "contentListView", "contentCountLabel");
 
         String controller = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/search/SearchWorkspaceController.java"));
+        String contentCoordinator = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/search/ContentSearchCoordinator.java"));
         assertThat(controller).contains(
                 "METADATA(\"ui.search.mode.metadata\")",
                 "CONTENTS(\"ui.search.mode.contents\")",
                 "BOTH(\"ui.search.mode.both\")",
-                "contentSearchService.search",
-                "submitCollectionScopedCancellable",
-                "task.cancel(true)",
                 "workspaceManager.showContentHitInReader",
                 "KeyCode.ENTER");
+        assertThat(contentCoordinator).contains(
+                "contentSearchService.search",
+                "submitCollectionScopedCancellable",
+                "currentTask.cancel(true)");
     }
 
     @Test
@@ -37,7 +39,9 @@ class ContentGlobalSearchUiContractTest {
         String reader = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java"));
         assertThat(workspace).contains("showContentHitInReader", "loadNewReaderWorkspace(id, null, artifactId");
         assertThat(loader).contains("setContentSearchTarget(artifactId, contentOffset)");
-        assertThat(reader).contains("selectPreferredArtifact(targetArtifact)", "jumpToContentSearchTarget", "readerView.goToPosition(position)");
+        assertThat(reader).contains("resolveReadableReaderSource(projectedBook, targetArtifact, bookResourcePort)",
+                "boolean contentTargetResolved = targetArtifact == null || targetArtifact.equals(sourceChoice.artifactId())",
+                "if (!prepared.contentTargetResolved())", "jumpToContentSearchTarget", "readerView.goToPosition(position)");
     }
 
     @Test

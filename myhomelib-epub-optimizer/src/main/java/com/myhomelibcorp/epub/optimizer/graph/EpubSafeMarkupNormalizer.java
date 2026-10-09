@@ -1,5 +1,6 @@
 package com.myhomelibcorp.epub.optimizer.graph;
 
+import com.myhomelibcorp.epub.optimizer.archive.EpubZipTransformSupport;
 import com.myhomelibcorp.epub.optimizer.fs.EpubPathSafety;
 import org.springframework.stereotype.Component;
 
@@ -9,16 +10,9 @@ import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.CancellationException;
-import java.util.zip.CRC32;
-import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import java.util.zip.ZipOutputStream;
 
 /**
  * Conservative EPUB text cleanup. It never rewrites the XML tree: XML-like resources only receive
@@ -28,8 +22,6 @@ import java.util.zip.ZipOutputStream;
  */
 @Component
 public final class EpubSafeMarkupNormalizer {
-    private static final byte[] MIMETYPE = "application/epub+zip".getBytes(StandardCharsets.US_ASCII);
-    private static final LocalDateTime ZIP_TIME = LocalDateTime.of(1980, 1, 1, 0, 0);
     private static final long MAX_TEXT_RESOURCE = 16L * 1024L * 1024L;
 
     public Result normalize(Path source, Path target, EpubResourceGraph graph) throws Exception {
@@ -40,52 +32,29 @@ public final class EpubSafeMarkupNormalizer {
             EpubPathSafety.copyFreshFile(source, target, "EPUB markup passthrough");
             return Result.none();
         }
-        int changed = 0;
-        long before = 0L, after = 0L;
-        try (ZipFile zip = new ZipFile(source.toFile(), StandardCharsets.UTF_8);
-             ZipOutputStream out = new ZipOutputStream(EpubPathSafety.openFreshOutputStream(target, "EPUB markup target"), StandardCharsets.UTF_8)) {
-            out.setLevel(9);
-            writeMimetype(out);
-            List<? extends ZipEntry> entries = Collections.list(zip.entries()).stream()
-                    .filter(entry -> !entry.isDirectory())
-                    .filter(entry -> !"mimetype".equals(entry.getName()))
-                    .sorted(Comparator.comparingInt((ZipEntry entry) -> "META-INF/container.xml".equals(entry.getName()) ? 0 : 1)
-                            .thenComparing(ZipEntry::getName))
-                    .toList();
-            byte[] buffer = new byte[64 * 1024];
-            for (ZipEntry entry : entries) {
-                checkCancelled();
-                byte[] replacement = null;
-                EpubResourceNode node = graph.nodes().get(entry.getName());
-                if (entry.getSize() >= 0 && entry.getSize() <= MAX_TEXT_RESOURCE && isTextCandidate(entry.getName(), node)) {
+        NormalizationStats stats = new NormalizationStats();
+        EpubZipTransformSupport.rewrite(
+                source, target, "EPUB markup target", Set.of(), "EPUB optimization cancelled",
+                (zip, entry, output) -> {
+                    EpubResourceNode node = graph.nodes().get(entry.getName());
+                    if (entry.getSize() < 0 || entry.getSize() > MAX_TEXT_RESOURCE
+                            || !isTextCandidate(entry.getName(), node)) {
+                        return;
+                    }
                     try (InputStream in = zip.getInputStream(entry)) {
                         byte[] original = in.readNBytes((int) MAX_TEXT_RESOURCE + 1);
-                        checkCancelled();
-                        if (original.length > MAX_TEXT_RESOURCE) {
-                            replacement = null;
-                        } else {
-                            replacement = normalizeBytes(original, entry.getName(), node);
+                        if (Thread.currentThread().isInterrupted()) {
+                            throw new java.util.concurrent.CancellationException("EPUB optimization cancelled");
                         }
+                        if (original.length > MAX_TEXT_RESOURCE) return;
+                        byte[] replacement = normalizeBytes(original, entry.getName(), node);
                         if (replacement != null && !Arrays.equals(original, replacement)) {
-                            changed++;
-                            before += original.length;
-                            after += replacement.length;
-                        } else replacement = null;
+                            stats.record(original.length, replacement.length);
+                            output.writeBytes(replacement);
+                        }
                     }
-                }
-                ZipEntry copy = new ZipEntry(entry.getName());
-                copy.setTimeLocal(ZIP_TIME);
-                copy.setExtra(null);
-                copy.setMethod(ZipEntry.DEFLATED);
-                out.putNextEntry(copy);
-                if (replacement != null) out.write(replacement);
-                else try (InputStream in = zip.getInputStream(entry)) {
-                    for (int n; (n = in.read(buffer)) >= 0;) { checkCancelled(); if (n > 0) out.write(buffer, 0, n); }
-                }
-                out.closeEntry();
-            }
-        }
-        return new Result(changed, before, after);
+                });
+        return stats.result();
     }
 
     private byte[] normalizeBytes(byte[] original, String path, EpubResourceNode node) {
@@ -167,21 +136,24 @@ public final class EpubSafeMarkupNormalizer {
         });
     }
 
-    private void writeMimetype(ZipOutputStream out) throws Exception {
-        CRC32 crc = new CRC32(); crc.update(MIMETYPE);
-        ZipEntry entry = new ZipEntry("mimetype");
-        entry.setMethod(ZipEntry.STORED); entry.setSize(MIMETYPE.length); entry.setCompressedSize(MIMETYPE.length);
-        entry.setCrc(crc.getValue()); entry.setTime(ZIP_TIME.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()); entry.setExtra(null);
-        out.putNextEntry(entry); out.write(MIMETYPE); out.closeEntry();
+    private static final class NormalizationStats {
+        private int changed;
+        private long before;
+        private long after;
+
+        private void record(long beforeBytes, long afterBytes) {
+            changed++;
+            before += beforeBytes;
+            after += afterBytes;
+        }
+
+        private Result result() {
+            return new Result(changed, before, after);
+        }
     }
 
     public record Result(int changedResources, long beforeBytes, long afterBytes) {
         public Result { changedResources = Math.max(0, changedResources); beforeBytes = Math.max(0L, beforeBytes); afterBytes = Math.max(0L, afterBytes); }
         static Result none() { return new Result(0, 0L, 0L); }
     }
-    private static void checkCancelled() {
-        if (Thread.currentThread().isInterrupted())
-            throw new CancellationException("EPUB optimization cancelled");
-    }
-
 }

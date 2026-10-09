@@ -95,7 +95,9 @@ require('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure
 require('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteBookCommandRepository.java',
         'busyRetry.run("book storage update"')
 require('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/config/DataSourceConfig.java',
-        'PRAGMA busy_timeout=15000', 'initializeWalOnce(dataSource)')
+        'SqliteConnectionPragmas.applyInteractive(config, 15_000', 'initializeWalOnce(dataSource)')
+require('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/config/SqliteConnectionPragmas.java',
+        'sqlite.setBusyTimeout(busyTimeoutMs)')
 require('myhomelib-bootstrap/src/main/resources/application.yml',
         'root: WARN', 'com.zaxxer.hikari: WARN', 'com.myhomelibcorp.infrastructure.download: WARN')
 require('myhomelib-ui/src/main/resources/css/app-theme-base.css',
@@ -103,7 +105,7 @@ require('myhomelib-ui/src/main/resources/css/app-theme-base.css',
 
 # P1 — export uses selection, physical resource, staging commit and final verification.
 exp=require('myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCase.java',
-            'locateBookFile', 'createTempFile', 'ATOMIC_MOVE', 'getUsableSpace', 'verifyExportedFile', 'readBookData')
+            'locateBookFile', 'createPrivateWorkspace', 'SafeFilePublication', 'getUsableSpace', 'verifyExportedFile', 'readBookData')
 require('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/ExportController.java', 'bookSelectionService.snapshot()')
 
 if failures:

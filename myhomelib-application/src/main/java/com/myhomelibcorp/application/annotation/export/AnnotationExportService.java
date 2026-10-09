@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.annotation.export;
 
+import com.myhomelibcorp.shared.text.JsonStrings;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
@@ -165,7 +166,7 @@ public class AnnotationExportService {
         writer.write(",\"tags\":[");
         for (int i = 0; i < row.tags().size(); i++) {
             if (i > 0) writer.write(',');
-            writer.write('"'); writer.write(jsonEscape(row.tags().get(i))); writer.write('"');
+            writer.write('"'); writer.write(JsonStrings.escape(row.tags().get(i))); writer.write('"');
         }
         writer.write(']');
         writer.write(",\"position\":"); writer.write(String.format(Locale.ROOT, "%.8f", row.position()));
@@ -177,7 +178,7 @@ public class AnnotationExportService {
     private static void jsonField(BufferedWriter writer, String name, String value, boolean first) throws IOException {
         if (!first) writer.write(',');
         writer.write('"'); writer.write(name); writer.write("\":\"");
-        writer.write(jsonEscape(value)); writer.write('"');
+        writer.write(JsonStrings.escape(value)); writer.write('"');
     }
 
     private static Map<String, String> values(AnnotationExportRow row, boolean markdown) {
@@ -227,29 +228,6 @@ public class AnnotationExportService {
         return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 .replace("\"", "&quot;").replace("'", "&#39;");
     }
-
-    private static String jsonEscape(String value) {
-        if (value == null) return "";
-        StringBuilder out = new StringBuilder(value.length() + 16);
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            switch (c) {
-                case '"' -> out.append("\\\"");
-                case '\\' -> out.append("\\\\");
-                case '\b' -> out.append("\\b");
-                case '\f' -> out.append("\\f");
-                case '\n' -> out.append("\\n");
-                case '\r' -> out.append("\\r");
-                case '\t' -> out.append("\\t");
-                default -> {
-                    if (c < 0x20) out.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
-                    else out.append(c);
-                }
-            }
-        }
-        return out.toString();
-    }
-
 
     private static void checkCancelled() throws InterruptedException {
         if (Thread.currentThread().isInterrupted()) throw new InterruptedException("annotation export cancelled");

@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.importer.epub;
 
+import com.myhomelibcorp.shared.archive.ArchiveEntrySafety;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;
@@ -14,6 +15,7 @@ import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import com.myhomelibcorp.infrastructure.parser.author.LocalAuthorNameParser;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import javax.xml.stream.XMLInputFactory;
@@ -32,6 +34,7 @@ import java.util.Locale;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipFile;
 
+@Lazy
 @Component
 @Slf4j
 public class EpubImporter extends AbstractBookImporter {
@@ -218,8 +221,13 @@ public class EpubImporter extends AbstractBookImporter {
     }
 
     private int parseSeriesIndex(String v) {
-        try { return (int) Math.round(Double.parseDouble(v.trim())); }
-        catch (NumberFormatException invalidIndex) { return 0; }
+        try {
+            double parsed = Double.parseDouble(v.trim());
+            if (!Double.isFinite(parsed) || parsed < Integer.MIN_VALUE || parsed > Integer.MAX_VALUE) return 0;
+            return (int) Math.round(parsed);
+        } catch (NumberFormatException invalidIndex) {
+            return 0;
+        }
     }
 
     private String stripExtension(String name) {
@@ -229,6 +237,7 @@ public class EpubImporter extends AbstractBookImporter {
 
     private void validateArchive(ZipFile zip) throws IOException {
         int entries = 0;
+        long totalDeclared = 0L;
         Enumeration<ZipArchiveEntry> iterator = zip.getEntries();
         while (iterator.hasMoreElements()) {
             ZipArchiveEntry entry = iterator.nextElement();
@@ -236,19 +245,19 @@ public class EpubImporter extends AbstractBookImporter {
                 throw new IOException("EPUB contains too many ZIP entries");
             }
             checkEntry(entry, "EPUB entry");
+            long size = entry.getSize();
+            if (!entry.isDirectory() && size > 0L) {
+                totalDeclared += size;
+                if (totalDeclared > ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES) {
+                    throw new IOException("EPUB cumulative declared size exceeds archive safety limit");
+                }
+            }
         }
     }
 
     private void checkEntry(ZipArchiveEntry entry, String role) throws IOException {
-        if (entry == null || entry.isDirectory()) return;
-        long size = entry.getSize();
-        if (ArchiveSafetyLimits.declaredEntryTooLarge(size)) {
-            throw new IOException(role + " exceeds archive safety limit: " + entry.getName());
-        }
-        long compressed = entry.getCompressedSize();
-        if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed)) {
-            throw new IOException(role + " has suspicious compression ratio: " + entry.getName());
-        }
+        if (entry == null) return;
+        ArchiveEntrySafety.check(entry.getName(), entry.isDirectory(), entry.getSize(), entry.getCompressedSize(), role);
     }
 
     private ZipArchiveEntry findZip(ZipFile zip, String wanted) {

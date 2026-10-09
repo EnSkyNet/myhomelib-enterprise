@@ -26,6 +26,18 @@ class EpubStructuralValidatorTest {
     }
 
     @Test
+    void acceptsStoredMimetypeWhenLocalHeaderUsesDataDescriptorFlag() throws Exception {
+        Path epub = createEpub("descriptor-flag.epub", true, true, false);
+        byte[] bytes = Files.readAllBytes(epub);
+        // General-purpose bit 3 is enough to reproduce the JDK ZipInputStream failure for a STORED
+        // first entry; ZipFile still reads the central-directory metadata correctly.
+        bytes[6] = (byte) (bytes[6] | 0x08);
+        Files.write(epub, bytes);
+
+        assertThatCode(() -> validator.validate(epub)).doesNotThrowAnyException();
+    }
+
+    @Test
     void rejectsMimetypeWhenItIsDeflated() throws Exception {
         Path epub = createEpub("deflated-mimetype.epub", false, true, false);
 

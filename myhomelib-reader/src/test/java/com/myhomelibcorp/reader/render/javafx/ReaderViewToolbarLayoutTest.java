@@ -32,6 +32,9 @@ class ReaderViewToolbarLayoutTest {
         } catch (UnsupportedOperationException noDisplay) {
             Assumptions.abort("JavaFX DISPLAY is not reachable: " + noDisplay.getMessage());
         }
+        // This class closes the only Stage it creates. Keep the shared Surefire
+        // JavaFX toolkit alive for later tests in the same JVM.
+        Platform.setImplicitExit(false);
     }
 
     @AfterAll

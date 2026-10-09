@@ -142,7 +142,6 @@ class ImportSearchReaderJourneyE2ETest {
         BookQueryRepository books = mock(BookQueryRepository.class);
         LuceneSearchService search = new LuceneSearchService(
                 new ByteBuffersDirectory(), analyzer, parser, books);
-        search.init();
         LuceneCollectionIndexLifecycle lifecycle = new LuceneCollectionIndexLifecycle(search, books);
         lifecycle.activateCollectionIndex(new Collection(
                 collectionId, "E2E search collection", tempDir, tempDir.resolve(collectionId + ".db").toString(),

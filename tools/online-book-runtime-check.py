@@ -11,7 +11,7 @@ assert 'effectiveBaseUrl(collection)' in ad
 assert 'collectionWithEffectiveUrl' in ad
 assert '.fb2.zip' in ut
 assert 'ui.java.book_download_coordinator.bd6ccfa947' in co
-assert 'loadAuthoritative(book).thenCompose' in co
+assert ('loadAuthoritative(book).thenCompose' in co or 'loadAuthoritative(book, expectedCollectionId, LibraryOperationType.DOWNLOAD).thenCompose' in co)
 assert 'ensureLocalForOpenAuthoritative' in co
 # The caller DTO must be updated before the completion callback can launch/open it.
 copy_pos = co.find('copyStorageState(refreshed, book);', co.find('BookDto refreshed ='))

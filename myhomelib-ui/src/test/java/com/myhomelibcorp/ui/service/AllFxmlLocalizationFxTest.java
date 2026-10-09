@@ -1,6 +1,6 @@
 package com.myhomelibcorp.ui.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;

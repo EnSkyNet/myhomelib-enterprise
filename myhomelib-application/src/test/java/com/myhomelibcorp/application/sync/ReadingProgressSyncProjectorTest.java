@@ -51,4 +51,46 @@ class ReadingProgressSyncProjectorTest {
                 Instant.parse("2026-09-12T12:30:00Z"), "phone"));
         assertThat(deleted.get()).isEqualTo("b");
     }
+
+    @Test
+    void sanitizesInvalidRemoteProgressBeforePersisting() {
+        AtomicReference<ReadingProgressDto> saved = new AtomicReference<>();
+        ReadingProgressRepository repo = new ReadingProgressRepository() {
+            @Override public void save(ReadingProgressDto progress) { saved.set(progress); }
+            @Override public Optional<ReadingProgressDto> findByBookId(String bookId) { return Optional.ofNullable(saved.get()); }
+            @Override public void deleteByBookId(String bookId) { saved.set(null); }
+        };
+        var projector = new ReadingProgressSyncProjector(repo);
+        SyncRecord remote = SyncRecord.live("progress:bad", SyncEntityType.READING_PROGRESS, "bad",
+                1, 2, Instant.parse("2026-10-07T12:00:00Z"), "remote", Map.of(
+                        "paragraphIndex", "-12",
+                        "charOffset", "-5",
+                        "percent", "NaN",
+                        "readingTimeSeconds", "-300"));
+
+        ReadingProgressDto applied = projector.apply(remote);
+
+        assertThat(applied.getParagraphIndex()).isZero();
+        assertThat(applied.getCharOffset()).isZero();
+        assertThat(applied.getPercent()).isZero();
+        assertThat(applied.getReadingTimeSeconds()).isZero();
+        assertThat(saved.get()).isSameAs(applied);
+    }
+
+    @Test
+    void clampsRemoteProgressPercentToValidRange() {
+        AtomicReference<ReadingProgressDto> saved = new AtomicReference<>();
+        ReadingProgressRepository repo = new ReadingProgressRepository() {
+            @Override public void save(ReadingProgressDto progress) { saved.set(progress); }
+            @Override public Optional<ReadingProgressDto> findByBookId(String bookId) { return Optional.ofNullable(saved.get()); }
+            @Override public void deleteByBookId(String bookId) { saved.set(null); }
+        };
+        var projector = new ReadingProgressSyncProjector(repo);
+        ReadingProgressDto applied = projector.apply(SyncRecord.live(
+                "progress:high", SyncEntityType.READING_PROGRESS, "high", 1, 2,
+                Instant.parse("2026-10-07T12:00:00Z"), "remote", Map.of("percent", "150.5")));
+
+        assertThat(applied.getPercent()).isEqualTo(100.0);
+    }
+
 }

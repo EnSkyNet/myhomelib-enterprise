@@ -16,7 +16,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -51,7 +50,8 @@ public class SqliteAnnotationManagerQueryAdapter implements AnnotationManagerQue
                            x.chapter_title,x.quote_text,x.position,a.created_at,a.updated_at
                     """ + FROM + sqlFilter.where() + " ORDER BY a.updated_at DESC,a.id LIMIT ? OFFSET ?",
                     this::mapRow, append(sqlFilter.params(), safeLimit, safeOffset));
-            Map<String, List<String>> tags = tagsFor(rows.stream().map(Row::id).toList());
+            Map<String, List<String>> tags = SqliteAnnotationTagQuerySupport.load(
+                    queryExecutor, rows.stream().map(Row::id).toList());
             List<AnnotationManagerItem> items = rows.stream().map(row -> row.toItem(tags.getOrDefault(row.id(), List.of()))).toList();
             return new AnnotationManagerPage(items, total, safeOffset, safeLimit);
         });
@@ -127,21 +127,6 @@ public class SqliteAnnotationManagerQueryAdapter implements AnnotationManagerQue
         return new SqlFilter(clauses.isEmpty() ? "" : " WHERE " + String.join(" AND ", clauses), params);
     }
 
-    private Map<String, List<String>> tagsFor(List<String> ids) {
-        if (ids == null || ids.isEmpty()) return Map.of();
-        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
-        List<TagRow> rows = queryExecutor.query(
-                "SELECT annotation_id,tag FROM annotation_tags WHERE annotation_id IN (" + placeholders + ") "
-                        + "ORDER BY annotation_id,tag COLLATE NOCASE",
-                (rs, rowNum) -> new TagRow(rs.getString(1), rs.getString(2)), ids.toArray());
-        Map<String, List<String>> result = new LinkedHashMap<>();
-        for (TagRow row : rows) {
-            result.computeIfAbsent(row.annotationId(), ignored -> new ArrayList<>()).add(row.tag());
-        }
-        result.replaceAll((id, values) -> List.copyOf(values));
-        return Map.copyOf(result);
-    }
-
     private Row mapRow(ResultSet rs, int rowNum) throws SQLException {
         return new Row(
                 rs.getString(1), rs.getString(2), rs.getString(3), AnnotationManagerType.valueOf(rs.getString(4)),
@@ -172,7 +157,6 @@ public class SqliteAnnotationManagerQueryAdapter implements AnnotationManagerQue
     }
 
     private record SqlFilter(String where, List<Object> params) { }
-    private record TagRow(String annotationId, String tag) { }
     private record Row(String id, String bookId, String bookTitle, AnnotationManagerType type, String color,
                        String note, String chapterTitle, String quote, double position,
                        Instant createdAt, Instant updatedAt) {

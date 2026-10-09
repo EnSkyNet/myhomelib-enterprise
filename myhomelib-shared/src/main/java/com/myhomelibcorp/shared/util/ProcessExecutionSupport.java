@@ -29,7 +29,7 @@ import java.util.function.BooleanSupplier;
  */
 public final class ProcessExecutionSupport {
     public static final int DEFAULT_MAX_CAPTURE_BYTES = 256 * 1024;
-    private static final Duration TERMINATION_GRACE = Duration.ofSeconds(2);
+    private static final Duration TERMINATION_GRACE = Duration.ofSeconds(10);
     private static final Duration OUTPUT_DRAIN_GRACE = Duration.ofSeconds(2);
 
     private ProcessExecutionSupport() { }
@@ -80,14 +80,14 @@ public final class ProcessExecutionSupport {
         try {
             while (process.isAlive()) {
                 if (cancelled.getAsBoolean()) {
-                    terminateTree(process);
-                    awaitTermination(process);
+                    List<ProcessHandle> descendants = terminateTree(process);
+                    awaitTermination(process, descendants);
                     throw new CancellationException("Process execution cancelled");
                 }
                 long elapsed = System.nanoTime() - started;
                 if (elapsed >= timeoutNanos) {
-                    terminateTree(process);
-                    awaitTermination(process);
+                    List<ProcessHandle> descendants = terminateTree(process);
+                    awaitTermination(process, descendants);
                     throw new ProcessTimeoutException("Process timed out after " + timeout.toMillis() + " ms");
                 }
                 long remainingNanos = timeoutNanos - elapsed;
@@ -100,13 +100,13 @@ public final class ProcessExecutionSupport {
             CapturedStream err = awaitCaptured(stderr, process.getErrorStream());
             return new Result(process.exitValue(), out.bytes(), err.bytes(), out.truncated(), err.truncated());
         } catch (InterruptedException e) {
-            terminateTree(process);
-            awaitTerminationUninterruptibly(process);
+            List<ProcessHandle> descendants = terminateTree(process);
+            awaitTerminationUninterruptibly(process, descendants);
             throw e;
         } finally {
             if (process.isAlive()) {
-                terminateTree(process);
-                awaitTerminationUninterruptibly(process);
+                List<ProcessHandle> descendants = terminateTree(process);
+                awaitTerminationUninterruptibly(process, descendants);
             }
             stdout.cancel(true);
             stderr.cancel(true);
@@ -174,17 +174,17 @@ public final class ProcessExecutionSupport {
     public static void terminate(Process process) {
         if (process == null) return;
         boolean interrupted = false;
-        terminateTree(process);
+        List<ProcessHandle> descendants = terminateTree(process);
         try {
-            awaitTermination(process);
+            awaitTermination(process, descendants);
         } catch (InterruptedException e) {
             interrupted = true;
-            awaitTerminationUninterruptibly(process);
+            awaitTerminationUninterruptibly(process, descendants);
         }
         if (interrupted) Thread.currentThread().interrupt();
     }
 
-    private static void terminateTree(Process process) {
+    private static List<ProcessHandle> terminateTree(Process process) {
         ProcessHandle handle = process.toHandle();
         List<ProcessHandle> descendants;
         try { descendants = handle.descendants().toList(); }
@@ -203,23 +203,44 @@ public final class ProcessExecutionSupport {
         if (process.isAlive()) {
             try { handle.destroyForcibly(); } catch (RuntimeException ignored) { }
         }
+        return descendants;
     }
 
-    private static void awaitTermination(Process process) throws InterruptedException {
-        process.waitFor(TERMINATION_GRACE.toMillis(), TimeUnit.MILLISECONDS);
+    private static void awaitTermination(Process process, List<ProcessHandle> descendants) throws InterruptedException {
+        long deadline = System.nanoTime() + TERMINATION_GRACE.toNanos();
+        if (process.isAlive()) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining > 0) process.waitFor(remaining, TimeUnit.NANOSECONDS);
+        }
+        while (hasLiveDescendant(descendants)) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) return;
+            TimeUnit.NANOSECONDS.sleep(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(25)));
+        }
     }
 
-    private static void awaitTerminationUninterruptibly(Process process) {
+    private static void awaitTerminationUninterruptibly(Process process, List<ProcessHandle> descendants) {
         boolean interrupted = false;
         long deadline = System.nanoTime() + TERMINATION_GRACE.toNanos();
-        while (process.isAlive() && System.nanoTime() < deadline) {
+        while ((process.isAlive() || hasLiveDescendant(descendants)) && System.nanoTime() < deadline) {
             try {
-                process.waitFor(50, TimeUnit.MILLISECONDS);
+                TimeUnit.MILLISECONDS.sleep(25);
             } catch (InterruptedException e) {
                 interrupted = true;
             }
         }
         if (interrupted) Thread.currentThread().interrupt();
+    }
+
+    private static boolean hasLiveDescendant(List<ProcessHandle> descendants) {
+        for (ProcessHandle descendant : descendants) {
+            try {
+                if (descendant.isAlive()) return true;
+            } catch (RuntimeException ignored) {
+                // A handle that can no longer be queried is treated as unavailable/exited.
+            }
+        }
+        return false;
     }
 
     private record CapturedStream(byte[] bytes, boolean truncated) { }

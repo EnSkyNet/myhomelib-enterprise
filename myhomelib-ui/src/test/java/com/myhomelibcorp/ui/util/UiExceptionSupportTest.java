@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.util;
 
+import com.myhomelibcorp.application.operation.LibraryOperationConflictException;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import org.junit.jupiter.api.Test;
 
 import java.net.ConnectException;
@@ -32,5 +34,8 @@ class UiExceptionSupportTest {
                 .isEqualTo(com.myhomelibcorp.ui.service.UiText.text("common.error.file_not_found"));
         assertThat(UiExceptionSupport.message(new IllegalArgumentException("bad value")))
                 .isEqualTo(com.myhomelibcorp.ui.service.UiText.text("common.error.invalid_data"));
+        assertThat(UiExceptionSupport.message(new LibraryOperationConflictException(
+                LibraryOperationType.IMPORT, LibraryOperationType.QUERY)))
+                .isEqualTo(com.myhomelibcorp.ui.service.UiText.text("common.error.library_busy"));
     }
 }

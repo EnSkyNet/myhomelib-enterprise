@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.catalog.reader;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 import java.nio.file.Path;
 import java.util.*;
@@ -144,8 +144,8 @@ final class MetabibDatasetValidator {
         }
         if (!node.isObject()) return;
         JsonNode ref = node.get("observation");
-        if (ref != null && ref.isTextual() && !ref.asText().isBlank() && !ids.contains(ref.asText())) {
-            throw new IllegalArgumentException("record " + recordNumber + ": missing observation " + ref.asText() + " at " + path);
+        if (ref != null && ref.isString() && !ref.asString().isBlank() && !ids.contains(ref.asString())) {
+            throw new IllegalArgumentException("record " + recordNumber + ": missing observation " + ref.asString() + " at " + path);
         }
         node.properties().forEach(e -> validateObservationReferences(e.getValue(), ids, recordNumber, path + "." + e.getKey()));
     }

@@ -8,6 +8,7 @@ import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.application.port.out.download.OnlineBookDownloadPort;
 import com.myhomelibcorp.application.port.out.download.DownloadQueuePort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
+import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.repository.StatisticsRepository;
 import com.myhomelibcorp.application.search.SearchIndexSynchronizer;
@@ -37,6 +38,7 @@ public class DownloadBookUseCase {
     private final ContentIndexAutoSchedulingService contentIndexScheduling;
     private final CollectionLifecyclePort collectionLifecyclePort;
     private final LibraryOperationCoordinator operationCoordinator;
+    private final ExecutorPort executorPort;
 
     public Path execute(BookDto book, Collection collection, AtomicBoolean cancelFlag, DoubleConsumer progress) throws Exception {
         return execute(book, collection, cancelFlag, progress, false);
@@ -49,6 +51,9 @@ public class DownloadBookUseCase {
             Path result = executeLocked(book, collection, cancelFlag, progress, forceRefresh);
             lease.markCompleted("");
             return result;
+        } catch (java.util.concurrent.CancellationException cancelled) {
+            lease.markCancelled(cancelled.getMessage());
+            throw cancelled;
         } catch (Exception failure) {
             lease.markFailed(failure);
             throw failure;
@@ -81,8 +86,7 @@ public class DownloadBookUseCase {
             bookCommandRepository.updateStorage(
                     bookId, result.root().toString(), result.folder(), result.fileName(), result.archiveEntry(), true);
             markDownloadedBaselineSafely(bookId);
-            synchronizeSearchIndexSafely(bookId);
-            synchronizeContentIndexSafely(collection.getId(), bookId);
+            synchronizeDerivedIndexesSafely(collection.getId(), bookId);
             markDownloadCompletedSafely(collection.getId(), bookId, result.physicalPath());
             invalidateStatisticsSafely();
             return result.physicalPath();
@@ -112,7 +116,51 @@ public class DownloadBookUseCase {
         }
     }
 
-    private void synchronizeSearchIndexSafely(BookId bookId) {
+    private void synchronizeDerivedIndexesSafely(String collectionId, BookId bookId) {
+        if (operationCoordinator.isOperationActive(LibraryOperationType.INDEX)) {
+            deferDerivedIndexSynchronization(collectionId, bookId);
+            return;
+        }
+        synchronizeSearchIndexNowSafely(bookId);
+        synchronizeContentIndexSafely(collectionId, bookId);
+    }
+
+    /**
+     * A download is allowed to join an already-running full Lucene rebuild. The downloaded file
+     * and catalog row must become visible immediately, while the selective Lucene repair waits
+     * off the caller thread for the rebuild's synchronized writer section to finish.
+     *
+     * <p>The extra DOWNLOAD lease deliberately keeps the same INDEX-root collection barrier alive
+     * after the rebuild worker releases its own lease, so a collection SWITCH cannot race the
+     * deferred repair into a different dynamic repository/index.</p>
+     */
+    private void deferDerivedIndexSynchronization(String collectionId, BookId bookId) {
+        LibraryOperationCoordinator.Lease deferredLease =
+                operationCoordinator.acquireDetachedShared(LibraryOperationType.DOWNLOAD);
+        try {
+            executorPort.execute(() -> {
+                try {
+                    synchronizeSearchIndexNowSafely(bookId);
+                    // Full-text rebuild owns its own Lucene write lock. Scheduling here may wait
+                    // for that lock, but it happens off the user download thread. Queue stale-hold
+                    // reference counting guarantees that the rebuild cannot publish a false READY
+                    // state while this committed download is still being repaired.
+                    synchronizeContentIndexSafely(collectionId, bookId);
+                    deferredLease.markCompleted("Deferred derived-index synchronization completed");
+                } finally {
+                    deferredLease.close();
+                }
+            });
+        } catch (RuntimeException schedulingFailure) {
+            deferredLease.close();
+            log.warn("Не вдалося відкласти синхронізацію похідних індексів для {}; виконую синхронно",
+                    bookId, schedulingFailure);
+            synchronizeSearchIndexNowSafely(bookId);
+            synchronizeContentIndexSafely(collectionId, bookId);
+        }
+    }
+
+    private void synchronizeSearchIndexNowSafely(BookId bookId) {
         try {
             if (!searchIndexSynchronizer.synchronizeSafelyNow(java.util.List.of(bookId))) {
                 log.warn("Книгу вже завантажено, але Lucene-індекс лишився stale для {}", bookId);

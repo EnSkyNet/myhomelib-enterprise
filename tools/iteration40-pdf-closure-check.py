@@ -29,6 +29,7 @@ reader_pom = read("myhomelib-reader/pom.xml")
 session = read("myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/pdf/PdfDocumentSession.java")
 view = read("myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/pdf/PdfReaderView.java")
 workspace = read("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java")
+bookmark_coordinator = read("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderBookmarkCoordinator.java")
 annotation_contract = read("myhomelib-application/src/main/java/com/myhomelibcorp/application/annotation/pdf/PdfAnnotationSelectionData.java")
 packager = read("tools/package-v71-source.py")
 
@@ -42,12 +43,13 @@ reject(session.lower(), "tesseract", "ocrmypdf")
 
 require(view,
         "setOnAddBookmark", "setOnBookmarks", "setOnToc", "setOnSearch",
-        "searchTextAsync", "submitTrackedDocumentTask", "cancelOutstandingDocumentTasks",
+        "searchTextAsync", "documentTasks.submit", "documentTasks.cancelOutstanding()",
         "goToPosition", "outlineEntries")
 require(workspace,
         "pdfReaderView.setOnAddBookmark", "pdfReaderView.setOnBookmarks", "pdfReaderView.setOnToc",
         "pdfReaderView.setOnSearch", "pdfReaderView.searchTextAsync", "pdfReaderView.outlineEntries()",
-        "persistenceService.saveBookmark", "pdfReaderView.goToPosition")
+        "bookmarkCoordinator", "pdfReaderView.goToPosition")
+require(bookmark_coordinator, "persistenceService.saveBookmarkItem", "backgroundExecutor")
 reject(workspace, "org.apache.pdfbox", "PDFTextStripper", "PDDocument")
 
 require(annotation_contract, "pageTextStartOffset", "pageTextEndOffset", "page-local")

@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 class LuceneCustomFieldFilterTest {
@@ -49,6 +50,20 @@ class LuceneCustomFieldFilterTest {
         )).build();
         assertThat(search.search(request).bookIds())
                 .containsExactly(BookId.fromString("11111111-1111-1111-1111-111111111111"));
+    }
+
+
+    @Test
+    void rejectsNonFiniteNumericFilterValues() {
+        var request = SearchRequest.builder().customFieldFilters(List.of(
+                new CustomFieldSearchFilter(1, CustomFieldType.NUMBER, CustomFieldSearchOperator.EQUALS, "NaN", "")
+        )).build();
+
+        assertThatThrownBy(() -> search.search(request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class)
+                .cause()
+                .hasMessageContaining("finite number");
     }
 
     private static BookSnapshot snapshot(String id, String title, List<CustomFieldValue> fields) {

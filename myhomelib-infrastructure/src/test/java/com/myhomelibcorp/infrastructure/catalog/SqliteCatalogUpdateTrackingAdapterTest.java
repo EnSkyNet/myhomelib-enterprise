@@ -223,6 +223,65 @@ class SqliteCatalogUpdateTrackingAdapterTest {
     }
 
     @Test
+    void downloadBaselineUpdateRollsBackWhenAcknowledgementFails() {
+        String bookId = UUID.randomUUID().toString();
+        insertBook(bookId, false);
+        var session = adapter.beginSync("remote-collection:c1", null, "source-a");
+        adapter.recordImportedBooks(session, List.of(snapshot(bookId, "book-a")));
+        jdbc.update("""
+                INSERT INTO catalog_update_events(
+                    book_id, update_type, source_id, detected_revision, catalog_fingerprint, detected_at
+                ) VALUES (?, 'UPDATED_DOWNLOADED_BOOK', ?, ?, 'book-a', '2026-09-26 12:00:00.000')
+                """, bookId, session.sourceId(), session.sourceRevision());
+        jdbc.execute("""
+                CREATE TRIGGER fail_catalog_event_ack
+                BEFORE UPDATE OF acknowledged_at ON catalog_update_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced acknowledgement failure');
+                END
+                """);
+
+        var typedBookId = com.myhomelibcorp.domain.model.valueobject.BookId.fromString(bookId);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> adapter.markDownloadedBaseline(typedBookId))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(adapter.hasDownloadedBaseline(typedBookId)).isFalse();
+    }
+
+    @Test
+    void downloadBaselineClearRollsBackWhenAcknowledgementFails() {
+        String bookId = UUID.randomUUID().toString();
+        insertBook(bookId, true);
+        var session = adapter.beginSync("remote-collection:c1", null, "source-a");
+        adapter.recordImportedBooks(session, List.of(snapshot(bookId, "book-a")));
+        jdbc.update("""
+                UPDATE catalog_book_state
+                   SET downloaded_revision = catalog_revision,
+                       downloaded_fingerprint = catalog_fingerprint,
+                       downloaded_baseline_at = '2026-09-26 12:00:00.000'
+                 WHERE book_id = ?
+                """, bookId);
+        jdbc.update("""
+                INSERT INTO catalog_update_events(
+                    book_id, update_type, source_id, detected_revision, catalog_fingerprint, detected_at
+                ) VALUES (?, 'UPDATED_DOWNLOADED_BOOK', ?, ?, 'book-a', '2026-09-26 12:00:00.000')
+                """, bookId, session.sourceId(), session.sourceRevision());
+        jdbc.execute("""
+                CREATE TRIGGER fail_catalog_event_ack
+                BEFORE UPDATE OF acknowledged_at ON catalog_update_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced acknowledgement failure');
+                END
+                """);
+
+        var typedBookId = com.myhomelibcorp.domain.model.valueobject.BookId.fromString(bookId);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> adapter.clearDownloadedBaseline(typedBookId))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(adapter.hasDownloadedBaseline(typedBookId)).isTrue();
+    }
+
+    @Test
     void missingCatalogRowDoesNotDestroyDownloadedLocalFlag() {
         insertBook("b1", true);
         var baseline = adapter.beginSync("remote-collection:c1", null, "source-a");

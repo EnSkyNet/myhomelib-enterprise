@@ -74,11 +74,11 @@ for path in java_sources():
 
 # Acceptance-specific guards: startup/statistics/folder sync must use reviewed managed executors.
 bootstrap = (ROOT / "myhomelib-bootstrap/src/main/java/com/myhomelibcorp/MyHomeLibApp.java").read_text(encoding="utf-8")
-if "startupExecutor.submit(" not in bootstrap:
-    ERRORS.append("startup backend initialization is not routed through ExecutorPort")
+if 'new Thread(() ->' not in bootstrap or '"myhomelib-startup"' not in bootstrap or 'startupThread.start();' not in bootstrap:
+    ERRORS.append("pre-Spring startup backend initialization is not isolated on the dedicated startup thread")
 
 statistics = (ROOT / "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/StatisticsController.java").read_text(encoding="utf-8")
-if "backgroundExecutor.submit(" not in statistics:
+if "backgroundExecutor.submitCollectionScoped(" not in statistics:
     ERRORS.append("StatisticsController is not routed through UiBackgroundExecutor")
 
 folder_sync = (ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/sync/FolderSyncService.java").read_text(encoding="utf-8")

@@ -20,8 +20,10 @@
         <Label text="ui.fxml.collection_wizard.step_3" styleClass="wizard-step-indicator" fx:id="step3Indicator"/>
     </HBox>
 
-    <!-- Контент кроків -->
-    <StackPane fx:id="wizardContent" VBox.vgrow="ALWAYS">
+    <!-- Контент кроків: ScrollPane keeps all controls reachable on small/DPI-scaled screens. -->
+    <ScrollPane fx:id="wizardScrollPane" fitToWidth="true" fitToHeight="false" hbarPolicy="NEVER" vbarPolicy="AS_NEEDED" pannable="true" minHeight="0" VBox.vgrow="ALWAYS">
+        <content>
+            <StackPane fx:id="wizardContent" minWidth="0" minHeight="0">
         <!-- Крок 1: Основна інформація -->
         <VBox spacing="10" style="-fx-padding: 10; -fx-background-color: -mhl-panel; -fx-border-color: -mhl-border; -fx-border-radius: 5; -fx-background-radius: 5;">
             <Label text="ui.fxml.collection_wizard.basic_information" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
@@ -104,7 +106,9 @@
             </GridPane>
             <Label fx:id="errorLabel2" style="-fx-text-fill: -mhl-danger; -fx-wrap-text: true;"/>
         </VBox>
-    </StackPane>
+            </StackPane>
+        </content>
+    </ScrollPane>
 
     <Separator/>
 

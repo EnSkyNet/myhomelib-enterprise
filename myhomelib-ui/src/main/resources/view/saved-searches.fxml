@@ -5,7 +5,7 @@
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.controller.SavedSearchesController"
-      spacing="10" style="-fx-padding: 15; -fx-background-color: -mhl-background;"
+      spacing="10" styleClass="workspace-root" style="-fx-padding: 15;"
       prefWidth="500" prefHeight="540">
 
     <HBox spacing="8" alignment="CENTER_LEFT">

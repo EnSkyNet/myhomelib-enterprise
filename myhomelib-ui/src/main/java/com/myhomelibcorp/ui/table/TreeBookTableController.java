@@ -84,7 +84,15 @@ public class TreeBookTableController {
             return treeItem.getValue().selectedProperty();
         });
 
-        selectColumn.setCellFactory(param -> new TreeTableCell<BookViewModel, Boolean>() {
+        selectColumn.setCellFactory(param -> createSelectionCell());
+
+        treeTableView.getColumns().add(0, selectColumn);
+        treeTableView.setEditable(true);
+        log.debug("Колонку з чекбоксами додано");
+    }
+
+    private TreeTableCell<BookViewModel, Boolean> createSelectionCell() {
+        return new TreeTableCell<BookViewModel, Boolean>() {
             private final CheckBox checkBox = new CheckBox();
             private BookViewModel boundBook;
             private final javafx.beans.value.ChangeListener<Boolean> rowListener =
@@ -119,11 +127,7 @@ public class TreeBookTableController {
                 setAlignment(Pos.CENTER);
                 setGraphic(checkBox);
             }
-        });
-
-        treeTableView.getColumns().add(0, selectColumn);
-        treeTableView.setEditable(true);
-        log.debug("Колонку з чекбоксами додано");
+        };
     }
 
     /**

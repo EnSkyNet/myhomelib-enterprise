@@ -1,0 +1,27 @@
+MyHomeLib Enterprise — V28 checkpoint status
+Date: 2026-10-01
+
+STATUS: V28 LOCAL PRODUCT-COMPLETE / FULL LOCAL GATES GREEN
+
+Implemented:
+- Reader profiles per book / series / format / global.
+- Exact precedence: BOOK > SERIES > FORMAT > GLOBAL.
+- V65 generic scoped preferences migration with V42 compatibility.
+- Reader Settings scope-specific save/clear/source UI.
+- Portable user-data schema v6 with stable BOOK identity.
+- Collection transfer/merge BOOK-scope compatibility.
+- UK/EN/BG localization + F1 help + docs/action mappings.
+
+Final local evidence:
+- root clean verify: BUILD SUCCESS, 20/20 reactor modules;
+- 1996 tests, 0 failures, 0 errors, 18 skipped;
+- architecture: 19/19;
+- E2E: 15/15;
+- UI action inventory: 464/464;
+- UI behavior: 464/464 (463 automated + 1 justified exclusion);
+- user-function mapping: 464/464;
+- localization: 3659 synchronized UI keys;
+- static release / supply-chain / user-data consistency: PASS.
+
+External Windows/live/connected release acceptance inherited from V26 remains separate and OPEN.
+Next product checkpoint: V29 — installable PWA + offline Web Library.

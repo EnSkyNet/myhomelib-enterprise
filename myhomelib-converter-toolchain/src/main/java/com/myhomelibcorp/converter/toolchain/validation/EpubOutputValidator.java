@@ -3,6 +3,7 @@ package com.myhomelibcorp.converter.toolchain.validation;
 import com.myhomelibcorp.converter.toolchain.ConversionFailureKind;
 import com.myhomelibcorp.converter.toolchain.ConversionToolchainException;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
+import com.myhomelibcorp.shared.archive.ZipLocalHeaderInspector;
 import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import org.springframework.stereotype.Component;
 
@@ -11,7 +12,6 @@ import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.io.ByteArrayOutputStream;
 import java.util.Enumeration;
@@ -19,7 +19,6 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import java.util.zip.ZipInputStream;
 
 @Component
 public class EpubOutputValidator implements ConversionOutputValidator {
@@ -60,11 +59,11 @@ public class EpubOutputValidator implements ConversionOutputValidator {
     }
 
     private void validateFirstEntry(Path file) throws ConversionToolchainException {
-        try (ZipInputStream in = new ZipInputStream(java.nio.file.Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS), StandardCharsets.UTF_8)) {
-            ZipEntry first = in.getNextEntry();
-            if (first == null || !"mimetype".equals(first.getName())) invalid("EPUB mimetype must be the first ZIP entry");
-            if (first.getMethod() != ZipEntry.STORED) invalid("EPUB mimetype must use ZIP Store");
-            if (first.getExtra() != null && first.getExtra().length > 0) invalid("EPUB mimetype must not contain ZIP extra fields");
+        try {
+            var first = ZipLocalHeaderInspector.inspectFirstEntry(file, "EPUB conversion output");
+            if (!"mimetype".equals(first.name())) invalid("EPUB mimetype must be the first ZIP entry");
+            if (first.method() != ZipEntry.STORED) invalid("EPUB mimetype must use ZIP Store");
+            if (first.extraLength() > 0) invalid("EPUB mimetype must not contain ZIP extra fields");
         } catch (ConversionToolchainException e) {
             throw e;
         } catch (Exception e) {

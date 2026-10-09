@@ -1,5 +1,6 @@
 package com.myhomelibcorp.epub.optimizer.packaging;
 
+import com.myhomelibcorp.epub.optimizer.archive.EpubZipWriterSupport;
 import com.myhomelibcorp.epub.optimizer.fs.EpubPathSafety;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import org.springframework.stereotype.Component;
@@ -22,7 +23,6 @@ import java.util.zip.DeflaterOutputStream;
 @Component
 public class DeterministicEpubPackager implements EpubPackager {
     private static final LocalDateTime DETERMINISTIC_TIME = LocalDateTime.of(1980, 1, 1, 0, 0);
-    private static final byte[] MIMETYPE = "application/epub+zip".getBytes(StandardCharsets.US_ASCII);
 
     @Override public ZipCompressionBackend backend() { return ZipCompressionBackend.JAVA_DEFLATE_9; }
 
@@ -34,7 +34,7 @@ public class DeterministicEpubPackager implements EpubPackager {
         try (ZipFile zip = new ZipFile(normalizedSource.toFile(), StandardCharsets.UTF_8);
              ZipOutputStream out = new ZipOutputStream(EpubPathSafety.openFreshOutputStream(normalizedTarget, "EPUB package target"), StandardCharsets.UTF_8)) {
             out.setLevel(profile.deflateLevel());
-            writeMimetype(out, profile);
+            EpubZipWriterSupport.writeMimetype(out, profile.deterministicTimestamps() ? DETERMINISTIC_TIME : null);
             List<? extends ZipEntry> entries = Collections.list(zip.entries()).stream()
                     .filter(e -> !e.isDirectory())
                     .filter(e -> !"mimetype".equals(e.getName()))
@@ -45,7 +45,7 @@ public class DeterministicEpubPackager implements EpubPackager {
             Set<String> seen = new HashSet<>();
             seen.add("mimetype");
             byte[] buffer = new byte[64 * 1024];
-            long totalWritten = MIMETYPE.length;
+            long totalWritten = EpubZipWriterSupport.mimetypeLength();
             for (ZipEntry entry : entries) {
                 checkCancelled();
                 if (!seen.add(entry.getName())) throw new IllegalArgumentException("Duplicate EPUB ZIP entry: " + entry.getName());
@@ -97,20 +97,6 @@ public class DeterministicEpubPackager implements EpubPackager {
             }
         }
         return new EntryStats(size, crc.getValue(), -1L);
-    }
-
-    private void writeMimetype(ZipOutputStream out, EpubPackagingProfile profile) throws Exception {
-        CRC32 crc = new CRC32(); crc.update(MIMETYPE);
-        ZipEntry mimetype = new ZipEntry("mimetype");
-        mimetype.setMethod(ZipEntry.STORED);
-        mimetype.setSize(MIMETYPE.length);
-        mimetype.setCompressedSize(MIMETYPE.length);
-        mimetype.setCrc(crc.getValue());
-        mimetype.setExtra(null);
-        if (profile.deterministicTimestamps()) mimetype.setTime(DETERMINISTIC_TIME.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
-        out.putNextEntry(mimetype);
-        out.write(MIMETYPE);
-        out.closeEntry();
     }
 
     private int rank(String name) { return "META-INF/container.xml".equals(name) ? 0 : 1; }

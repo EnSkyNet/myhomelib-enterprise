@@ -24,10 +24,12 @@ import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -50,6 +52,7 @@ import java.util.function.BooleanSupplier;
  * staged target supplied by the application.</p>
  */
 @Component
+@Slf4j
 public class ConvertBookUseCase {
 
     public static final long DEFAULT_MAX_INPUT_BYTES = 512L * 1024L * 1024L;
@@ -100,10 +103,13 @@ public class ConvertBookUseCase {
         this.settings = settings;
     }
 
+    /**
+     * Conversion request intentionally has no "make preferred" switch. A generated representation
+     * is always registered as secondary; changing the primary artifact is a separate explicit user action.
+     */
     public record Request(BookId bookId,
                           String targetFormat,
                           Path outputDirectory,
-                          boolean makePreferred,
                           long maxInputBytes,
                           long maxOutputBytes,
                           BooleanSupplier cancelled) {
@@ -118,7 +124,7 @@ public class ConvertBookUseCase {
         }
 
         public static Request withDefaults(BookId bookId, String targetFormat, Path outputDirectory) {
-            return new Request(bookId, targetFormat, outputDirectory, false,
+            return new Request(bookId, targetFormat, outputDirectory,
                     DEFAULT_MAX_INPUT_BYTES, DEFAULT_MAX_OUTPUT_BYTES, () -> false);
         }
     }
@@ -189,16 +195,28 @@ public class ConvertBookUseCase {
 
     /** Executes a conversion only if the captured collection is still active under the CONVERSION barrier. */
     public Result execute(Request request, String expectedCollectionId) throws Exception {
+        long started = System.nanoTime();
         var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.CONVERSION);
         try {
             assertExpectedCollection(expectedCollectionId);
             Result result = executeLocked(request);
             lease.markCompleted("");
             return result;
+        } catch (CancellationException cancelled) {
+            log.info("CONVERSION_CANCEL bookId={} target={} durationMs={}",
+                    request == null ? "" : request.bookId(), request == null ? "" : request.targetFormat(), elapsedMs(started));
+            lease.markCancelled(cancelled.getMessage());
+            throw cancelled;
         } catch (Exception failure) {
+            log.error("CONVERSION_FAIL bookId={} target={} durationMs={} error={}",
+                    request == null ? "" : request.bookId(), request == null ? "" : request.targetFormat(),
+                    elapsedMs(started), compact(failure));
             lease.markFailed(failure);
             throw failure;
         } catch (Error failure) {
+            log.error("CONVERSION_FAIL bookId={} target={} durationMs={} error={}",
+                    request == null ? "" : request.bookId(), request == null ? "" : request.targetFormat(),
+                    elapsedMs(started), compact(failure));
             lease.markFailed(failure);
             throw failure;
         } finally {
@@ -226,6 +244,8 @@ public class ConvertBookUseCase {
         Book book = books.findById(request.bookId())
                 .orElseThrow(() -> new IllegalArgumentException("Book not found: " + request.bookId()));
         List<SelectedJob> candidates = selectJobs(book, request.targetFormat());
+        log.info("CONVERSION_START title='{}' bookId={} target={} mode={} candidates={}",
+                safeLog(book.getTitle()), book.getId(), request.targetFormat(), configuredMode(), describeCandidates(candidates));
 
         // The destination comes from an explicit DirectoryChooser selection, not from catalog metadata.
         // Resolve it once to its real directory so ordinary Windows junction/OneDrive-style paths do not
@@ -269,18 +289,26 @@ public class ConvertBookUseCase {
                     throw new BookConversionException(BookConversionException.Stage.SOURCE_READ,
                             candidate.converter().converter().id(), source.format(), request.targetFormat(), sourceFailure);
                 }
+                long providerStarted = System.nanoTime();
+                String providerId = candidate.converter().converter().id();
+                log.info("CONVERSION_PROVIDER_START title='{}' bookId={} provider={} source={} target={}",
+                        safeLog(book.getTitle()), book.getId(), providerId, source.format(), request.targetFormat());
                 try (raw;
                      InputStream bounded = new CancellableBoundedInputStream(raw, request.maxInputBytes(), request.cancelled())) {
                     BookConversionContext context = new BookConversionContext(
                             book, source.format(), request.targetFormat(), bounded, candidateStaged,
                             request.cancelled(), request.maxOutputBytes());
                     candidate.converter().converter().convert(context);
+                    log.info("CONVERSION_PROVIDER_DONE title='{}' bookId={} provider={} durationMs={}",
+                            safeLog(book.getTitle()), book.getId(), providerId, elapsedMs(providerStarted));
                 } catch (CancellationException cancelled) {
                     throw cancelled;
                 } catch (BookConversionException classified) {
                     throw classified;
                 } catch (Exception failure) {
                     if (mayTryNextProvider(failure)) {
+                        log.warn("CONVERSION_PROVIDER_FALLBACK title='{}' bookId={} provider={} durationMs={} error={}",
+                                safeLog(book.getTitle()), book.getId(), providerId, elapsedMs(providerStarted), compact(failure));
                         lastFallbackFailure = failure;
                         lastFallbackJob = candidate;
                         continue;
@@ -319,12 +347,10 @@ public class ConvertBookUseCase {
 
         Source source = successfulJob.source();
         SelectedConverter selected = successfulJob.converter();
-        String artifactId = "conversion:" + UUID.randomUUID();
+        String artifactId = conversionArtifactId(book, request.targetFormat());
         String extension = safeExtension(selected.capability().targetExtension());
-        String finalName = safeBaseName(book.getTitle(), book.getId()) + "-"
-                + artifactId.substring(artifactId.length() - 8) + extension;
-        Path finalFile = root.resolve(finalName).normalize();
-        if (!finalFile.startsWith(root)) throw new IllegalArgumentException("Unsafe conversion target path");
+        Path finalFile = resolveConversionTarget(root, safeBaseName(book.getTitle(), book.getId()), extension);
+        String finalName = finalFile.getFileName().toString();
 
         boolean registered = false;
         boolean finalMoved = false;
@@ -372,7 +398,13 @@ public class ConvertBookUseCase {
                     .build();
 
             try {
-                mutations.upsertArtifact(book.getId(), artifact, request.makePreferred());
+                // A conversion is an additional representation of the same logical book. Never let
+                // publishing it rewrite the canonical/original catalogue location in books.*.
+                // The original source path is provenance and must remain stable; users can still
+                // open/select the generated artifact from book_artifacts.
+                mutations.upsertArtifact(book.getId(), artifact, false);
+                log.info("CONVERSION_CATALOG_LINK bookId={} artifactId={} sourceArtifactId={} preferred=false output='{}'",
+                        book.getId(), artifact.getId(), source.artifactId(), finalFile);
             } catch (RuntimeException registrationFailure) {
                 throw new BookConversionException(BookConversionException.Stage.CATALOG_REGISTRATION,
                         selected.converter().id(), source.format(), request.targetFormat(), registrationFailure);
@@ -380,6 +412,9 @@ public class ConvertBookUseCase {
             registered = true;
 
             long durationMs = Math.max(0L, (System.nanoTime() - startedAt) / 1_000_000L);
+            log.info("CONVERSION_DONE title='{}' bookId={} provider={} source={} target={} durationMs={} output='{}' bytes={}",
+                    safeLog(book.getTitle()), book.getId(), selected.converter().id(), source.format(),
+                    request.targetFormat(), durationMs, finalFile, size);
             return new Result(selected.converter().id(), artifact, durationMs);
         } catch (BookConversionException failure) {
             publicationFailure = failure;
@@ -422,19 +457,26 @@ public class ConvertBookUseCase {
                 }
             }
         }
-        if (!jobs.isEmpty()) return List.copyOf(jobs);
+        if (!jobs.isEmpty()) {
+            List<SelectedJob> selected = List.copyOf(jobs);
+            if (preferFastFb2EpubRoute(targetFormat)) {
+                List<SelectedJob> fast = selected.stream()
+                        .filter(job -> isFb2Family(job.source().format()))
+                        .filter(job -> {
+                            BookConverter converter = job.converter().converter();
+                            return converter.priority() >= 1000 || "myhomelib-toolchain".equals(converter.id());
+                        })
+                        .toList();
+                if (!fast.isEmpty()) return List.copyOf(fast);
+            }
+            return selected;
+        }
         String formats = sources.stream().map(Source::format).distinct().toList().toString();
         throw new IllegalArgumentException("No converter for sources " + formats + " -> " + targetFormat);
     }
 
     private static boolean mayTryNextProvider(Throwable failure) {
-        Throwable current = failure;
-        int depth = 0;
-        while (current != null && depth++ < 16) {
-            if (current instanceof ConversionFailureSignal signal) return signal.mayTryNextProvider();
-            current = current.getCause();
-        }
-        return false;
+        return ConversionFailureSignal.mayTryNextProvider(failure);
     }
 
     private List<Source> sourceCandidates(Book book) {
@@ -473,6 +515,24 @@ public class ConvertBookUseCase {
         return metadata != null && (metadata.containsKey("conversion.sourceFormat")
                 || metadata.containsKey("conversion.provider")
                 || metadata.containsKey("conversion.createdAt"));
+    }
+
+    /**
+     * Keep one generated representation per logical book/target format. Re-running the same
+     * conversion updates the existing conversion artifact instead of growing duplicate rows.
+     * Existing random-id artifacts are reused for backwards compatibility; new books get a
+     * deterministic id so the invariant also survives process restarts.
+     */
+    private static String conversionArtifactId(Book book, String targetFormat) {
+        String normalizedTarget = BookConversionCapability.normalizeFormat(targetFormat);
+        for (BookArtifact artifact : book.getArtifacts()) {
+            if (artifact == null || !isDerivedConversionArtifact(artifact)) continue;
+            if (normalizedTarget.equals(BookConversionCapability.normalizeFormat(artifact.getFormat()))) {
+                return artifact.getId();
+            }
+        }
+        String stableKey = book.getId().asString() + "\n" + normalizedTarget;
+        return "conversion:" + UUID.nameUUIDFromBytes(stableKey.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private Source sourceFromArtifact(BookArtifact artifact) {
@@ -518,6 +578,21 @@ public class ConvertBookUseCase {
         String base = SafeFileNameSupport.sanitizeComponent(title, 220);
         if (base.isBlank()) base = SafeFileNameSupport.sanitizeComponent("book-" + id.asString(), 220);
         return base;
+    }
+
+    private static Path resolveConversionTarget(Path root, String baseName, String extension) {
+        Path desired = root.resolve(baseName + extension).normalize();
+        if (!desired.startsWith(root)) throw new IllegalArgumentException("Unsafe conversion target path");
+        if (!Files.exists(desired, LinkOption.NOFOLLOW_LINKS)) return desired;
+
+        int counter = 2;
+        while (counter > 0) {
+            Path candidate = root.resolve(baseName + " (" + counter + ")" + extension).normalize();
+            if (!candidate.startsWith(root)) throw new IllegalArgumentException("Unsafe conversion target path");
+            if (!Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) return candidate;
+            counter++;
+        }
+        throw new IllegalStateException("Conversion filename collision counter exhausted");
     }
 
     private static String safeExtension(String extension) {
@@ -568,13 +643,53 @@ public class ConvertBookUseCase {
     }
 
     private List<BookConverter> orderedConverters() {
-        String mode = settings == null ? "AUTO" : settings.get("converter.mode", "AUTO");
+        String mode = configuredMode();
         return runtimeExtensions.mergeBookConverters(converters).stream()
                 .filter(Objects::nonNull)
                 .filter(converter -> ConverterSelectionPolicy.allowed(converter, mode))
                 .sorted(Comparator.comparingInt(BookConverter::priority).reversed()
                         .thenComparing(BookConverter::id, Comparator.nullsLast(String::compareTo)))
                 .toList();
+    }
+
+    private String configuredMode() {
+        return settings == null ? "AUTO" : settings.get("converter.mode", "AUTO").trim().toUpperCase(Locale.ROOT);
+    }
+
+    /**
+     * AUTO must not silently turn a bundled/native FB2 -> EPUB attempt into a 10-30 minute
+     * Calibre job. If the fast toolchain route is available, a failure is reported immediately;
+     * users can still choose CALIBRE mode explicitly or opt in to the legacy slow fallback.
+     */
+    private boolean preferFastFb2EpubRoute(String targetFormat) {
+        if (!"AUTO".equals(configuredMode())) return false;
+        if (!"epub".equals(BookConversionCapability.normalizeFormat(targetFormat))) return false;
+        return settings == null || !settings.getBoolean("converter.auto.allowSlowFallback", false);
+    }
+
+    private static boolean isFb2Family(String sourceFormat) {
+        String normalized = BookConversionCapability.normalizeFormat(sourceFormat);
+        return "fb2".equals(normalized) || "fb2_zip".equals(normalized);
+    }
+
+    private static String describeCandidates(List<SelectedJob> jobs) {
+        return jobs.stream().map(job -> job.converter().converter().id() + ":"
+                + job.source().format() + "->" + job.converter().capability().targetFormat()).toList().toString();
+    }
+
+    private static long elapsedMs(long startedNanos) {
+        return Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+    }
+
+    private static String compact(Throwable failure) {
+        if (failure == null) return "";
+        String message = failure.getMessage();
+        if (message == null || message.isBlank()) message = failure.getClass().getSimpleName();
+        return message.replace('\r', ' ').replace('\n', ' ').trim();
+    }
+
+    private static String safeLog(String value) {
+        return value == null ? "" : value.replace('\r', ' ').replace('\n', ' ').trim();
     }
 
     private record SelectedConverter(BookConverter converter, BookConversionCapability capability) { }

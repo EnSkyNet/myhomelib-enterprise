@@ -8,11 +8,12 @@ print(root.findtext('m:version', namespaces=ns) or '')
 PY
 )}
 [[ -n "$VERSION" ]] || { echo "Cannot determine version from pom.xml" >&2; exit 2; }
-./tools/invoke-maven.sh clean verify -Pproduction
+bash ./tools/invoke-maven.sh clean verify -Pproduction
 export MHL_SKIP_BUILD=1
+export MHL_REQUIRE_LIBMOBI=1
 ./package-portable.sh
 ./smoke-desktop.sh
-./tools/smoke-runtime-tools.sh
+bash ./tools/smoke-runtime-tools.sh
 ./smoke-portable.sh
 # The app-image is an intermediate packaging directory. The versioned portable
 # archive already contains it, so remove the raw image before checksums/publication.

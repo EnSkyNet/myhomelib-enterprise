@@ -22,7 +22,7 @@ dialog=runpy.run_path(str(ROOT/'tools/localization-contract-support.py'))['local
 reader_view=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderView.java')
 reader_controller=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java')
 theme=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderTheme.java')
-features=text('MYHOMELIB-FEATURES.md')
+features=text('docs/current/FEATURES.md')
 
 for marker in ('"day"','"night"'):
     need(marker in presets, f'production presets missing {marker}')

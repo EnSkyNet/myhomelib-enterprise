@@ -1,8 +1,7 @@
 package com.myhomelibcorp.infrastructure.translation;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.textprovider.TextProviderErrorKind;
 import com.myhomelibcorp.application.textprovider.TextProviderException;
@@ -10,17 +9,15 @@ import com.myhomelibcorp.application.textprovider.TextProviderRequestContext;
 import com.myhomelibcorp.application.translation.TranslationProvider;
 import com.myhomelibcorp.application.translation.TranslationQuery;
 import com.myhomelibcorp.application.translation.TranslationResult;
-import com.myhomelibcorp.infrastructure.download.OnlineHttpPolicy;
+import com.myhomelibcorp.infrastructure.download.OnlineHttpClientProvider;
 import com.myhomelibcorp.infrastructure.textprovider.TextProviderHttpSupport;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
+import java.util.Map;
 import java.util.Objects;
 
 @Component
@@ -33,9 +30,14 @@ public final class GoogleTranslationProvider implements TranslationProvider {
     private final ObjectMapper objectMapper;
     private final HttpClient client;
 
-    @Autowired
     public GoogleTranslationProvider(ApplicationSettingsPort settings, ObjectMapper objectMapper) {
-        this(settings, objectMapper, new OnlineHttpPolicy(settings).create(null));
+        this(settings, objectMapper, new OnlineHttpClientProvider(settings).shared());
+    }
+
+    @Autowired
+    public GoogleTranslationProvider(ApplicationSettingsPort settings, ObjectMapper objectMapper,
+                 OnlineHttpClientProvider httpClients) {
+        this(settings, objectMapper, Objects.requireNonNull(httpClients, "httpClients").shared());
     }
 
     GoogleTranslationProvider(ApplicationSettingsPort settings, ObjectMapper objectMapper, HttpClient client) {
@@ -65,43 +67,28 @@ public final class GoogleTranslationProvider implements TranslationProvider {
         if (!query.sourceLanguage().isBlank()) {
             body.append('&').append(TextProviderHttpSupport.formParam("source", query.sourceLanguage()));
         }
-        Duration remaining = context.remainingTimeout();
-        if (remaining.isZero()) throw TextProviderException.timeout();
-        HttpRequest request = HttpRequest.newBuilder(endpoint)
-                .timeout(remaining)
-                .header("Accept", "application/json")
-                .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                .header("X-Goog-Api-Key", key)
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
-                .build();
-        HttpResponse<String> response = TextProviderHttpSupport.send(client, request, context, PROVIDER_NAME);
+        HttpResponse<String> response = TextProviderHttpSupport.postForm(
+                client, endpoint, body.toString(),
+                Map.of("X-Goog-Api-Key", key),
+                context, PROVIDER_NAME);
         return parse(response, query);
     }
 
     private TranslationResult parse(HttpResponse<String> response, TranslationQuery query) throws TextProviderException {
-        int status = response.statusCode();
-        if (status == 429) throw TextProviderException.rateLimited(TextProviderHttpSupport.parseRetryAfter(response));
-        if (status == 400 || status == 401 || status == 403) {
-            throw new TextProviderException(TextProviderErrorKind.AUTHENTICATION, "Google Translation request was rejected");
-        }
-        if (status == 408 || status == 504) throw TextProviderException.timeout();
-        if (status >= 500) throw new TextProviderException(TextProviderErrorKind.UNAVAILABLE, "Google Translation is unavailable");
-        if (status < 200 || status >= 300) {
-            throw new TextProviderException(TextProviderErrorKind.FAILED, "Google Translation request failed with HTTP " + status);
-        }
-        try {
-            JsonNode root = objectMapper.readTree(response.body());
-            if (root == null || !root.isObject()) {
-                throw new TextProviderException(TextProviderErrorKind.INVALID_RESPONSE, "Google Translation returned an invalid response");
-            }
-            JsonNode item = root.path("data").path("translations").path(0);
-            String text = item.path("translatedText").asText("").trim();
-            String source = item.path("detectedSourceLanguage").asText(query.sourceLanguage()).trim();
-            if (text.isBlank()) throw new TextProviderException(TextProviderErrorKind.INVALID_RESPONSE, "Google Translation response has no translation");
-            return new TranslationResult(PROVIDER_ID, PROVIDER_NAME, source, query.targetLanguage(), text);
-        } catch (JsonProcessingException invalidJson) {
-            throw new TextProviderException(TextProviderErrorKind.INVALID_RESPONSE, "Google Translation returned invalid JSON", invalidJson);
-        }
+        TextProviderHttpSupport.requireSuccessStatus(
+                response,
+                status -> status == 400 || status == 401 || status == 403,
+                new TextProviderHttpSupport.FailureMessages(
+                        "Google Translation request was rejected",
+                        "Google Translation is unavailable",
+                        "Google Translation request failed with HTTP "));
+        JsonNode root = TextProviderHttpSupport.readJsonObject(
+                objectMapper, response.body(), "Google Translation returned an invalid response", "Google Translation returned invalid JSON");
+        JsonNode item = root.path("data").path("translations").path(0);
+        String text = item.path("translatedText").asString("").trim();
+        String source = item.path("detectedSourceLanguage").asString(query.sourceLanguage()).trim();
+        if (text.isBlank()) throw new TextProviderException(TextProviderErrorKind.INVALID_RESPONSE, "Google Translation response has no translation");
+        return new TranslationResult(PROVIDER_ID, PROVIDER_NAME, source, query.targetLanguage(), text);
     }
 
     private String apiKey() {

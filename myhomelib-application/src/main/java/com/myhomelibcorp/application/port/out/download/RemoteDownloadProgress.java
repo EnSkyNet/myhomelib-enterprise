@@ -26,7 +26,7 @@ public interface RemoteDownloadProgress {
             if (bytesProcessed < 0) bytesProcessed = 0;
             if (bytesTotal == 0) bytesTotal = -1;
             currentItem = currentItem == null ? "" : currentItem;
-            fraction = Math.max(0.0, Math.min(1.0, fraction));
+            fraction = Double.isFinite(fraction) ? Math.max(0.0, Math.min(1.0, fraction)) : 0.0;
         }
     }
 }

@@ -34,13 +34,24 @@ public final class DuplicateDecisionService {
     }
 
     public List<OrganizerAnalysisItem> classify(List<OrganizerAnalysisItem> input) {
+        return classify(input, true);
+    }
+
+    /**
+     * When fuzzy analysis is disabled for very large libraries, keep all three
+     * deterministic duplicate rules while avoiding quadratic pair comparisons
+     * and the retention of an extra Book object for every analyzed item.
+     */
+    public List<OrganizerAnalysisItem> classify(List<OrganizerAnalysisItem> input, boolean includeFuzzySuggestions) {
         if (input == null || input.isEmpty()) return List.of();
 
         Map<String, OrganizerAnalysisItem> byBytes = new HashMap<>();
         Map<String, OrganizerAnalysisItem> bySemantic = new HashMap<>();
         Map<String, OrganizerAnalysisItem> byIsbn = new HashMap<>();
-        List<OrganizerAnalysisItem> previous = new ArrayList<>(input.size());
-        List<Book> previousFuzzyBooks = new ArrayList<>(input.size());
+        List<OrganizerAnalysisItem> previous = includeFuzzySuggestions
+                ? new ArrayList<>(input.size()) : null;
+        List<Book> previousFuzzyBooks = includeFuzzySuggestions
+                ? new ArrayList<>(input.size()) : null;
         List<OrganizerAnalysisItem> result = new ArrayList<>(input.size());
 
         for (OrganizerAnalysisItem item : input) {
@@ -70,7 +81,7 @@ public final class DuplicateDecisionService {
                 }
             }
 
-            Book fuzzyBook = fuzzyProjection(item);
+            Book fuzzyBook = includeFuzzySuggestions ? fuzzyProjection(item) : null;
             if (decision.kind() == DuplicateKind.NONE && fuzzyBook != null) {
                 FuzzyCandidate best = null;
                 for (int index = 0; index < previous.size(); index++) {
@@ -92,8 +103,10 @@ public final class DuplicateDecisionService {
 
             OrganizerAnalysisItem updated = item.withDuplicate(decision);
             result.add(updated);
-            previous.add(item);
-            previousFuzzyBooks.add(fuzzyBook);
+            if (includeFuzzySuggestions) {
+                previous.add(item);
+                previousFuzzyBooks.add(fuzzyBook);
+            }
 
             if (nonBlank(fileHash)) byBytes.putIfAbsent(fileHash, item);
             if (nonBlank(item.fingerprint().semanticSha256())) {

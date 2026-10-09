@@ -1,7 +1,7 @@
 package com.myhomelibcorp.integration;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.sync.conflict.SyncConflictReviewSelection;
 import org.junit.jupiter.api.Test;
 
@@ -44,6 +44,35 @@ class PortableSnapshotConflictServiceTest {
     }
 
     @Test
+    void scalarConflictPreviewDoesNotSplitSurrogatePairAtLimit() throws Exception {
+        String localValue = "a".repeat(159) + "😀" + "tail";
+        String remoteValue = "different";
+        byte[] local = json("{\"schemaVersion\":4,\"format\":\"myhomelib-user-data\",\"custom\":"
+                + mapper.writeValueAsString(localValue) + "}");
+        byte[] remote = json("{\"schemaVersion\":4,\"format\":\"myhomelib-user-data\",\"custom\":"
+                + mapper.writeValueAsString(remoteValue) + "}");
+
+        String preview = (String) service.conflicts(local, remote).getFirst().localSnapshot().arguments().getFirst();
+
+        assertThat(preview).endsWith("…");
+        assertThat(Character.isHighSurrogate(preview.charAt(preview.length() - 2))).isFalse();
+    }
+
+    @Test
+    void scalarConflictPreviewKeepsCombiningSequenceAtLimit() throws Exception {
+        String localValue = "a".repeat(159) + "e\u0301" + "tail";
+        byte[] local = json("{\"schemaVersion\":4,\"format\":\"myhomelib-user-data\",\"custom\":"
+                + mapper.writeValueAsString(localValue) + "}");
+        byte[] remote = json("{\"schemaVersion\":4,\"format\":\"myhomelib-user-data\",\"custom\":\"different\"}");
+
+        String preview = (String) service.conflicts(local, remote).getFirst().localSnapshot().arguments().getFirst();
+
+        assertThat(preview).endsWith("…");
+        assertThat(preview).doesNotEndWith("e…");
+        assertThat(preview).endsWith("a…");
+    }
+
+    @Test
     void mergesEachConflictingSectionAccordingToExplicitChoice() throws Exception {
         byte[] local = json("""
                 {"schemaVersion":4,"format":"myhomelib-user-data",
@@ -64,10 +93,10 @@ class PortableSnapshotConflictServiceTest {
         JsonNode result = mapper.readTree(merged);
 
         assertThat(result.path("readingProgress").get(0).path("percent").asInt()).isEqualTo(70);
-        assertThat(result.path("bookmarks").get(0).path("id").asText()).isEqualTo("local");
-        assertThat(result.path("filterSettings").path("lang").asText()).isEqualTo("en");
+        assertThat(result.path("bookmarks").get(0).path("id").asString()).isEqualTo("local");
+        assertThat(result.path("filterSettings").path("lang").asString()).isEqualTo("en");
         assertThat(result.path("schemaVersion").asInt()).isEqualTo(4);
-        assertThat(result.path("format").asText()).isEqualTo("myhomelib-user-data");
+        assertThat(result.path("format").asString()).isEqualTo("myhomelib-user-data");
     }
 
     @Test

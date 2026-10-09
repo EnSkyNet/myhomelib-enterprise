@@ -39,10 +39,6 @@ import java.util.function.DoubleConsumer;
 @RequiredArgsConstructor
 @Slf4j
 public class InpxImportPipeline {
-    private static final long AUTHOR_PRELOAD_MIN_RECORDS = 100_000L;
-    private static final long AUTHOR_DELTA_PRELOAD_MIN_RECORDS = 10_000L;
-    private static final int AUTHOR_SEEN_FILTER_BITS = 1 << 24; // 2 MiB Bloom filter
-    private static final int AUTHOR_SEEN_FILTER_MASK = AUTHOR_SEEN_FILTER_BITS - 1;
     private static final long SELECTIVE_PREVIEW_MIN_RECORDS = 100_000L;
     private static final long LARGE_CATALOG_BATCH_MIN_RECORDS = 100_000L;
     private final InpxReader reader;
@@ -213,12 +209,8 @@ public class InpxImportPipeline {
         this.authorCache = newBoundedAuthorCache(authorCacheSize);
         this.genreCache = buildGenreCache();
 
-        boolean optimized = false;
         ImportOutcome outcome;
         try {
-            bulkOptimizer.enableBulkInsertMode();
-            optimized = true;
-
             var dataSource = collectionManager.getCurrentDataSource();
             if (dataSource != null) {
                 logPoolState(dataSource, "before-transaction");
@@ -228,16 +220,22 @@ public class InpxImportPipeline {
                 try {
                     outcome = transaction.execute(status -> {
                         log.info("INPX transaction started; connection acquired by transaction manager");
-                        ImportOutcome current = importTransactional(
-                                file, effectiveBatch, root, cancelFlag, sourceKey, sourceLocation,
-                                sourceFingerprint, totalRecords, catalogFullSnapshot, onlineCollection, databaseInitiallyEmpty, authorTableInitiallyEmpty, indexedLocalFiles,
-                                progressListener, statusConsumer, opId, operationProgressListener);
-                        if (current.cancelled()) {
-                            status.setRollbackOnly();
-                            log.info("INPX import cancelled; transaction marked rollback-only after {} parsed records",
-                                    current.processed());
+                        bulkOptimizer.enableBulkInsertMode();
+                        try {
+                            ImportOutcome current = importTransactional(
+                                    file, effectiveBatch, root, cancelFlag, sourceKey, sourceLocation,
+                                    sourceFingerprint, totalRecords, catalogFullSnapshot, onlineCollection, databaseInitiallyEmpty, authorTableInitiallyEmpty, indexedLocalFiles,
+                                    progressListener, statusConsumer, opId, operationProgressListener);
+                            if (current.cancelled()) {
+                                status.setRollbackOnly();
+                                log.info("INPX import cancelled; transaction marked rollback-only after {} parsed records",
+                                        current.processed());
+                            }
+                            return current;
+                        } finally {
+                            // Restore connection-scoped PRAGMAs before Spring returns this connection to Hikari.
+                            bulkOptimizer.disableBulkInsertMode();
                         }
-                        return current;
                     });
                     long txMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - transactionStarted);
                     if (outcome != null && outcome.cancelled()) {
@@ -265,7 +263,6 @@ public class InpxImportPipeline {
                         progressListener, statusConsumer, opId, operationProgressListener);
             }
         } finally {
-            if (optimized) bulkOptimizer.disableBulkInsertMode();
             if (authorCache != null) authorCache.clear();
             if (genreCache != null) genreCache.clear();
             authorCache = null;
@@ -370,7 +367,7 @@ public class InpxImportPipeline {
         // a name may already exist and therefore needs exact DB resolution. False positives only
         // cost a lookup; they cannot create duplicate author identities.
         BitSet seenInitialAuthorNames = fastInitialBaseline && authorTableInitiallyEmpty
-                ? new BitSet(AUTHOR_SEEN_FILTER_BITS) : null;
+                ? InpxAuthorCacheSupport.newSeenFilter() : null;
         Map<String, Boolean> localCache = new HashMap<>();
         List<NormalizedBook> books = new ArrayList<>(effectiveBatch);
 
@@ -385,6 +382,7 @@ public class InpxImportPipeline {
         long lastReported = 0;
         ImportIndexLifecycle.SuspendedIndexes suspendedIndexes = ImportIndexLifecycle.SuspendedIndexes.empty();
         boolean cancelled = false;
+        boolean completedSuccessfully = false;
         ImportChangeAccumulator changes = new ImportChangeAccumulator(effectiveChangeTrackingLimit());
         boolean selectivePreviewFastPath = shouldUseSelectivePreviewFastPath(
                 catalogFullSnapshot, onlineCollection, fastInitialBaseline, totalRecords, indexedLocalFiles);
@@ -463,10 +461,19 @@ public class InpxImportPipeline {
             }
 
             ImportChangeSet changeSet = changes.snapshot();
+            completedSuccessfully = !cancelled;
             return new ImportOutcome(imported, skipped, duplicates, errors, withoutAuthor, withoutGenre,
                     explicitlyDeleted, processed, cancelled, false, changeSet);
         } finally {
-            importIndexLifecycle.restore(suspendedIndexes);
+            if (fastInitialBaseline && completedSuccessfully) {
+                // Recreating ~20 secondary indexes for a 700k-row baseline dominated the observed
+                // critical path (~4.5 min after the last INPX record had already been parsed).
+                // Definitions were durably queued before DROP and will be restored after the outer
+                // UPDATE releases its lease. A failed/cancelled transaction restores immediately.
+                log.info("Initial baseline committed with deferred SQLite index restore");
+            } else {
+                importIndexLifecycle.restore(suspendedIndexes);
+            }
         }
     }
 
@@ -614,7 +621,7 @@ public class InpxImportPipeline {
         for (InpxBookNormalizer.CatalogPreview preview : previews) {
             ids.add(preview.catalogSnapshot().bookId());
         }
-        Map<String, ExistingSearchState> existing = loadExistingSearchStates(ids);
+        Map<String, InpxSearchStateSupport.ExistingSearchState> existing = loadExistingSearchStates(ids);
         List<NormalizedBook> persistenceBooks = new ArrayList<>();
         List<SearchFingerprintRow> searchStateRows = new ArrayList<>();
         List<CatalogBookSnapshot> seenSnapshots = tracked ? new ArrayList<>(previews.size()) : List.of();
@@ -628,10 +635,10 @@ public class InpxImportPipeline {
         for (InpxBookNormalizer.CatalogPreview preview : previews) {
             CatalogBookSnapshot previewSnapshot = preview.catalogSnapshot();
             String id = previewSnapshot.bookId();
-            ExistingSearchState old = existing.get(id);
+            InpxSearchStateSupport.ExistingSearchState old = existing.get(id);
             // The fast-path guard proves there are no local files under the online library root.
-            // Existing local=true is intentionally preserved by requiresBookPersistence(false, old).
-            boolean needsPersistence = requiresBookPersistence(previewSnapshot.catalogFingerprint(), false, old);
+            // Existing local=true is intentionally preserved by InpxSearchStateSupport.requiresBookPersistence(false, old).
+            boolean needsPersistence = InpxSearchStateSupport.requiresBookPersistence(previewSnapshot.catalogFingerprint(), false, old);
             NormalizedBook normalized = null;
             if (needsPersistence) {
                 normalized = normalizer.normalize(
@@ -651,7 +658,7 @@ public class InpxImportPipeline {
             String searchFingerprint;
             if (normalized != null) {
                 searchFingerprint = normalized.searchFingerprint();
-            } else if (shouldComputePreviewSearchFingerprint(
+            } else if (InpxSearchStateSupport.shouldComputePreviewSearchFingerprint(
                     incomingDeleted, snapshot.catalogFingerprint(), old)) {
                 searchFingerprint = normalizer.previewSearchFingerprint(preview);
             } else {
@@ -661,14 +668,14 @@ public class InpxImportPipeline {
                 searchFingerprint = old == null ? null : old.searchFingerprint();
             }
 
-            classifySearchChange(id, incomingDeleted, searchFingerprint,
+            InpxSearchStateSupport.classifySearchChange(id, incomingDeleted, searchFingerprint,
                     snapshot.catalogFingerprint(), old, changes);
-            if (normalized != null && requiresBookPersistence(snapshot.catalogFingerprint(), incomingLocal, old)) {
+            if (normalized != null && InpxSearchStateSupport.requiresBookPersistence(snapshot.catalogFingerprint(), incomingLocal, old)) {
                 persistenceBooks.add(normalized);
             } else if (tracked) {
                 seenSnapshots.add(snapshot);
             }
-            if (requiresSearchStatePersistence(incomingDeleted, searchFingerprint,
+            if (InpxSearchStateSupport.requiresSearchStatePersistence(incomingDeleted, searchFingerprint,
                     snapshot.catalogFingerprint(), old)) {
                 searchStateRows.add(new SearchFingerprintRow(id, searchFingerprint));
             }
@@ -749,12 +756,6 @@ public class InpxImportPipeline {
         }
     }
 
-    private static final String SEARCH_FP_MODEL = "mhl.lucene.searchable-metadata";
-    private static final int SEARCH_FP_VERSION = 1;
-
-    static record ExistingSearchState(boolean exists, boolean deleted, boolean local, String catalogFingerprint,
-                                      String searchModel, Integer searchVersion, String searchFingerprint) { }
-
     private record BatchClassification(List<NormalizedBook> persistenceBooks,
                                        List<NormalizedBook> searchStateBooks,
                                        List<CatalogBookSnapshot> seenSnapshots) { }
@@ -766,7 +767,7 @@ public class InpxImportPipeline {
         // individually below. Avoid a HashSet-backed Stream.distinct() on every 5k batch.
         List<String> ids = new ArrayList<>(books.size());
         for (NormalizedBook book : books) ids.add((String) book.row()[0]);
-        Map<String, ExistingSearchState> existing = loadExistingSearchStates(ids);
+        Map<String, InpxSearchStateSupport.ExistingSearchState> existing = loadExistingSearchStates(ids);
         List<NormalizedBook> persistenceBooks = new ArrayList<>();
         List<NormalizedBook> searchStateBooks = new ArrayList<>();
         List<CatalogBookSnapshot> seenSnapshots = collectTracking ? new ArrayList<>(books.size()) : List.of();
@@ -775,15 +776,15 @@ public class InpxImportPipeline {
             String id = (String) row[0];
             boolean incomingDeleted = ((Number) row[15]).intValue() != 0;
             boolean incomingLocal = ((Number) row[16]).intValue() != 0;
-            ExistingSearchState old = existing.get(id);
-            classifySearchChange(id, incomingDeleted, book.searchFingerprint(),
+            InpxSearchStateSupport.ExistingSearchState old = existing.get(id);
+            InpxSearchStateSupport.classifySearchChange(id, incomingDeleted, book.searchFingerprint(),
                     book.catalogSnapshot().catalogFingerprint(), old, changes);
-            if (requiresBookPersistence(book.catalogSnapshot().catalogFingerprint(), incomingLocal, old)) {
+            if (InpxSearchStateSupport.requiresBookPersistence(book.catalogSnapshot().catalogFingerprint(), incomingLocal, old)) {
                 persistenceBooks.add(book);
             } else if (collectTracking) {
                 seenSnapshots.add(book.catalogSnapshot());
             }
-            if (requiresSearchStatePersistence(incomingDeleted, book.searchFingerprint(),
+            if (InpxSearchStateSupport.requiresSearchStatePersistence(incomingDeleted, book.searchFingerprint(),
                     book.catalogSnapshot().catalogFingerprint(), old)) {
                 searchStateBooks.add(book);
             }
@@ -792,10 +793,10 @@ public class InpxImportPipeline {
                 collectTracking ? List.copyOf(seenSnapshots) : List.of());
     }
 
-    private Map<String, ExistingSearchState> loadExistingSearchStates(List<String> ids) {
+    private Map<String, InpxSearchStateSupport.ExistingSearchState> loadExistingSearchStates(List<String> ids) {
         if (ids == null || ids.isEmpty()) return Map.of();
         int expected = Math.max(16, (int) Math.ceil(ids.size() / 0.75d));
-        Map<String, ExistingSearchState> existing = new HashMap<>(expected);
+        Map<String, InpxSearchStateSupport.ExistingSearchState> existing = new HashMap<>(expected);
         final int chunk = 400;
         for (int from = 0; from < ids.size(); from += chunk) {
             List<String> part = ids.subList(from, Math.min(ids.size(), from + chunk));
@@ -808,7 +809,7 @@ public class InpxImportPipeline {
                       LEFT JOIN book_search_state s ON s.book_id=b.id
                      WHERE b.id IN (""" + placeholders + ")",
                     (org.springframework.jdbc.core.RowCallbackHandler) rs -> {
-                        existing.put(rs.getString("id"), new ExistingSearchState(
+                        existing.put(rs.getString("id"), new InpxSearchStateSupport.ExistingSearchState(
                                 true, rs.getInt("deleted") != 0, rs.getInt("local") != 0,
                                 rs.getString("catalog_fingerprint"), rs.getString("fingerprint_model"),
                                 (Integer) rs.getObject("fingerprint_version"), rs.getString("fingerprint")));
@@ -816,68 +817,6 @@ public class InpxImportPipeline {
                     part.toArray());
         }
         return existing;
-    }
-
-    static boolean requiresBookPersistence(String incomingCatalogFingerprint, boolean incomingLocal,
-                                           ExistingSearchState old) {
-        if (old == null) return true;
-        if (!Objects.equals(old.catalogFingerprint(), incomingCatalogFingerprint)) return true;
-        // Preserve existing local bytes when the catalog says remote; only a newly discovered local file
-        // requires a write when catalog metadata itself is unchanged.
-        return incomingLocal && !old.local();
-    }
-
-    static boolean shouldComputePreviewSearchFingerprint(boolean incomingDeleted,
-                                                         String incomingCatalogFingerprint,
-                                                         ExistingSearchState old) {
-        if (incomingDeleted) return false;
-        if (old == null || old.deleted()) return true;
-        if (!Objects.equals(old.catalogFingerprint(), incomingCatalogFingerprint)) return true;
-        if (old.searchFingerprint() == null) return false;
-        return !SEARCH_FP_MODEL.equals(old.searchModel())
-                || old.searchVersion() == null
-                || old.searchVersion() != SEARCH_FP_VERSION;
-    }
-
-    static boolean requiresSearchStatePersistence(boolean incomingDeleted, String incomingSearchFingerprint,
-                                                  String incomingCatalogFingerprint, ExistingSearchState old) {
-        if (incomingDeleted) return false;
-        if (old == null || old.deleted()) return true;
-        boolean sameSearch = SEARCH_FP_MODEL.equals(old.searchModel())
-                && old.searchVersion() != null && old.searchVersion() == SEARCH_FP_VERSION
-                && Objects.equals(old.searchFingerprint(), incomingSearchFingerprint);
-        if (sameSearch) return false;
-        // Initial baselines intentionally omit book_search_state. If the complete catalog fingerprint
-        // is unchanged, the legacy fallback remains a valid proof that searchable metadata is unchanged.
-        return !(old.searchFingerprint() == null
-                && old.catalogFingerprint() != null
-                && Objects.equals(old.catalogFingerprint(), incomingCatalogFingerprint));
-    }
-
-    static void classifySearchChange(String id, boolean incomingDeleted, String incomingSearchFingerprint,
-                                     String incomingCatalogFingerprint, ExistingSearchState old,
-                                     ImportChangeAccumulator changes) {
-        if (incomingDeleted) {
-            // A tombstone is a search change only when an actually indexed/active book becomes deleted.
-            // Replaying an already-deleted row must not consume bounded change-tracking capacity.
-            if (old != null && !old.deleted()) changes.recordDeleted(id);
-            else changes.markUnchanged(id);
-            return;
-        }
-        if (old == null || old.deleted()) {
-            // New and re-activated books both need to be present in Lucene after the update.
-            changes.recordInserted(id);
-            return;
-        }
-        boolean sameSearch = SEARCH_FP_MODEL.equals(old.searchModel())
-                && old.searchVersion() != null && old.searchVersion() == SEARCH_FP_VERSION
-                && Objects.equals(old.searchFingerprint(), incomingSearchFingerprint);
-        // Upgrade fallback: an unchanged v7 catalog fingerprint proves searchable metadata did not change.
-        boolean sameLegacyCatalog = old.searchFingerprint() == null
-                && old.catalogFingerprint() != null
-                && Objects.equals(old.catalogFingerprint(), incomingCatalogFingerprint);
-        if (!sameSearch && !sameLegacyCatalog && !changes.containsInserted(id)) changes.recordUpdated(id);
-        else changes.markUnchanged(id);
     }
 
     private record SearchFingerprintRow(String bookId, String fingerprint) { }
@@ -903,8 +842,8 @@ public class InpxImportPipeline {
                     updated_at=CURRENT_TIMESTAMP
                 """, rows, 1000, (ps, row) -> {
             ps.setString(1, row.bookId());
-            ps.setString(2, SEARCH_FP_MODEL);
-            ps.setInt(3, SEARCH_FP_VERSION);
+            ps.setString(2, InpxSearchStateSupport.SEARCH_FP_MODEL);
+            ps.setInt(3, InpxSearchStateSupport.SEARCH_FP_VERSION);
             ps.setString(4, row.fingerprint());
         });
     }
@@ -959,95 +898,22 @@ public class InpxImportPipeline {
                 : batchWriter.batchInsertAuthorsAndResolveIds(candidates);
     }
 
-    /**
-     * Bloom-filter membership with no false negatives for names added through this method.
-     * A false positive is intentionally safe: it merely selects the exact DB-resolution path.
-     */
     private static boolean mightHaveSeenAuthor(BitSet filter, AuthorNameKey key) {
-        int h1 = mixAuthorHash(key.hashCode());
-        int h2 = mixAuthorHash(31 * key.firstName().hashCode()
-                + 17 * key.middleName().hashCode() + key.lastName().hashCode());
-        if (h2 == 0) h2 = 0x9E3779B9;
-        int i1 = h1 & AUTHOR_SEEN_FILTER_MASK;
-        int i2 = (h1 + h2) & AUTHOR_SEEN_FILTER_MASK;
-        int i3 = (h1 + 2 * h2) & AUTHOR_SEEN_FILTER_MASK;
-        boolean maybeSeen = filter.get(i1) && filter.get(i2) && filter.get(i3);
-        filter.set(i1);
-        filter.set(i2);
-        filter.set(i3);
-        return maybeSeen;
+        return InpxAuthorCacheSupport.mightHaveSeen(filter, key);
     }
 
-    private static int mixAuthorHash(int value) {
-        int x = value;
-        x ^= x >>> 16;
-        x *= 0x7feb352d;
-        x ^= x >>> 15;
-        x *= 0x846ca68b;
-        x ^= x >>> 16;
-        return x;
-    }
-
-    private static boolean shouldPreloadAuthorCache(boolean onlineCollection, boolean catalogFullSnapshot, long totalRecords) {
-        if (!onlineCollection) return false;
-        return catalogFullSnapshot
-                ? totalRecords >= AUTHOR_PRELOAD_MIN_RECORDS
-                : totalRecords >= AUTHOR_DELTA_PRELOAD_MIN_RECORDS;
+    private static boolean shouldPreloadAuthorCache(
+            boolean onlineCollection, boolean catalogFullSnapshot, long totalRecords) {
+        return InpxAuthorCacheSupport.shouldPreload(onlineCollection, catalogFullSnapshot, totalRecords);
     }
 
     private void preloadAuthorCacheIfFits(boolean authorTableInitiallyEmpty) {
-        if (authorTableInitiallyEmpty || authorCache == null || authorCache.isEmpty() == false) return;
-        int limit = normalizedAuthorCacheLimit(authorCacheSize);
-        try {
-            Long authorCount = getJdbcTemplate().queryForObject("SELECT COUNT(*) FROM authors", Long.class);
-            if (authorCount == null || authorCount <= 0 || authorCount > limit) {
-                if (authorCount != null && authorCount > limit) {
-                    log.info("Author preload skipped: {} rows exceed cache limit {}", authorCount, limit);
-                }
-                return;
-            }
-            long started = System.nanoTime();
-            getJdbcTemplate().query(
-                    "SELECT id, first_name, middle_name, last_name FROM authors",
-                    (org.springframework.jdbc.core.RowCallbackHandler) rs -> {
-                        String id = rs.getString("id");
-                        if (id == null || id.isBlank()) return;
-                        authorCache.put(new AuthorNameKey(
-                                rs.getString("first_name"),
-                                rs.getString("middle_name"),
-                                rs.getString("last_name")), id);
-                    });
-            long elapsedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
-            log.info("Preloaded {} persistent authors into import cache in {} ms", authorCache.size(), elapsedMs);
-        } catch (RuntimeException preloadFailure) {
-            // Preload is an optimization only. Preserve the existing exact DB lookup fallback on any failure.
-            authorCache.clear();
-            log.warn("Author cache preload failed; continuing with incremental DB resolution", preloadFailure);
-        }
-    }
-
-    private static int normalizedAuthorCacheLimit(int configuredLimit) {
-        return Math.max(10_000, Math.min(configuredLimit, 500_000));
+        InpxAuthorCacheSupport.preloadIfFits(
+                getJdbcTemplate(), authorCache, authorCacheSize, authorTableInitiallyEmpty);
     }
 
     private static Map<AuthorNameKey, String> newBoundedAuthorCache(int configuredLimit) {
-        int limit = normalizedAuthorCacheLimit(configuredLimit);
-        int initialCapacity = Math.min(65_536, Math.max(16_384, limit / 4));
-        return new BoundedAuthorCache(limit, initialCapacity);
-    }
-
-    private static final class BoundedAuthorCache extends LinkedHashMap<AuthorNameKey, String> {
-        private final int limit;
-
-        private BoundedAuthorCache(int limit, int initialCapacity) {
-            super(initialCapacity, 0.75f, true);
-            this.limit = limit;
-        }
-
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<AuthorNameKey, String> eldest) {
-            return size() > limit;
-        }
+        return InpxAuthorCacheSupport.newBoundedCache(configuredLimit);
     }
 
     private Map<String, String> buildGenreCache() {

@@ -47,6 +47,30 @@ if "catch (DataAccessException persistenceFailure)" not in migration_check or "t
 if "isMissingSettingsTable" not in migration_check:
     errors.append("Reader settings migration check lacks narrow pre-V42 missing-table fallback")
 
+
+reader_global_prefs = text("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/reader/ReaderPreferencesService.java")
+save_block = reader_global_prefs[reader_global_prefs.index("public void savePreferences") : reader_global_prefs.index("private ReaderPreferences readExistingPreferences")]
+reset_block = reader_global_prefs[reader_global_prefs.index("public void resetPreferences") :]
+if 'throw new IllegalStateException("Не вдалося зберегти налаштування Reader"' not in save_block:
+    errors.append("global Reader settings save still hides persistence failure from the UI")
+if 'throw new IllegalStateException("Не вдалося скинути налаштування Reader"' not in reset_block:
+    errors.append("global Reader settings reset still hides persistence failure from the UI")
+
+session = text("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteSessionRepository.java")
+get_session = session[session.index("public String getLastOpenedBookId") : session.index("public void clearSession")]
+clear_session = session[session.index("public void clearSession") :]
+if get_session.index("prefs.get(prefKey") > get_session.index("queryExecutor.queryForObject"):
+    errors.append("Reader session still prefers potentially stale SQLite state over the write-through Preferences fallback")
+if "PREF_CLEARED_PREFIX" not in session or "prefs.putBoolean(clearedKey, true)" not in clear_session:
+    errors.append("Reader session clear lacks a tombstone against stale SQLite resurrection")
+
+kobo = text("myhomelib-application/src/main/java/com/myhomelibcorp/application/kobo/KoboSyncService.java")
+book_lookup = kobo[kobo.index("public Optional<KoboBookProjection> book") : kobo.index("public Optional<KoboProgressState> progress")]
+if "catch (RuntimeException invalidId)" in book_lookup:
+    errors.append("Kobo book lookup still hides repository failures as an invalid/missing book")
+if "catch (IllegalArgumentException invalidId)" not in book_lookup:
+    errors.append("Kobo malformed book IDs lack a narrow validation fallback")
+
 if errors:
     print("PERSISTENCE ERROR TRANSPARENCY: FAIL")
     for error in errors: print(" -", error)
@@ -57,3 +81,6 @@ print(" - Lucene count failures are not represented as zero documents")
 print(" - maintenance/legacy DB failures fail the operation instead of producing partial state")
 print(" - Reader migration probes distinguish missing schema from real DB failure")
 print(" - legacy numeric fallbacks no longer swallow ResultSet failures")
+print(" - global Reader settings save/reset failures propagate to the UI")
+print(" - Reader session Preferences/tombstone prevent stale SQLite resurrection")
+print(" - Kobo lookup distinguishes malformed IDs from repository failures")

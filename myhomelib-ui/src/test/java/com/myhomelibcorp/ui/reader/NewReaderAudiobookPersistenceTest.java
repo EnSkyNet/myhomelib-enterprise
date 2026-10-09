@@ -55,6 +55,20 @@ class NewReaderAudiobookPersistenceTest {
         assertThat(service.audioBookmarkToPosition(saved)).contains(new AudioPosition(5000, 1, 2));
     }
 
+
+    @Test void nonFiniteAudioPercentIsSanitizedBeforePersistence() {
+        ReadingProgressRepository progress = mock(ReadingProgressRepository.class);
+        BookmarkRepository bookmarks = mock(BookmarkRepository.class);
+        LocalizationService i18n = mock(LocalizationService.class);
+        when(progress.findByBookId("book-nan")).thenReturn(Optional.empty());
+        NewReaderPersistenceService service = newPersistence(progress, bookmarks, i18n);
+
+        assertThat(service.saveAudioPosition("book-nan", new AudioPosition(100L, 0, 0), Double.NaN)).isTrue();
+        ArgumentCaptor<ReadingProgressDto> captor = ArgumentCaptor.forClass(ReadingProgressDto.class);
+        verify(progress).save(captor.capture());
+        assertThat(captor.getValue().getPercent()).isZero();
+    }
+
     private static NewReaderPersistenceService newPersistence(
             ReadingProgressRepository progress, BookmarkRepository bookmarks, LocalizationService i18n) {
         var lifecycle = org.mockito.Mockito.mock(

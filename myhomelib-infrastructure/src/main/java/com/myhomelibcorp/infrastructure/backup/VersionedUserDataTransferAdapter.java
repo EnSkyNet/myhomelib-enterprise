@@ -1,16 +1,20 @@
 package com.myhomelibcorp.infrastructure.backup;
 
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonGenerator;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectReader;
+import tools.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.backup.UserDataTransferPort;
 import com.myhomelibcorp.application.imports.statistics.ImportChangeAccumulator;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.application.reader.ReaderPreferenceScope;
+import com.myhomelibcorp.application.reader.ReaderPreferenceScopeType;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.shared.util.AppPaths;
-import com.myhomelibcorp.shared.util.Sha256Support;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -29,7 +33,6 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 
 @Slf4j
@@ -39,14 +42,14 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     private static final String FILTER_PREFIX = "filter.global.";
     private static final int ID_CACHE_LIMIT = 50_000;
     private static final int MAX_STRING_LENGTH = 10000;
-    private static final int MAX_READER_PREFERENCES_JSON_BYTES = 1024 * 1024;
+    private static final String SQLITE_EPOCH = "1970-01-01 00:00:00.000";
 
     private final CollectionManager collectionManager;
     private final ApplicationSettingsPort settings;
     private final ObjectMapper mapper;
-    private final ReentrantReadWriteLock fileLock = new ReentrantReadWriteLock();
-
-    private final Path readerPreferencesFile = AppPaths.configDir().resolve("reader-preferences.json");
+    private final ObjectReader streamingNodeReader;
+    private final PortableUserDataManifestValidator manifestValidator;
+    private final ReaderPreferencesTransferStore readerPreferences;
 
     public VersionedUserDataTransferAdapter(CollectionManager collectionManager,
                                             ApplicationSettingsPort settings,
@@ -54,6 +57,13 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         this.collectionManager = collectionManager;
         this.settings = settings;
         this.mapper = mapper;
+        // Jackson 3 enables FAIL_ON_TRAILING_TOKENS by default. That is desirable for
+        // complete JSON documents, but not when reading one value from an already
+        // positioned streaming parser whose next token belongs to the surrounding array.
+        this.streamingNodeReader = mapper.reader()
+                .without(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+        this.manifestValidator = new PortableUserDataManifestValidator(mapper);
+        this.readerPreferences = new ReaderPreferencesTransferStore(mapper);
     }
 
     @Override
@@ -76,12 +86,12 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         try {
             try (OutputStream out = SafeFilePublication.openFreshOutputStream(
                          staged, "Portable user-data staged export");
-                 JsonGenerator g = mapper.getFactory().createGenerator(out, com.fasterxml.jackson.core.JsonEncoding.UTF8)) {
-                g.useDefaultPrettyPrinter();
+                 JsonGenerator g = mapper.writerWithDefaultPrettyPrinter()
+                         .createGenerator(out, tools.jackson.core.JsonEncoding.UTF8)) {
                 g.writeStartObject();
-                g.writeNumberField("schemaVersion", CURRENT_SCHEMA_VERSION);
-                g.writeStringField("format", "myhomelib-user-data");
-                g.writeStringField("exportedAt", Instant.now().toString());
+                g.writeNumberProperty("schemaVersion", CURRENT_SCHEMA_VERSION);
+                g.writeStringProperty("format", "myhomelib-user-data");
+                g.writeStringProperty("exportedAt", Instant.now().toString());
 
                 exportBookState(g, bookRecords);
                 exportReadingProgress(g, null);
@@ -92,15 +102,17 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 exportAnnotationTags(g);
                 exportGroups(g, null);
                 exportGroupMemberships(g, groupMemberships);
+                exportReadingLists(g);
+                exportReadingListItems(g);
                 exportSavedSearches(g, savedSearches);
                 exportCustomFieldDefinitions(g);
                 exportCustomFieldValues(g);
 
-                g.writeFieldName("filterSettings");
+                g.writeName("filterSettings");
                 Map<String, String> filterSettings = settings.findByPrefix(FILTER_PREFIX);
                 mapper.writeValue(g, filterSettings == null ? Map.of() : filterSettings);
 
-                g.writeObjectFieldStart("readerSettings");
+                g.writeObjectPropertyStart("readerSettings");
                 exportReaderSettings(g, readerOverrides);
                 g.writeEndObject();
 
@@ -153,11 +165,14 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 throw new IOException("Portable user-data import source changed while it was being snapshotted");
             }
 
-            ManifestHeader header = inspectManifest(stableSource);
+            PortableUserDataManifestValidator.ManifestHeader header =
+                    manifestValidator.inspect(stableSource, CURRENT_SCHEMA_VERSION);
             if (header.sourceVersion() >= 2 && header.sourceVersion() <= CURRENT_SCHEMA_VERSION) {
                 return restoreCurrentSchemaStreaming(stableSource, header);
             }
             return restoreLegacyManifest(stableSource, header.sourceVersion());
+        } catch (JacksonException e) {
+            throw new IOException("Cannot parse portable user-data JSON", e);
         } finally {
             try {
                 SafeFilePublication.cleanupPrivateWorkspace(workspace);
@@ -201,7 +216,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                                                   RestoreCounters counters,
                                                   ReaderSettingsRestoreState readerSettings) throws IOException {
         Set<String> seen = new HashSet<>();
-        try (JsonParser parser = mapper.getFactory().createParser(sourceFile.toFile())) {
+        try (JsonParser parser = mapper.createParser(sourceFile)) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
                 throw new IOException("Portable user-data manifest must be a JSON object");
             }
@@ -230,172 +245,17 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                     if (token != JsonToken.START_OBJECT) {
                         throw new IOException("Portable user-data section is not an object: " + field);
                     }
-                    restoreReaderSettingsDatabaseStreaming(parser, ids, counters, readerSettings);
+                    restoreReaderSettingsDatabaseStreaming(parser, ids, counters, readerSettings, 1);
                 } else {
                     parser.skipChildren();
                 }
             }
         }
-    }
-
-    private ManifestHeader inspectManifest(Path sourceFile) throws IOException {
-        Integer schemaVersion = null;
-        Integer legacyVersion = null;
-        String format = null;
-        boolean schemaVersionSeen = false;
-        boolean legacyVersionSeen = false;
-        boolean formatSeen = false;
-
-        try (JsonParser parser = mapper.getFactory().createParser(sourceFile.toFile())) {
-            if (parser.nextToken() != JsonToken.START_OBJECT) {
-                throw new IOException("Portable user-data manifest must be a JSON object");
-            }
-            while (parser.nextToken() != JsonToken.END_OBJECT) {
-                String field = parser.currentName();
-                JsonToken valueToken = parser.nextToken();
-                if ("schemaVersion".equals(field)) {
-                    if (schemaVersionSeen) throw new IOException("Duplicate portable user-data field: schemaVersion");
-                    schemaVersionSeen = true;
-                    if (valueToken != JsonToken.VALUE_NUMBER_INT) {
-                        throw new IOException("Portable user-data schemaVersion must be an integer");
-                    }
-                    schemaVersion = parser.getIntValue();
-                } else if ("version".equals(field)) {
-                    if (legacyVersionSeen) throw new IOException("Duplicate portable user-data field: version");
-                    legacyVersionSeen = true;
-                    if (valueToken != JsonToken.VALUE_NUMBER_INT) {
-                        throw new IOException("Portable user-data version must be an integer");
-                    }
-                    legacyVersion = parser.getIntValue();
-                } else if ("format".equals(field)) {
-                    if (formatSeen) throw new IOException("Duplicate portable user-data field: format");
-                    formatSeen = true;
-                    if (valueToken != JsonToken.VALUE_STRING) {
-                        throw new IOException("Portable user-data format must be a string");
-                    }
-                    format = parser.getValueAsString();
-                }
-                parser.skipChildren();
-            }
-        }
-
-        if (schemaVersionSeen && legacyVersionSeen && !Objects.equals(schemaVersion, legacyVersion)) {
-            throw new IOException("Conflicting portable user-data schema versions: schemaVersion="
-                    + schemaVersion + ", version=" + legacyVersion);
-        }
-        if (!schemaVersionSeen && formatSeen) {
-            throw new IOException("Portable user-data schemaVersion is required when format is present");
-        }
-
-        int version = schemaVersionSeen ? schemaVersion : legacyVersionSeen ? legacyVersion : 1;
-        if (version < 1 || version > CURRENT_SCHEMA_VERSION) {
-            throw new IOException("Unsupported portable user-data schema version: " + version);
-        }
-        if (version >= 2 && !"myhomelib-user-data".equals(format)) {
-            throw new IOException(format == null
-                    ? "Portable user-data format is missing for schema v" + version
-                    : "Unsupported portable user-data format: " + format);
-        }
-        return new ManifestHeader(version, format);
-    }
-
-    /**
-     * Performs a cheap streaming preflight of the current (v2+) manifest before any user data is changed.
-     * Large arrays are skipped rather than materialized, but all required top-level sections and
-     * reader-settings containers must have the expected shape.
-     */
-    private void validateCurrentManifestStructure(Path sourceFile, int sourceVersion) throws IOException {
-        Map<String, JsonToken> required = new LinkedHashMap<>();
-        for (String name : List.of("bookState", "readingProgress", "readingHistory", "readingStats",
-                "bookmarks", "groups", "groupMemberships", "savedSearches")) {
-            required.put(name, JsonToken.START_ARRAY);
-        }
-        if (sourceVersion >= 3) {
-            required.put("customFieldDefinitions", JsonToken.START_ARRAY);
-            required.put("customFieldValues", JsonToken.START_ARRAY);
-        }
-        if (sourceVersion >= 4) {
-            required.put("annotations", JsonToken.START_ARRAY);
-            required.put("annotationTags", JsonToken.START_ARRAY);
-        }
-        required.put("filterSettings", JsonToken.START_OBJECT);
-        required.put("readerSettings", JsonToken.START_OBJECT);
-        Set<String> seen = new HashSet<>();
-
-        try (JsonParser parser = mapper.getFactory().createParser(sourceFile.toFile())) {
-            if (parser.nextToken() != JsonToken.START_OBJECT) {
-                throw new IOException("Portable user-data manifest must be a JSON object");
-            }
-            while (parser.nextToken() != JsonToken.END_OBJECT) {
-                String field = parser.currentName();
-                JsonToken token = parser.nextToken();
-                JsonToken expected = required.get(field);
-                if (expected == null) {
-                    parser.skipChildren();
-                    continue;
-                }
-                if (!seen.add(field)) throw new IOException("Duplicate portable user-data section: " + field);
-                if (token != expected) {
-                    throw new IOException("Portable user-data section has invalid type: " + field);
-                }
-                if ("readerSettings".equals(field)) {
-                    validateReaderSettingsStructure(parser);
-                } else {
-                    parser.skipChildren();
-                }
-            }
-        }
-        Set<String> missing = new LinkedHashSet<>(required.keySet());
-        missing.removeAll(seen);
-        if (!missing.isEmpty()) throw new IOException("Portable user-data sections are missing: " + missing);
-    }
-
-    private void validateReaderSettingsStructure(JsonParser parser) throws IOException {
-        Set<String> seen = new HashSet<>();
-        while (parser.nextToken() != JsonToken.END_OBJECT) {
-            String field = parser.currentName();
-            JsonToken token = parser.nextToken();
-            if (!seen.add(field)) throw new IOException("Duplicate readerSettings field: " + field);
-            if ("global".equals(field)) {
-                if (token != JsonToken.VALUE_NULL && token != JsonToken.START_OBJECT) {
-                    throw new IOException("readerSettings.global must be an object or null");
-                }
-                parser.skipChildren();
-            } else if ("perBook".equals(field)) {
-                if (token != JsonToken.START_ARRAY) throw new IOException("readerSettings.perBook must be an array");
-                parser.skipChildren();
-            } else {
-                parser.skipChildren();
-            }
-        }
-        if (!seen.contains("global")) throw new IOException("readerSettings.global is missing");
-        if (!seen.contains("perBook")) throw new IOException("readerSettings.perBook is missing");
     }
 
     private ExternalStateSnapshot snapshotExternalState() throws IOException {
         Map<String, String> filterSnapshot = new LinkedHashMap<>(settings.findByPrefix(FILTER_PREFIX));
-        fileLock.readLock().lock();
-        try {
-            if (!Files.exists(readerPreferencesFile, LinkOption.NOFOLLOW_LINKS)) {
-                return new ExternalStateSnapshot(filterSnapshot,
-                        new ReaderPreferencesSnapshot(false, new byte[0], null));
-            }
-            Path safePreferences = SafeFilePublication.requireSafeRegularFile(
-                    readerPreferencesFile, "Reader preferences snapshot");
-            byte[] bytes = readBoundedFile(readerPreferencesFile, MAX_READER_PREFERENCES_JSON_BYTES,
-                    "Reader preferences");
-            String hash = SafeFilePublication.sha256(safePreferences, "Reader preferences snapshot");
-            var digest = Sha256Support.newDigest();
-            digest.update(bytes);
-            String bytesHash = Sha256Support.finish(digest);
-            if (!bytesHash.equalsIgnoreCase(hash)) {
-                throw new IOException("Reader preferences changed while being snapshotted: " + readerPreferencesFile);
-            }
-            return new ExternalStateSnapshot(filterSnapshot,
-                    new ReaderPreferencesSnapshot(true, bytes, hash));
-        } finally {
-            fileLock.readLock().unlock();
-        }
+        return new ExternalStateSnapshot(filterSnapshot, readerPreferences.snapshot());
     }
 
     private void rollbackExternalState(ExternalStateSnapshot snapshot,
@@ -407,62 +267,17 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             original.addSuppressed(settingsFailure);
         }
         try {
-            restoreReaderPreferencesSnapshot(snapshot.readerPreferences(), readerState);
+            readerPreferences.rollback(snapshot.readerPreferences(),
+                    readerState.readerPreferencesChanged(),
+                    readerState.installedReaderPreferencesHash());
         } catch (IOException readerFailure) {
             original.addSuppressed(readerFailure);
         }
     }
 
-    private void restoreReaderPreferencesSnapshot(ReaderPreferencesSnapshot snapshot,
-                                                  ReaderSettingsRestoreState readerState) throws IOException {
-        if (!readerState.readerPreferencesChanged()) return;
-        fileLock.writeLock().lock();
-        try {
-            if (!snapshot.existed()) {
-                if (readerState.installedReaderPreferencesHash() != null) {
-                    SafeFilePublication.removeIfOwned(
-                            readerPreferencesFile,
-                            readerState.installedReaderPreferencesHash(),
-                            "Reader preferences rollback cleanup");
-                } else if (Files.exists(readerPreferencesFile, LinkOption.NOFOLLOW_LINKS)) {
-                    throw new IOException("Reader preferences changed concurrently before rollback: "
-                            + readerPreferencesFile);
-                }
-                return;
-            }
-
-            Path parent = SafeFilePublication.createDirectoriesNoLinks(
-                    readerPreferencesFile.toAbsolutePath().getParent(), "Reader preferences rollback parent");
-            Path workspace = SafeFilePublication.createPrivateWorkspace(
-                    parent, ".mhl-reader-preferences-rollback-", "Reader preferences rollback workspace");
-            Path staged = workspace.resolve("reader-preferences.json");
-            boolean cleanup = true;
-            try {
-                try (OutputStream out = SafeFilePublication.openFreshOutputStream(
-                        staged, "Reader preferences rollback staging")) {
-                    out.write(snapshot.bytes());
-                }
-                SafeFilePublication.publishReplacingIfUnchanged(
-                        staged,
-                        readerPreferencesFile,
-                        readerState.installedReaderPreferencesHash(),
-                        "Reader preferences rollback");
-            } catch (IOException failure) {
-                cleanup = false;
-                IOException preserved = new IOException(
-                        "Reader preferences rollback failed; snapshot evidence preserved at " + workspace,
-                        failure);
-                throw preserved;
-            } finally {
-                if (cleanup) SafeFilePublication.cleanupPrivateWorkspace(workspace);
-            }
-        } finally {
-            fileLock.writeLock().unlock();
-        }
-    }
-
-    private ImportResult restoreCurrentSchemaStreaming(Path sourceFile, ManifestHeader header) throws IOException {
-        validateCurrentManifestStructure(sourceFile, header.sourceVersion());
+    private ImportResult restoreCurrentSchemaStreaming(
+            Path sourceFile, PortableUserDataManifestValidator.ManifestHeader header) throws IOException {
+        manifestValidator.validateCurrentStructure(sourceFile, header.sourceVersion());
         RestoreCounters counters = new RestoreCounters();
         BoundedIdentityCache identities = new BoundedIdentityCache();
         ReaderSettingsRestoreState readerSettings = new ReaderSettingsRestoreState();
@@ -470,7 +285,13 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         try {
             runDatabaseRestore(() -> {
                 try {
+                    if (header.sourceVersion() >= 5) {
+                        restoreReadingListsBeforeStreaming(sourceFile);
+                    }
                     restoreDatabaseSectionsStreaming(sourceFile, identities, counters, readerSettings, header.sourceVersion());
+                    if (header.sourceVersion() >= 5) {
+                        compactReadingListPositions();
+                    }
                     restoreNonDatabaseSectionsStreaming(sourceFile);
                     restoreReaderGlobal(readerSettings, externalState.readerPreferences());
                 } catch (IOException e) {
@@ -503,8 +324,9 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 "readingStats", "bookmarks", "groups", "groupMemberships", "savedSearches", "readerSettings"));
         if (sourceVersion >= 3) { required.add("customFieldDefinitions"); required.add("customFieldValues"); }
         if (sourceVersion >= 4) { required.add("annotations"); required.add("annotationTags"); }
+        if (sourceVersion >= 5) { required.add("readingLists"); required.add("readingListItems"); }
         Set<String> seen = new HashSet<>();
-        try (JsonParser parser = mapper.getFactory().createParser(sourceFile.toFile())) {
+        try (JsonParser parser = mapper.createParser(sourceFile)) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
                 throw new IOException("Portable user-data manifest must be a JSON object");
             }
@@ -520,7 +342,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                     if (token != JsonToken.START_OBJECT) {
                         throw new IOException("Portable user-data section is not an object: " + field);
                     }
-                    restoreReaderSettingsDatabaseStreaming(parser, ids, counters, readerSettings);
+                    restoreReaderSettingsDatabaseStreaming(parser, ids, counters, readerSettings, sourceVersion);
                     continue;
                 }
                 if (token != JsonToken.START_ARRAY) {
@@ -536,6 +358,8 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                     case "annotationTags" -> this::restoreAnnotationTagRow;
                     case "groups" -> row -> restoreGroupRow(row, counters);
                     case "groupMemberships" -> row -> restoreGroupMembershipRow(row, ids, counters);
+                    case "readingLists" -> row -> { /* metadata restored in fail-before-item prepass */ };
+                    case "readingListItems" -> row -> restoreReadingListItemRow(row, ids, counters);
                     case "savedSearches" -> row -> restoreSavedSearchRow(row, counters);
                     case "customFieldDefinitions" -> this::restoreCustomFieldDefinitionRow;
                     case "customFieldValues" -> row -> restoreCustomFieldValueRow(row, ids, counters);
@@ -550,7 +374,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private void streamArrayRows(JsonParser parser, String field, Consumer<JsonNode> consumer) throws IOException {
         while (parser.nextToken() != JsonToken.END_ARRAY) {
-            JsonNode row = mapper.readTree(parser);
+            JsonNode row = streamingNodeReader.readTree(parser);
             if (row == null || !row.isObject()) {
                 throw new IOException("Portable user-data row is not an object in section: " + field);
             }
@@ -560,7 +384,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private void restoreNonDatabaseSectionsStreaming(Path sourceFile) throws IOException {
         boolean filterSettingsSeen = false;
-        try (JsonParser parser = mapper.getFactory().createParser(sourceFile.toFile())) {
+        try (JsonParser parser = mapper.createParser(sourceFile)) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
                 throw new IOException("Portable user-data manifest must be a JSON object");
             }
@@ -573,7 +397,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                     if (token != JsonToken.START_OBJECT) {
                         throw new IOException("Portable user-data section is not an object: filterSettings");
                     }
-                    JsonNode node = mapper.readTree(parser);
+                    JsonNode node = streamingNodeReader.readTree(parser);
                     restoreFilterSettings(node);
                 } else {
                     parser.skipChildren();
@@ -584,7 +408,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private void restoreReaderSettingsDatabaseStreaming(JsonParser parser, BoundedIdentityCache ids,
                                                         RestoreCounters counters,
-                                                        ReaderSettingsRestoreState state) throws IOException {
+                                                        ReaderSettingsRestoreState state, int sourceVersion) throws IOException {
         Set<String> seen = new HashSet<>();
         while (parser.nextToken() != JsonToken.END_OBJECT) {
             String field = parser.currentName();
@@ -594,7 +418,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 if (token == JsonToken.VALUE_NULL) {
                     state.global(null);
                 } else {
-                    JsonNode global = mapper.readTree(parser);
+                    JsonNode global = streamingNodeReader.readTree(parser);
                     state.global(validateReaderPreferencesNode(global, "readerSettings.global"));
                 }
             } else if ("perBook".equals(field)) {
@@ -602,15 +426,25 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                     throw new IOException("readerSettings.perBook must be an array");
                 }
                 while (parser.nextToken() != JsonToken.END_ARRAY) {
-                    JsonNode row = mapper.readTree(parser);
+                    JsonNode row = streamingNodeReader.readTree(parser);
                     if (row == null || !row.isObject()) throw new IOException("readerSettings.perBook row must be an object");
-                    restoreReaderOverrideRow(row, ids, counters);
+                    if (sourceVersion < 6) restoreReaderOverrideRow(row, ids, counters);
+                }
+            } else if ("scoped".equals(field)) {
+                if (token != JsonToken.START_ARRAY) {
+                    throw new IOException("readerSettings.scoped must be an array");
+                }
+                while (parser.nextToken() != JsonToken.END_ARRAY) {
+                    JsonNode row = streamingNodeReader.readTree(parser);
+                    if (row == null || !row.isObject()) throw new IOException("readerSettings.scoped row must be an object");
+                    if (sourceVersion >= 6) restoreReaderScopedOverrideRow(row, ids, counters);
                 }
             } else {
                 parser.skipChildren();
             }
         }
         if (!seen.contains("perBook")) throw new IOException("readerSettings.perBook is missing");
+        if (sourceVersion >= 6 && !seen.contains("scoped")) throw new IOException("readerSettings.scoped is missing");
     }
 
     private void restoreReaderOverrideRow(JsonNode row, BoundedIdentityCache ids, RestoreCounters counters) {
@@ -619,12 +453,64 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         if (bookId.isEmpty() || preferences == null || !preferences.isObject()) return;
         try {
             JsonNode validated = validateReaderPreferencesNode(preferences, "readerSettings.perBook.preferences");
+            String json = mapper.writeValueAsString(validated);
             jdbc().update("""
                     INSERT INTO reader_book_preferences(book_id,preferences_json,updated_at)
                     VALUES(?,?,CURRENT_TIMESTAMP)
                     ON CONFLICT(book_id) DO UPDATE SET
                         preferences_json=excluded.preferences_json,updated_at=CURRENT_TIMESTAMP
-                    """, bookId.get(), mapper.writeValueAsString(validated));
+                    """, bookId.get(), json);
+            jdbc().update("""
+                    INSERT INTO reader_preference_overrides(scope_type,scope_key,preferences_json,updated_at)
+                    VALUES('BOOK',?,?,CURRENT_TIMESTAMP)
+                    ON CONFLICT(scope_type,scope_key) DO UPDATE SET
+                        preferences_json=excluded.preferences_json,updated_at=CURRENT_TIMESTAMP
+                    """, bookId.get(), json);
+            counters.readerOverrides++;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private void restoreReaderScopedOverrideRow(JsonNode row, BoundedIdentityCache ids, RestoreCounters counters) {
+        String typeText = safeText(row, "scopeType", "").trim();
+        JsonNode preferences = row.get("preferences");
+        if (typeText.isBlank() || preferences == null || !preferences.isObject()) return;
+        final ReaderPreferenceScopeType type;
+        try {
+            type = ReaderPreferenceScopeType.valueOf(typeText.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException invalid) {
+            return;
+        }
+
+        try {
+            ReaderPreferenceScope scope;
+            if (type == ReaderPreferenceScopeType.BOOK) {
+                Optional<String> bookId = resolveBookId(row, ids, counters);
+                if (bookId.isEmpty()) return;
+                scope = ReaderPreferenceScope.book(bookId.get());
+            } else {
+                String key = safeText(row, "scopeKey", "");
+                scope = type == ReaderPreferenceScopeType.SERIES
+                        ? ReaderPreferenceScope.trySeries(key) : ReaderPreferenceScope.tryFormat(key);
+                if (scope == null) return;
+            }
+            JsonNode validated = validateReaderPreferencesNode(preferences, "readerSettings.scoped.preferences");
+            String json = mapper.writeValueAsString(validated);
+            jdbc().update("""
+                    INSERT INTO reader_preference_overrides(scope_type,scope_key,preferences_json,updated_at)
+                    VALUES(?,?,?,CURRENT_TIMESTAMP)
+                    ON CONFLICT(scope_type,scope_key) DO UPDATE SET
+                        preferences_json=excluded.preferences_json,updated_at=CURRENT_TIMESTAMP
+                    """, scope.type().name(), scope.key(), json);
+            if (scope.type() == ReaderPreferenceScopeType.BOOK) {
+                jdbc().update("""
+                        INSERT INTO reader_book_preferences(book_id,preferences_json,updated_at)
+                        VALUES(?,?,CURRENT_TIMESTAMP)
+                        ON CONFLICT(book_id) DO UPDATE SET
+                            preferences_json=excluded.preferences_json,updated_at=CURRENT_TIMESTAMP
+                        """, scope.key(), json);
+            }
             counters.readerOverrides++;
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -632,59 +518,14 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     }
 
     private JsonNode validateReaderPreferencesNode(JsonNode node, String field) throws IOException {
-        if (node == null || !node.isObject()) throw new IOException(field + " must be an object");
-        byte[] encoded = mapper.writeValueAsBytes(node);
-        if (encoded.length > MAX_READER_PREFERENCES_JSON_BYTES) {
-            throw new IOException(field + " exceeds " + MAX_READER_PREFERENCES_JSON_BYTES + " bytes");
-        }
-        return node;
+        return readerPreferences.validateNode(node, field);
     }
 
     private void restoreReaderGlobal(ReaderSettingsRestoreState state,
-                                     ReaderPreferencesSnapshot baseline) throws IOException {
+                                     ReaderPreferencesTransferStore.Snapshot baseline) throws IOException {
         if (!state.globalSeen()) return;
-        fileLock.writeLock().lock();
-        try {
-            JsonNode global = state.global();
-            if (global == null || global.isNull()) {
-                if (baseline.existed()) {
-                    SafeFilePublication.removeIfOwned(
-                            readerPreferencesFile,
-                            baseline.sha256(),
-                            "Reader preferences import delete");
-                } else {
-                    Path safeTarget = SafeFilePublication.prepareTarget(
-                            readerPreferencesFile, "Reader preferences import target");
-                    if (Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
-                        throw new IOException("Reader preferences changed concurrently before import: " + safeTarget);
-                    }
-                }
-                state.markReaderPreferencesChanged(null);
-            } else {
-                Path parent = SafeFilePublication.createDirectoriesNoLinks(
-                        readerPreferencesFile.toAbsolutePath().getParent(), "Reader preferences import parent");
-                Path workspace = SafeFilePublication.createPrivateWorkspace(
-                        parent, ".mhl-reader-preferences-import-", "Reader preferences import workspace");
-                Path staged = workspace.resolve("reader-preferences.json");
-                try {
-                    try (OutputStream out = SafeFilePublication.openFreshOutputStream(
-                            staged, "Reader preferences import staging")) {
-                        mapper.writerWithDefaultPrettyPrinter().writeValue(out, global);
-                    }
-                    SafeFilePublication.publishReplacingIfUnchanged(
-                            staged,
-                            readerPreferencesFile,
-                            baseline.sha256(),
-                            "Reader preferences import");
-                    state.markReaderPreferencesChanged(SafeFilePublication.sha256(
-                            readerPreferencesFile, "Reader preferences imported target"));
-                } finally {
-                    SafeFilePublication.cleanupPrivateWorkspace(workspace);
-                }
-            }
-        } finally {
-            fileLock.writeLock().unlock();
-        }
+        String installedHash = readerPreferences.restoreGlobal(state.global(), baseline);
+        state.markReaderPreferencesChanged(installedHash);
     }
 
     private ImportResult importResult(int sourceVersion, int current, RestoreCounters counters) {
@@ -693,9 +534,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 counters.savedSearches, counters.readerOverrides, counters.searchChanges.snapshot());
     }
 
-    private record ManifestHeader(int sourceVersion, String format) { }
-    private record ReaderPreferencesSnapshot(boolean existed, byte[] bytes, String sha256) { }
-    private record ExternalStateSnapshot(Map<String, String> filterSettings, ReaderPreferencesSnapshot readerPreferences) { }
+    private record ExternalStateSnapshot(Map<String, String> filterSettings, ReaderPreferencesTransferStore.Snapshot readerPreferences) { }
 
     private static final class ReaderSettingsRestoreState {
         private JsonNode global;
@@ -718,7 +557,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         resolveBookId(n, ids, c).ifPresent(bookId -> {
             int updated = jdbc().update(
                     "UPDATE books SET rate=?, progress=?, review=? WHERE id=?",
-                    safeInt(n, "rate", 0), safeInt(n, "progress", 0), limitedText(n, "review", ""), bookId);
+                    safeInt(n, "rate", 0), percentInt(n, "progress", 0), limitedText(n, "review", ""), bookId);
             if (updated > 0) c.searchChanges.recordUpdated(bookId);
         });
     }
@@ -732,9 +571,9 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 ON CONFLICT(book_id) DO UPDATE SET paragraph_id=excluded.paragraph_id,char_offset=excluded.char_offset,
                     percent=excluded.percent,updated_at=excluded.updated_at,anchor_id=excluded.anchor_id,
                     paragraph_index=excluded.paragraph_index,last_device=excluded.last_device
-                """, bookId, limitedText(n, "paragraphId", ""), safeInt(n, "charOffset", 0),
-                safeDouble(n, "percent", 0), limitedText(n, "updatedAt", Instant.EPOCH.toString()),
-                safeNullableLimitedText(n, "anchorId"), safeInt(n, "paragraphIndex", 0),
+                """, bookId, limitedText(n, "paragraphId", ""), nonNegativeInt(n, "charOffset", 0),
+                percentDouble(n, "percent", 0), limitedText(n, "updatedAt", Instant.EPOCH.toString()),
+                safeNullableLimitedText(n, "anchorId"), nonNegativeInt(n, "paragraphIndex", 0),
                 limitedText(n, "lastDevice", "desktop")));
     }
 
@@ -763,9 +602,9 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                     start_percent=excluded.start_percent,end_percent=excluded.end_percent,
                     current_percent=excluded.current_percent,completed_at=excluded.completed_at
                 """, bookId, limitedText(n, "firstReadAt", Instant.EPOCH.toString()),
-                limitedText(n, "lastReadAt", Instant.EPOCH.toString()), safeLong(n, "totalReadingSeconds", 0),
-                safeInt(n, "readingSessions", 0), safeInt(n, "startPercent", 0), safeInt(n, "endPercent", 0),
-                safeInt(n, "currentPercent", 0), safeNullableLimitedText(n, "completedAt")));
+                limitedText(n, "lastReadAt", Instant.EPOCH.toString()), nonNegativeLong(n, "totalReadingSeconds", 0),
+                nonNegativeInt(n, "readingSessions", 0), percentInt(n, "startPercent", 0), percentInt(n, "endPercent", 0),
+                percentInt(n, "currentPercent", 0), safeNullableLimitedText(n, "completedAt")));
     }
 
 
@@ -778,8 +617,8 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                     ON CONFLICT(id) DO UPDATE SET book_id=excluded.book_id,paragraph_id=excluded.paragraph_id,
                         char_offset=excluded.char_offset,position=excluded.position,chapter_title=excluded.chapter_title,
                         context=excluded.context,created_at=excluded.created_at
-                    """, id, bookId, limitedText(n, "paragraphId", ""), safeInt(n, "charOffset", 0),
-                    safeDouble(n, "position", 0), safeNullableLimitedText(n, "chapterTitle"),
+                    """, id, bookId, limitedText(n, "paragraphId", ""), nonNegativeInt(n, "charOffset", 0),
+                    percentDouble(n, "position", 0), safeNullableLimitedText(n, "chapterTitle"),
                     safeNullableLimitedText(n, "context"), limitedText(n, "createdAt", Instant.EPOCH.toString()));
             c.bookmarks++;
         });
@@ -898,6 +737,114 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     }
 
 
+    /**
+     * Reads V5 list metadata in a dedicated first pass so readingListItems may appear
+     * anywhere in the manifest without depending on top-level section order.
+     */
+    private void restoreReadingListsBeforeStreaming(Path sourceFile) throws IOException {
+        boolean seen = false;
+        try (JsonParser parser = mapper.createParser(sourceFile)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                throw new IOException("Portable user-data manifest must be a JSON object");
+            }
+            while (parser.nextToken() != JsonToken.END_OBJECT) {
+                String field = parser.currentName();
+                JsonToken token = parser.nextToken();
+                if (!"readingLists".equals(field)) {
+                    parser.skipChildren();
+                    continue;
+                }
+                if (seen) throw new IOException("Duplicate portable user-data section: readingLists");
+                seen = true;
+                if (token != JsonToken.START_ARRAY) {
+                    throw new IOException("Portable user-data section is not an array: readingLists");
+                }
+                while (parser.nextToken() != JsonToken.END_ARRAY) {
+                    JsonNode row = streamingNodeReader.readTree(parser);
+                    if (row == null || !row.isObject()) {
+                        throw new IOException("Portable user-data row is not an object in section: readingLists");
+                    }
+                    try {
+                        restoreReadingListRow(row);
+                    } catch (UncheckedIOException e) {
+                        throw e.getCause();
+                    }
+                }
+            }
+        }
+        if (!seen) throw new IOException("Portable user-data sections are missing: [readingLists]");
+    }
+
+    private void restoreReadingListRow(JsonNode n) {
+        String sourceId = limitedText(n, "id", "").trim();
+        String name = limitedText(n, "name", "").trim();
+        if (sourceId.isEmpty() || name.isEmpty()) {
+            throw new UncheckedIOException(new IOException("readingLists rows require non-empty id and name"));
+        }
+        String description = limitedText(n, "description", "");
+        String createdAt = limitedText(n, "createdAt", SQLITE_EPOCH);
+        String updatedAt = limitedText(n, "updatedAt", createdAt);
+
+        List<String> byName = jdbc().queryForList(
+                "SELECT id FROM reading_lists WHERE name=? COLLATE NOCASE LIMIT 2", String.class, name);
+        if (!byName.isEmpty() && !sourceId.equals(byName.getFirst())) {
+            throw new UncheckedIOException(new IOException(
+                    "Reading-list name collision during portable restore: " + name));
+        }
+        List<String> byId = jdbc().queryForList(
+                "SELECT id FROM reading_lists WHERE id=? LIMIT 1", String.class, sourceId);
+        if (byId.isEmpty()) {
+            jdbc().update("INSERT INTO reading_lists(id,name,description,created_at,updated_at) VALUES(?,?,?,?,?)",
+                    sourceId, name, description, createdAt, updatedAt);
+        } else {
+            jdbc().update("UPDATE reading_lists SET name=?,description=?,created_at=?,updated_at=? WHERE id=?",
+                    name, description, createdAt, updatedAt, sourceId);
+        }
+        // V5 restore is an exact replacement for the exported list membership.
+        jdbc().update("DELETE FROM reading_list_items WHERE list_id=?", sourceId);
+    }
+
+    private void restoreReadingListItemRow(JsonNode n, BoundedIdentityCache ids, RestoreCounters c) {
+        String listId = limitedText(n, "listId", "").trim();
+        if (listId.isEmpty()) {
+            throw new UncheckedIOException(new IOException("readingListItems rows require listId"));
+        }
+        List<String> lists = jdbc().queryForList(
+                "SELECT id FROM reading_lists WHERE id=? LIMIT 1", String.class, listId);
+        if (lists.isEmpty()) {
+            throw new UncheckedIOException(new IOException(
+                    "readingListItems references an unknown listId: " + listId));
+        }
+        int position = safeInt(n, "position", -1);
+        if (position < 0) {
+            throw new UncheckedIOException(new IOException("readingListItems position must be >= 0"));
+        }
+        Optional<String> bookId = resolveBookId(n, ids, c);
+        if (bookId.isEmpty()) return; // Stable identity did not resolve; never substitute by title/fuzzy match.
+        String addedAt = limitedText(n, "addedAt", SQLITE_EPOCH);
+        try {
+            // Plain INSERT deliberately rejects duplicate membership and duplicate source positions.
+            jdbc().update("INSERT INTO reading_list_items(list_id,book_id,position,added_at) VALUES(?,?,?,?)",
+                    listId, bookId.get(), position, addedAt);
+        } catch (RuntimeException failure) {
+            throw new UncheckedIOException(new IOException(
+                    "Invalid readingListItems membership/position for list " + listId, failure));
+        }
+    }
+
+    /** Compacts positions after unresolved stable identities were skipped, preserving source order. */
+    private void compactReadingListPositions() {
+        jdbc().update("UPDATE reading_list_items SET position = -position - 1");
+        jdbc().update("""
+                UPDATE reading_list_items AS current
+                SET position = (
+                    SELECT COUNT(*)
+                    FROM reading_list_items AS prior
+                    WHERE prior.list_id=current.list_id AND prior.position>current.position
+                )
+                """);
+    }
+
 
     private void restoreSavedSearchRow(JsonNode n, RestoreCounters c) {
         String name = limitedText(n, "name", "").trim();
@@ -980,7 +927,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             if (!valueNode.isValueNode()) {
                 throw new IOException("filterSettings value must be scalar: " + entry.getKey());
             }
-            restored.put(entry.getKey(), truncate(valueNode.asText()));
+            restored.put(entry.getKey(), truncate(valueNode.asString()));
         }
         settings.replaceByPrefix(FILTER_PREFIX, restored);
     }
@@ -1097,7 +1044,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private void exportAnnotations(JsonGenerator g, AtomicLong counter) throws IOException {
         if (!hasTableColumn("annotations", "id") || !hasTableColumn("annotation_anchors", "annotation_id")) {
-            g.writeArrayFieldStart("annotations"); g.writeEndArray(); return;
+            g.writeArrayPropertyStart("annotations"); g.writeEndArray(); return;
         }
         writeRows(g, "annotations",
                 "SELECT a.id AS id, b.lib_id AS libId, b.id AS sourceBookId, a.artifact_id AS artifactId, " +
@@ -1113,7 +1060,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private void exportAnnotationTags(JsonGenerator g) throws IOException {
         if (!hasTableColumn("annotation_tags", "annotation_id")) {
-            g.writeArrayFieldStart("annotationTags"); g.writeEndArray(); return;
+            g.writeArrayPropertyStart("annotationTags"); g.writeEndArray(); return;
         }
         writeRows(g, "annotationTags",
                 "SELECT annotation_id AS annotationId, tag FROM annotation_tags ORDER BY annotation_id,tag COLLATE NOCASE",
@@ -1138,6 +1085,22 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 counter);
     }
 
+    private void exportReadingLists(JsonGenerator g) throws IOException {
+        writeRows(g, "readingLists",
+                "SELECT id,name,description,created_at AS createdAt,updated_at AS updatedAt " +
+                        "FROM reading_lists ORDER BY LOWER(name),id", null);
+    }
+
+    private void exportReadingListItems(JsonGenerator g) throws IOException {
+        writeRows(g, "readingListItems",
+                "SELECT rl.id AS listId,b.lib_id AS libId,b.id AS sourceBookId," +
+                        "rli.position AS position,rli.added_at AS addedAt " +
+                        "FROM reading_list_items rli " +
+                        "JOIN reading_lists rl ON rl.id=rli.list_id " +
+                        "JOIN books b ON b.id=rli.book_id " +
+                        "ORDER BY LOWER(rl.name),rl.id,rli.position", null);
+    }
+
     private void exportSavedSearches(JsonGenerator g, AtomicLong counter) throws IOException {
         boolean hasKind = hasTableColumn("saved_searches", "kind");
         boolean hasPinned = hasTableColumn("saved_searches", "pinned");
@@ -1154,7 +1117,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private void exportCustomFieldDefinitions(JsonGenerator g) throws IOException {
         if (!hasTableColumn("custom_field_definitions", "id")) {
-            g.writeArrayFieldStart("customFieldDefinitions"); g.writeEndArray(); return;
+            g.writeArrayPropertyStart("customFieldDefinitions"); g.writeEndArray(); return;
         }
         writeRows(g, "customFieldDefinitions",
                 "SELECT name, field_type AS fieldType, enum_options_json AS enumOptionsJson FROM custom_field_definitions ORDER BY name COLLATE NOCASE,id",
@@ -1163,7 +1126,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private void exportCustomFieldValues(JsonGenerator g) throws IOException {
         if (!hasTableColumn("custom_field_values", "book_id")) {
-            g.writeArrayFieldStart("customFieldValues"); g.writeEndArray(); return;
+            g.writeArrayPropertyStart("customFieldValues"); g.writeEndArray(); return;
         }
         writeRows(g, "customFieldValues",
                 "SELECT b.lib_id AS libId, b.id AS sourceBookId, d.name AS fieldName, v.value_text AS value " +
@@ -1173,19 +1136,15 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     }
 
     private void exportReaderSettings(JsonGenerator g, AtomicLong counter) throws IOException {
-        fileLock.readLock().lock();
-        try {
-            JsonNode global = readJsonUnlocked(readerPreferencesFile);
-            if (global == null) {
-                g.writeNullField("global");
-            } else {
-                g.writeObjectField("global", validateReaderPreferencesNode(global, "readerSettings.global"));
-            }
-        } finally {
-            fileLock.readLock().unlock();
+        JsonNode global = readerPreferences.readForExport();
+        if (global == null) {
+            g.writeNullProperty("global");
+        } else {
+            g.writePOJOProperty("global", validateReaderPreferencesNode(global, "readerSettings.global"));
         }
 
-        g.writeArrayFieldStart("perBook");
+        // Retain the V2-V5 projection for backwards inspection/compatibility. V6 restore uses `scoped`.
+        g.writeArrayPropertyStart("perBook");
         try {
             jdbc().query("""
                     SELECT b.lib_id, b.id, rbp.preferences_json
@@ -1195,21 +1154,51 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                     """, (ResultSetExtractor<Void>) rs -> {
                 try {
                     while (rs.next()) {
-                        String sourceBookId = rs.getString(2);
+                        writePortableBookReaderOverride(g, rs.getString(1), rs.getString(2), rs.getString(3));
+                    }
+                } catch (IOException | JacksonException e) {
+                    throw new UncheckedIOException(e instanceof IOException io
+                            ? io : new IOException("Cannot serialize reader book preferences", e));
+                }
+                return null;
+            });
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
+        }
+        g.writeEndArray();
+
+        g.writeArrayPropertyStart("scoped");
+        try {
+            jdbc().query("""
+                    SELECT r.scope_type,r.scope_key,r.preferences_json,b.lib_id
+                    FROM reader_preference_overrides r
+                    LEFT JOIN books b ON r.scope_type='BOOK' AND b.id=r.scope_key
+                    ORDER BY r.scope_type,r.scope_key
+                    """, (ResultSetExtractor<Void>) rs -> {
+                try {
+                    while (rs.next()) {
+                        String type = rs.getString(1);
+                        String key = rs.getString(2);
                         String json = rs.getString(3);
-                        if (sourceBookId == null || sourceBookId.isBlank() || json == null || json.isBlank()) continue;
+                        if (type == null || key == null || key.isBlank() || json == null || json.isBlank()) continue;
                         JsonNode preferences = validateReaderPreferencesNode(
-                                mapper.readTree(json), "reader_book_preferences.preferences_json");
+                                mapper.readTree(json), "reader_preference_overrides.preferences_json");
                         g.writeStartObject();
-                        String libId = rs.getString(1);
-                        if (libId == null || libId.isBlank()) g.writeNullField("libId"); else g.writeStringField("libId", libId);
-                        g.writeStringField("sourceBookId", sourceBookId);
-                        g.writeObjectField("preferences", preferences);
+                        g.writeStringProperty("scopeType", type);
+                        if ("BOOK".equalsIgnoreCase(type)) {
+                            String libId = rs.getString(4);
+                            if (libId == null || libId.isBlank()) g.writeNullProperty("libId"); else g.writeStringProperty("libId", libId);
+                            g.writeStringProperty("sourceBookId", key);
+                        } else {
+                            g.writeStringProperty("scopeKey", key);
+                        }
+                        g.writePOJOProperty("preferences", preferences);
                         g.writeEndObject();
                         if (counter != null) counter.incrementAndGet();
                     }
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
+                } catch (IOException | JacksonException e) {
+                    throw new UncheckedIOException(e instanceof IOException io
+                            ? io : new IOException("Cannot serialize scoped reader preferences", e));
                 }
                 return null;
             });
@@ -1219,9 +1208,20 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         g.writeEndArray();
     }
 
+    private void writePortableBookReaderOverride(JsonGenerator g, String libId, String sourceBookId, String json)
+            throws IOException {
+        if (sourceBookId == null || sourceBookId.isBlank() || json == null || json.isBlank()) return;
+        JsonNode preferences = validateReaderPreferencesNode(
+                mapper.readTree(json), "reader_book_preferences.preferences_json");
+        g.writeStartObject();
+        if (libId == null || libId.isBlank()) g.writeNullProperty("libId"); else g.writeStringProperty("libId", libId);
+        g.writeStringProperty("sourceBookId", sourceBookId);
+        g.writePOJOProperty("preferences", preferences);
+        g.writeEndObject();
+    }
 
     private void writeRows(JsonGenerator g, String field, String sql, AtomicLong counter) throws IOException {
-        g.writeArrayFieldStart(field);
+        g.writeArrayPropertyStart(field);
         try {
             jdbc().query(sql, (ResultSetExtractor<Void>) rs -> {
                 try {
@@ -1232,11 +1232,11 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                             String name = md.getColumnLabel(i);
                             Object value = rs.getObject(i);
                             if (value == null) {
-                                g.writeNullField(name);
+                                g.writeNullProperty(name);
                             } else if (value instanceof Number || value instanceof Boolean) {
-                                g.writeObjectField(name, value);
+                                g.writePOJOProperty(name, value);
                             } else {
-                                g.writeStringField(name, value.toString());
+                                g.writeStringProperty(name, value.toString());
                             }
                         }
                         g.writeEndObject();
@@ -1244,8 +1244,8 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                             counter.incrementAndGet();
                         }
                     }
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
+                } catch (JacksonException e) {
+                    throw new UncheckedIOException(new IOException("Cannot serialize portable user-data row", e));
                 }
                 return null;
             });
@@ -1254,29 +1254,6 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         }
         g.writeEndArray();
     }
-
-    private JsonNode readJsonUnlocked(Path file) throws IOException {
-        if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return null;
-        SafeFilePublication.requireSafeRegularFile(file, "Reader preferences");
-        try {
-            return mapper.readTree(readBoundedFile(file, MAX_READER_PREFERENCES_JSON_BYTES, "Reader preferences"));
-        } catch (IOException e) {
-            throw new IOException("Cannot read Reader preferences: " + file, e);
-        }
-    }
-
-
-    private static byte[] readBoundedFile(Path file, int maxBytes, String label) throws IOException {
-        Path safe = SafeFilePublication.requireSafeRegularFile(file, label);
-        try (InputStream in = Files.newInputStream(safe, LinkOption.NOFOLLOW_LINKS)) {
-            byte[] bytes = in.readNBytes(maxBytes + 1);
-            if (bytes.length > maxBytes) {
-                throw new IOException(label + " exceed safety limit (" + maxBytes + " bytes): " + file);
-            }
-            return bytes;
-        }
-    }
-
 
     private JdbcTemplate jdbc() {
         if (!collectionManager.hasActiveCollection()) {
@@ -1296,13 +1273,13 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     private static String safeText(JsonNode n, String field, String fallback) {
         JsonNode v = n.get(field);
         if (v == null || v.isNull()) return fallback;
-        return v.asText();
+        return v.asString();
     }
 
     private static String safeNullableText(JsonNode n, String field) {
         JsonNode v = n.get(field);
         if (v == null || v.isNull()) return null;
-        return v.asText();
+        return v.asString();
     }
 
     private static int safeInt(JsonNode n, String field, int defaultValue) {
@@ -1320,7 +1297,24 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     private static double safeDouble(JsonNode n, String field, double defaultValue) {
         JsonNode v = n.get(field);
         if (v == null || v.isNull() || !v.isNumber()) return defaultValue;
-        return v.asDouble(defaultValue);
+        double value = v.asDouble(defaultValue);
+        return Double.isFinite(value) ? value : defaultValue;
+    }
+
+    private static int nonNegativeInt(JsonNode n, String field, int defaultValue) {
+        return Math.max(0, safeInt(n, field, defaultValue));
+    }
+
+    private static long nonNegativeLong(JsonNode n, String field, long defaultValue) {
+        return Math.max(0L, safeLong(n, field, defaultValue));
+    }
+
+    private static int percentInt(JsonNode n, String field, int defaultValue) {
+        return Math.max(0, Math.min(100, safeInt(n, field, defaultValue)));
+    }
+
+    private static double percentDouble(JsonNode n, String field, double defaultValue) {
+        return Math.max(0.0, Math.min(100.0, safeDouble(n, field, defaultValue)));
     }
     private static String limitedText(JsonNode n, String field, String fallback) {
         return truncate(safeText(n, field, fallback));
@@ -1333,7 +1327,12 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private static String truncate(String value) {
         if (value == null || value.length() <= MAX_STRING_LENGTH) return value;
-        return value.substring(0, MAX_STRING_LENGTH);
+        int end = MAX_STRING_LENGTH;
+        if (Character.isHighSurrogate(value.charAt(end - 1))
+                && Character.isLowSurrogate(value.charAt(end))) {
+            end--;
+        }
+        return value.substring(0, end);
     }
 
 }
