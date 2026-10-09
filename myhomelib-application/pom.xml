@@ -16,7 +16,7 @@
 
     <properties>
         <mhl.test.jvmArgs>${mhl.mockito.agentArg}</mhl.test.jvmArgs>
-        <mapstruct.version>1.5.5.Final</mapstruct.version>
+        <mapstruct.version>1.6.3</mapstruct.version>
     </properties>
 
     <dependencies>
@@ -91,7 +91,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.14.0</version>
+                <version>3.16.0</version>
                 <configuration>
                     <source>21</source>
                     <target>21</target>
