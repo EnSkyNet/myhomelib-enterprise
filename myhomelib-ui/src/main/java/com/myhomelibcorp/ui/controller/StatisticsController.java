@@ -23,6 +23,8 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.CancellationException;
 
 @Component
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
@@ -33,6 +35,7 @@ public class StatisticsController implements WorkspaceLifecycle {
     private final ApplicationState appState;
     private final UiBackgroundExecutor backgroundExecutor;
     private final AtomicLong loadGeneration = new AtomicLong();
+    private final AtomicBoolean refreshPending = new AtomicBoolean();
     private final UiSubscriptions subscriptions = new UiSubscriptions();
 
     @FXML private Label booksCount, authorsCount, seriesCount, genresCount, languagesCount, publishersCount;
@@ -54,15 +57,28 @@ public class StatisticsController implements WorkspaceLifecycle {
     }
 
     private void loadStatistics(boolean refresh) {
+        // A queued refresh must be coalesced; repeated clicks must not start concurrent full
+        // SQLite counts while a long INDEX rebuild holds the collection barrier.
+        if (refresh && !refreshPending.compareAndSet(false, true)) return;
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(loadGeneration, appState);
+        String collectionId = appState.getCurrentLibraryCollection() == null ? null
+                : appState.getCurrentLibraryCollection().getId();
         setState(UiText.text("ui.fxml.book_workspace.loading"));
-        LibraryOperationType operationType = refresh
-                ? LibraryOperationType.EDIT
-                : LibraryOperationType.QUERY;
-        backgroundExecutor.submitCollectionScoped(operationType, () -> {
-            if (refresh) statisticsService.refreshStatistics();
-            return statisticsService.getStatistics();
-        }).whenComplete((stats, error) -> UiExecutor.runOnUiThread(() -> {
+        java.util.concurrent.CompletableFuture<com.myhomelibcorp.application.dto.LibraryStatistics> future = refresh
+                ? backgroundExecutor.submitCollectionScopedAwait(LibraryOperationType.EDIT, () -> {
+                    String currentId = appState.getCurrentLibraryCollection() == null ? null
+                            : appState.getCurrentLibraryCollection().getId();
+                    if (!Objects.equals(collectionId, currentId)) {
+                        throw new CancellationException("Collection changed before statistics refresh");
+                    }
+                    statisticsService.refreshStatistics();
+                    return statisticsService.getStatistics();
+                })
+                : backgroundExecutor.submitCollectionScoped(LibraryOperationType.QUERY,
+                        statisticsService::getStatistics);
+        future.whenComplete((stats, error) -> {
+            if (refresh) refreshPending.set(false);
+            UiExecutor.runOnUiThread(() -> {
             if (!UiAsyncRequestGuard.isCurrent(requestToken, loadGeneration, appState)) return;
             if (error != null || stats == null) {
                 log.error("Помилка завантаження статистики", error);
@@ -94,7 +110,8 @@ public class StatisticsController implements WorkspaceLifecycle {
             favoritesCount.setText(formatNumber(stats.getFavoritesCount()));
             deletedBooksCount.setText(formatNumber(stats.getDeletedBooksCount()));
             sourcesCount.setText(formatNumber(stats.getSourcesCount()));
-        }));
+            });
+        });
     }
 
     private void setState(String state) {

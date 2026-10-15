@@ -156,9 +156,17 @@ public class WorkspaceManager {
     }
 
     public void showAuthorWorkspace(AuthorId authorId) {
-        Pane workspace = fxmlLoaderFactory.loadAuthorWorkspace(authorId);
-        setWorkspace(workspace);
-        push("author", authorId != null ? authorId.asString() : "");
+        long startedAt = System.nanoTime();
+        log.info("AUTHOR_WORKSPACE_OPEN_START author={}", authorId);
+        try {
+            Pane workspace = fxmlLoaderFactory.loadAuthorWorkspace(authorId);
+            setWorkspace(workspace);
+            push("author", authorId != null ? authorId.asString() : "");
+        } finally {
+            long durationMs = (System.nanoTime() - startedAt) / 1_000_000;
+            if (durationMs >= 1000) log.warn("AUTHOR_WORKSPACE_OPEN_SLOW durationMs={}", durationMs);
+            else log.info("AUTHOR_WORKSPACE_OPEN_DONE durationMs={}", durationMs);
+        }
     }
 
     public void showDownloadedAuthorWorkspace(AuthorId authorId) {

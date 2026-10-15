@@ -1,3 +1,17 @@
+# Незакриті пункти, 2026-10-15
+
+Дивіться [поточний звіт](AUDIT-REMEDIATION-2026-10-15-UA.md) і [зовнішню матрицю](AUDIT-EXTERNAL-ACCEPTANCE-2026-10-13-UA.md). Linux root-прогін 13 жовтня успішний; 15 жовтня перевірено тотожність 2448 файлів тестового маніфесту. Це не закриває наведені нижче пункти.
+
+- **OPEN_LOCAL:** Stage 25C FAIL — FolderSyncService має 375 рядків при межі 360. Подальше розділення великих класів UI також не завершено.
+- **OPEN_LOCAL:** новий порівняльний performance A/B 5 проти 5; перевірка решти порожніх catch. Економію RSS поточного кандидата не виміряно.
+- **OPEN_EXTERNAL:** повтор проблемної першої книги на Windows із новим журналом; її початкова I/O/conversion-помилка ще не встановлена.
+- **OPEN_EXTERNAL:** Windows/macOS build, Calibre/cancellation, installer/portable/DPI, DPAPI, Kobo/WebDAV/Readwise, RAM/UI soak.
+- **OPEN_EXTERNAL:** live SCA/CodeQL, native provenance, рішення про ліцензію, підписи, серверний CI і required checks.
+
+Поточні defaults: Hikari pool=3, cache=-8192 KiB, mmap=33554432 bytes. Нижче збережено історію попередніх кандидатів; старі твердження про «лише зовнішні» пункти та pool=2 не є поточним статусом.
+
+## Історичні перевірки попередніх версій
+
 # MyHomeLib 8.0.0 — що реально залишилося після V34 real-data acceptance
 
 **Дата стану:** 2026-10-05

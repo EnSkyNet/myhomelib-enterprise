@@ -15,7 +15,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  source-integrity:
+    uses: ./.github/workflows/source-integrity.yml
+
   fast-gate:
+    needs: source-integrity
     name: Fast gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -100,6 +104,20 @@ jobs:
       - name: Require executed JavaFX tests
         shell: bash
         run: python3 tools/fx-test-execution-check.py myhomelib-ui/target/surefire-reports --min-tests 8 --min-suites 6
+
+      - name: Organizer error and cancellation regression
+        shell: bash
+        run: >-
+          xvfb-run -a ./tools/invoke-maven.sh -B -ntp -pl myhomelib-ui -am
+          -Dtest=ApplyLibraryOrganizationUseCaseTest,OrganizerTargetPublisherTest,OrganizerArchiveSupportTest,LibraryOrganizerUiServiceActionBehaviorContractTest,LatestUiProgressTest,SafeFilePublicationTest
+          -Dsurefire.failIfNoSpecifiedTests=false test
+
+      - name: Content extraction memory budget regression
+        shell: bash
+        run: >-
+          ./tools/invoke-maven.sh -B -ntp -pl myhomelib-infrastructure -am
+          -Dtest=ContentExtractionResourceRegressionTest,EpubPackageBudgetTest,EpubTitleBudgetTest,ContentExtractorContractTest,Fb2ParserMemorySafetyTest,Fb2CoverParserMemorySafetyTest,BoundedInpLineReaderTest
+          -Dsurefire.failIfNoSpecifiedTests=false test
 
       - name: Privacy and external-reader temp lifecycle regression
         shell: bash
@@ -273,6 +291,7 @@ jobs:
           test
 
   dependency-scan:
+    needs: source-integrity
     name: Dependency vulnerability scan
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -301,10 +320,21 @@ jobs:
       - name: Ensure Maven launcher helper is executable
         run: chmod +x tools/invoke-maven.sh
 
+      - name: Set up Python for vendor review
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Verify vendor binaries and generate supplementary SBOM
+        run: python tools/vendor-binary-inventory.py --check --sbom target/vendor-bom.cdx.json
+
       - name: Scan dependencies (CVSS 7+ blocks)
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: ./tools/invoke-maven.sh -B -ntp -DskipTests -Pdependency-check verify
+
+      - name: Require actual vendor JAR scan coverage
+        run: python tools/vendor-binary-inventory.py --check --sca-report target/dependency-check-report.json
 
       - name: Upload dependency scan report
         if: always()
@@ -314,6 +344,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           path: |
+            target/vendor-bom.cdx.json
             **/target/dependency-check-report.html
             **/target/dependency-check-report.json
             **/target/dependency-check-report.sarif

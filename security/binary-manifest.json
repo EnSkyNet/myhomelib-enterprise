@@ -1,0 +1,1116 @@
+{
+  "schemaVersion": 1,
+  "scope": "vendor files; supplementary to Maven; no CVE or license clearance",
+  "components": [
+    {
+      "path": "tools/validators/epubcheck/epubcheck.jar",
+      "sha256": "2146665a124998dc6c908010ffe0d09dc4f4c8014f2c8fd6a1aa11f64c40ac93",
+      "sizeBytes": 1244719,
+      "name": "epubcheck",
+      "version": "5.4.0",
+      "license": "BSD-3-Clause",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/LICENSE.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/epubcheck.jar (distribution filename)",
+        "tools/validators/epubcheck/epubcheck.jar!/META-INF/maven/org.w3c/epubcheck/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/w3c/epubcheck/5.4.0/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "epubcheck",
+          "groupId": "org.w3c",
+          "version": "5.4.0"
+        }
+      ],
+      "group": "org.w3c",
+      "purl": "pkg:maven/org.w3c/epubcheck@5.4.0"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/Saxon-HE-11.4.jar",
+      "sha256": "42e35494dc2e6b5e97256ae7cdf2b7ce30439c352566f35de02bed3a06a2b169",
+      "sizeBytes": 5109857,
+      "name": "Saxon-HE",
+      "version": "11.4",
+      "license": "MPL-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/Saxon-HE-11.4.jar (distribution filename)",
+        "tools/validators/epubcheck/epubcheck.jar!/META-INF/maven/org.w3c/epubcheck/pom.xml"
+      ],
+      "metadataStatus": "distribution-pom-dependency",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/net/sf/saxon/Saxon-HE/11.4/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [],
+      "group": "net.sf.saxon",
+      "purl": "pkg:maven/net.sf.saxon/Saxon-HE@11.4"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/accessors-smart-2.4.9.jar",
+      "sha256": "accdd5c7ac4c49b155890aaea1ffca2a9ccd5826b562dd95a99fc1887003e031",
+      "sizeBytes": 29904,
+      "name": "accessors-smart",
+      "version": "2.4.9",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/accessors-smart-2.4.9.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/accessors-smart-2.4.9.jar!/META-INF/maven/net.minidev/accessors-smart/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/net/minidev/accessors-smart/2.4.9/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "groupId": "net.minidev",
+          "artifactId": "accessors-smart",
+          "version": "2.4.9"
+        }
+      ],
+      "group": "net.minidev",
+      "purl": "pkg:maven/net.minidev/accessors-smart@2.4.9"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/asm-9.3.jar",
+      "sha256": "1263369b59e29c943918de11d6d6152e2ec6085ce63e5710516f8c67d368e4bc",
+      "sizeBytes": 122176,
+      "name": "asm",
+      "version": "9.3",
+      "license": "BSD-3-Clause",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/asm-9.3.jar (distribution filename)"
+      ],
+      "metadataStatus": "distribution-label",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://github.com/w3c/epubcheck",
+      "sourceKind": "upstream project; exact distribution build not independently verified",
+      "embeddedMavenComponents": []
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/common-image-3.9.4.jar",
+      "sha256": "a5f41991d2492f28ce4f04b82abfffb89f5ffa9dfc87f4e58f10d526e5ba4a83",
+      "sizeBytes": 85550,
+      "name": "common-image",
+      "version": "3.9.4",
+      "license": "BSD-3-Clause",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/common-image-3.9.4.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/common-image-3.9.4.jar!/META-INF/maven/com.twelvemonkeys.common/common-image/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/common/common-image/3.9.4/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "common-image",
+          "groupId": "com.twelvemonkeys.common",
+          "version": "3.9.4"
+        }
+      ],
+      "group": "com.twelvemonkeys.common",
+      "purl": "pkg:maven/com.twelvemonkeys.common/common-image@3.9.4"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/common-io-3.9.4.jar",
+      "sha256": "cc7c27947bf21a75fbc3d613e79bdd8619908e67b88cc7d73091a55876e4fd38",
+      "sizeBytes": 89993,
+      "name": "common-io",
+      "version": "3.9.4",
+      "license": "BSD-3-Clause",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/common-io-3.9.4.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/common-io-3.9.4.jar!/META-INF/maven/com.twelvemonkeys.common/common-io/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/common/common-io/3.9.4/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "common-io",
+          "groupId": "com.twelvemonkeys.common",
+          "version": "3.9.4"
+        }
+      ],
+      "group": "com.twelvemonkeys.common",
+      "purl": "pkg:maven/com.twelvemonkeys.common/common-io@3.9.4"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/common-lang-3.9.4.jar",
+      "sha256": "a521b797d58f65b80fa8ca365d95911622408cab220fd5d852169805f640acbd",
+      "sizeBytes": 119561,
+      "name": "common-lang",
+      "version": "3.9.4",
+      "license": "BSD-3-Clause",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/common-lang-3.9.4.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/common-lang-3.9.4.jar!/META-INF/maven/com.twelvemonkeys.common/common-lang/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/common/common-lang/3.9.4/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "common-lang",
+          "groupId": "com.twelvemonkeys.common",
+          "version": "3.9.4"
+        }
+      ],
+      "group": "com.twelvemonkeys.common",
+      "purl": "pkg:maven/com.twelvemonkeys.common/common-lang@3.9.4"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/commons-codec-1.19.0.jar",
+      "sha256": "5c3881e4f556855e9c532927ee0c9dfde94cc66760d5805c031a59887070af5f",
+      "sizeBytes": 374716,
+      "name": "commons-codec",
+      "version": "1.19.0",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/commons-codec-1.19.0.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/commons-codec-1.19.0.jar!/META-INF/maven/commons-codec/commons-codec/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/commons-codec/commons-codec/1.19.0/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "commons-codec",
+          "groupId": "commons-codec",
+          "version": "1.19.0"
+        }
+      ],
+      "group": "commons-codec",
+      "purl": "pkg:maven/commons-codec/commons-codec@1.19.0"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/commons-compress-1.28.0.jar",
+      "sha256": "e1522945218456f3649a39bc4afd70ce4bd466221519dba7d378f2141a4642ca",
+      "sizeBytes": 1117221,
+      "name": "commons-compress",
+      "version": "1.28.0",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/commons-compress-1.28.0.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/commons-compress-1.28.0.jar!/META-INF/maven/org.apache.commons/commons-compress/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-compress/1.28.0/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "commons-compress",
+          "groupId": "org.apache.commons",
+          "version": "1.28.0"
+        }
+      ],
+      "group": "org.apache.commons",
+      "purl": "pkg:maven/org.apache.commons/commons-compress@1.28.0"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/commons-io-2.20.0.jar",
+      "sha256": "df90bba0fe3cb586b7f164e78fe8f8f4da3f2dd5c27fa645f888100ccc25dd72",
+      "sizeBytes": 563971,
+      "name": "commons-io",
+      "version": "2.20.0",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/commons-io-2.20.0.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/commons-io-2.20.0.jar!/META-INF/maven/commons-io/commons-io/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/commons-io/commons-io/2.20.0/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "commons-io",
+          "groupId": "commons-io",
+          "version": "2.20.0"
+        }
+      ],
+      "group": "commons-io",
+      "purl": "pkg:maven/commons-io/commons-io@2.20.0"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/commons-lang3-3.18.0.jar",
+      "sha256": "4eeeae8d20c078abb64b015ec158add383ac581571cddc45c68f0c9ae0230720",
+      "sizeBytes": 702952,
+      "name": "commons-lang3",
+      "version": "3.18.0",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/commons-lang3-3.18.0.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/commons-lang3-3.18.0.jar!/META-INF/maven/org.apache.commons/commons-lang3/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-lang3/3.18.0/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "commons-lang3",
+          "groupId": "org.apache.commons",
+          "version": "3.18.0"
+        }
+      ],
+      "group": "org.apache.commons",
+      "purl": "pkg:maven/org.apache.commons/commons-lang3@3.18.0"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/error_prone_annotations-2.36.0.jar",
+      "sha256": "77440e270b0bc9a249903c5a076c36a722c4886ca4f42675f2903a1c53ed61a5",
+      "sizeBytes": 19401,
+      "name": "error_prone_annotations",
+      "version": "2.36.0",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/error_prone_annotations-2.36.0.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/error_prone_annotations-2.36.0.jar!/META-INF/maven/com.google.errorprone/error_prone_annotations/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/google/errorprone/error_prone_annotations/2.36.0/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "error_prone_annotations",
+          "groupId": "com.google.errorprone",
+          "version": "2.36.0"
+        }
+      ],
+      "group": "com.google.errorprone",
+      "purl": "pkg:maven/com.google.errorprone/error_prone_annotations@2.36.0"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/failureaccess-1.0.3.jar",
+      "sha256": "cbfc3906b19b8f55dd7cfd6dfe0aa4532e834250d7f080bd8d211a3e246b59cb",
+      "sizeBytes": 10763,
+      "name": "failureaccess",
+      "version": "1.0.3",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/failureaccess-1.0.3.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/failureaccess-1.0.3.jar!/META-INF/maven/com.google.guava/failureaccess/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/google/guava/failureaccess/1.0.3/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "failureaccess",
+          "groupId": "com.google.guava",
+          "version": "1.0.3"
+        }
+      ],
+      "group": "com.google.guava",
+      "purl": "pkg:maven/com.google.guava/failureaccess@1.0.3"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/galimatias-0.1.3.jar",
+      "sha256": "b37cbc4513584ed6aa1d8f7529ebe77abbe28c1f54ec63b0ff28a00a2d9d2a9a",
+      "sizeBytes": 107357,
+      "name": "galimatias",
+      "version": "0.1.3",
+      "license": "MIT",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/galimatias-0.1.3.jar (distribution filename)",
+        "tools/validators/epubcheck/epubcheck.jar!/META-INF/maven/org.w3c/epubcheck/pom.xml"
+      ],
+      "metadataStatus": "distribution-pom-dependency",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/nu/validator/galimatias/0.1.3/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [],
+      "group": "nu.validator",
+      "purl": "pkg:maven/nu.validator/galimatias@0.1.3"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/guava-33.4.8-jre.jar",
+      "sha256": "f3d7f57f67fd622f4d468dfdd692b3a5e3909246c28017ac3263405f0fe617ed",
+      "sizeBytes": 3023797,
+      "name": "guava",
+      "version": "33.4.8-jre",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/guava-33.4.8-jre.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/guava-33.4.8-jre.jar!/META-INF/maven/com.google.guava/guava/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/google/guava/guava/33.4.8-jre/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "groupId": "com.google.guava",
+          "artifactId": "guava",
+          "version": "33.4.8-jre"
+        }
+      ],
+      "group": "com.google.guava",
+      "purl": "pkg:maven/com.google.guava/guava@33.4.8-jre"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/httpclient5-5.1.3.jar",
+      "sha256": "28c759254f4e35319e078bb6ffea75676608dc12cb243b24fb3c8732522977fe",
+      "sizeBytes": 797934,
+      "name": "httpclient5",
+      "version": "5.1.3",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/httpclient5-5.1.3.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/httpclient5-5.1.3.jar!/META-INF/maven/org.apache.httpcomponents.client5/httpclient5/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/client5/httpclient5/5.1.3/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "httpclient5",
+          "groupId": "org.apache.httpcomponents.client5",
+          "version": "5.1.3"
+        }
+      ],
+      "group": "org.apache.httpcomponents.client5",
+      "purl": "pkg:maven/org.apache.httpcomponents.client5/httpclient5@5.1.3"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/httpcore5-5.1.3.jar",
+      "sha256": "f2bf2f2c7772169c9e30699719667ad30f9b46c4e9d7841907deb2d12d9923fe",
+      "sizeBytes": 850808,
+      "name": "httpcore5",
+      "version": "5.1.3",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/httpcore5-5.1.3.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/httpcore5-5.1.3.jar!/META-INF/maven/org.apache.httpcomponents.core5/httpcore5/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5/5.1.3/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "httpcore5",
+          "groupId": "org.apache.httpcomponents.core5",
+          "version": "5.1.3"
+        }
+      ],
+      "group": "org.apache.httpcomponents.core5",
+      "purl": "pkg:maven/org.apache.httpcomponents.core5/httpcore5@5.1.3"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/httpcore5-h2-5.1.3.jar",
+      "sha256": "d0e78ba15aa8ebe77982b660ac4b09a95d6e035dbdbea762577dc1c8e2935807",
+      "sizeBytes": 232137,
+      "name": "httpcore5-h2",
+      "version": "5.1.3",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/httpcore5-h2-5.1.3.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/httpcore5-h2-5.1.3.jar!/META-INF/maven/org.apache.httpcomponents.core5/httpcore5-h2/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5-h2/5.1.3/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "httpcore5-h2",
+          "groupId": "org.apache.httpcomponents.core5",
+          "version": "5.1.3"
+        }
+      ],
+      "group": "org.apache.httpcomponents.core5",
+      "purl": "pkg:maven/org.apache.httpcomponents.core5/httpcore5-h2@5.1.3"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/icu4j-77.1.jar",
+      "sha256": "b3640b9f416a4411fd33c59abbeea8fd57d024c23e1819bf9673220a97499fe3",
+      "sizeBytes": 14663227,
+      "name": "icu4j",
+      "version": "77.1",
+      "license": "Unicode-3.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/icu4j-77.1.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/icu4j-77.1.jar!/META-INF/maven/com.ibm.icu/icu4j/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/ibm/icu/icu4j/77.1/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "icu4j",
+          "groupId": "com.ibm.icu",
+          "version": "77.1"
+        },
+        {
+          "artifactId": "core",
+          "groupId": "com.ibm.icu",
+          "version": "77.1"
+        },
+        {
+          "artifactId": "collate",
+          "groupId": "com.ibm.icu",
+          "version": "77.1"
+        },
+        {
+          "artifactId": "currdata",
+          "groupId": "com.ibm.icu",
+          "version": "77.1"
+        },
+        {
+          "artifactId": "langdata",
+          "groupId": "com.ibm.icu",
+          "version": "77.1"
+        },
+        {
+          "artifactId": "regiondata",
+          "groupId": "com.ibm.icu",
+          "version": "77.1"
+        },
+        {
+          "artifactId": "translit",
+          "groupId": "com.ibm.icu",
+          "version": "77.1"
+        }
+      ],
+      "group": "com.ibm.icu",
+      "purl": "pkg:maven/com.ibm.icu/icu4j@77.1"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/imageio-core-3.9.4.jar",
+      "sha256": "244843a7bc8ecf6efb20aa5f817e977addafb3f6b0ce70393b3e6d1109591fae",
+      "sizeBytes": 116474,
+      "name": "imageio-core",
+      "version": "3.9.4",
+      "license": "BSD-3-Clause",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/imageio-core-3.9.4.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/imageio-core-3.9.4.jar!/META-INF/maven/com.twelvemonkeys.imageio/imageio-core/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/imageio/imageio-core/3.9.4/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "imageio-core",
+          "groupId": "com.twelvemonkeys.imageio",
+          "version": "3.9.4"
+        }
+      ],
+      "group": "com.twelvemonkeys.imageio",
+      "purl": "pkg:maven/com.twelvemonkeys.imageio/imageio-core@3.9.4"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/imageio-jpeg-3.9.4.jar",
+      "sha256": "cdc95ecde53b012774790ead020879af6c76928c8d8e0be4b964528937ec1b7d",
+      "sizeBytes": 92263,
+      "name": "imageio-jpeg",
+      "version": "3.9.4",
+      "license": "BSD-3-Clause",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/imageio-jpeg-3.9.4.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/imageio-jpeg-3.9.4.jar!/META-INF/maven/com.twelvemonkeys.imageio/imageio-jpeg/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/imageio/imageio-jpeg/3.9.4/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "imageio-jpeg",
+          "groupId": "com.twelvemonkeys.imageio",
+          "version": "3.9.4"
+        }
+      ],
+      "group": "com.twelvemonkeys.imageio",
+      "purl": "pkg:maven/com.twelvemonkeys.imageio/imageio-jpeg@3.9.4"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/imageio-metadata-3.9.4.jar",
+      "sha256": "580a334f8e20c99ff9127fa9b0022b0f02a981b46e6b38e0df393052329a6324",
+      "sizeBytes": 81866,
+      "name": "imageio-metadata",
+      "version": "3.9.4",
+      "license": "BSD-3-Clause",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/imageio-metadata-3.9.4.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/imageio-metadata-3.9.4.jar!/META-INF/maven/com.twelvemonkeys.imageio/imageio-metadata/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/imageio/imageio-metadata/3.9.4/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "imageio-metadata",
+          "groupId": "com.twelvemonkeys.imageio",
+          "version": "3.9.4"
+        }
+      ],
+      "group": "com.twelvemonkeys.imageio",
+      "purl": "pkg:maven/com.twelvemonkeys.imageio/imageio-metadata@3.9.4"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/isorelax-20030108.jar",
+      "sha256": "3427152431cf7f967f92e69e5cac16147c5d8fb4b4e5a8a72f5291788efcff8c",
+      "sizeBytes": 192602,
+      "name": "isorelax",
+      "version": "20030108",
+      "license": "BSD-3-Clause",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/isorelax-20030108.jar (distribution filename)"
+      ],
+      "metadataStatus": "distribution-label",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://github.com/w3c/epubcheck",
+      "sourceKind": "upstream project; exact distribution build not independently verified",
+      "embeddedMavenComponents": []
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/j2objc-annotations-3.0.0.jar",
+      "sha256": "88241573467ddca44ffd4d74aa04c2bbfd11bf7c17e0c342c94c9de7a70a7c64",
+      "sizeBytes": 12467,
+      "name": "j2objc-annotations",
+      "version": "3.0.0",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/j2objc-annotations-3.0.0.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/j2objc-annotations-3.0.0.jar!/META-INF/maven/com.google.j2objc/j2objc-annotations/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/google/j2objc/j2objc-annotations/3.0.0/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "j2objc-annotations",
+          "groupId": "com.google.j2objc",
+          "version": "3.0.0"
+        }
+      ],
+      "group": "com.google.j2objc",
+      "purl": "pkg:maven/com.google.j2objc/j2objc-annotations@3.0.0"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/jackson-annotations-2.18.9.jar",
+      "sha256": "798c85b86e7420d0b4eb91e7b3e37d4bee673c61de37a616ba51a7539631e6b7",
+      "sizeBytes": 78411,
+      "name": "jackson-annotations",
+      "version": "2.18.9",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/jackson-annotations-2.18.9.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/jackson-annotations-2.18.9.jar!/META-INF/maven/com.fasterxml.jackson.core/jackson-annotations/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.18.9/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "jackson-annotations",
+          "groupId": "com.fasterxml.jackson.core",
+          "version": "2.18.9"
+        }
+      ],
+      "group": "com.fasterxml.jackson.core",
+      "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.18.9"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/jackson-core-2.18.8.jar",
+      "sha256": "ab865e39f01403598748b090a3bf528616e701913a71afc37a227daa0fabb4ae",
+      "sizeBytes": 588007,
+      "name": "jackson-core",
+      "version": "2.18.8",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/jackson-core-2.18.8.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/jackson-core-2.18.8.jar!/META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-core/2.18.8/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "jackson-core",
+          "groupId": "com.fasterxml.jackson.core",
+          "version": "2.18.8"
+        }
+      ],
+      "group": "com.fasterxml.jackson.core",
+      "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.18.8"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/jackson-databind-2.18.9.jar",
+      "sha256": "71595a3f7ff58344ec0496a9f9ec9f623ef7b85b45402d88f1ca261f1bc4b42c",
+      "sizeBytes": 1662872,
+      "name": "jackson-databind",
+      "version": "2.18.9",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/jackson-databind-2.18.9.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/jackson-databind-2.18.9.jar!/META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.18.9/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "jackson-databind",
+          "groupId": "com.fasterxml.jackson.core",
+          "version": "2.18.9"
+        }
+      ],
+      "group": "com.fasterxml.jackson.core",
+      "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.9"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/jing-20181222.jar",
+      "sha256": "e5e13fa92d9461f37b7c3d760780ea07cca5b7947440f99ebb7608b5b168aaa3",
+      "sizeBytes": 764033,
+      "name": "jing",
+      "version": "20181222",
+      "license": "BSD-3-Clause",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/jing-20181222.jar (distribution filename)",
+        "tools/validators/epubcheck/epubcheck.jar!/META-INF/maven/org.w3c/epubcheck/pom.xml"
+      ],
+      "metadataStatus": "distribution-pom-dependency",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/relaxng/jing/20181222/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [],
+      "group": "org.relaxng",
+      "purl": "pkg:maven/org.relaxng/jing@20181222"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/json-path-2.8.0.jar",
+      "sha256": "9601707e95cd79fb98570a01ea8cfb857b5cde948744d6e0edf733c11002c95b",
+      "sizeBytes": 277582,
+      "name": "json-path",
+      "version": "2.8.0",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/json-path-2.8.0.jar (distribution filename)"
+      ],
+      "metadataStatus": "distribution-label",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://github.com/w3c/epubcheck",
+      "sourceKind": "upstream project; exact distribution build not independently verified",
+      "embeddedMavenComponents": []
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/json-path-assert-2.8.0.jar",
+      "sha256": "5de6305e6e1df4f4c1ad603f1d7ac2394b474c767b8165701a492643ac34a56a",
+      "sizeBytes": 16606,
+      "name": "json-path-assert",
+      "version": "2.8.0",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/json-path-assert-2.8.0.jar (distribution filename)",
+        "tools/validators/epubcheck/epubcheck.jar!/META-INF/maven/org.w3c/epubcheck/pom.xml"
+      ],
+      "metadataStatus": "distribution-pom-dependency",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/jayway/jsonpath/json-path-assert/2.8.0/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [],
+      "group": "com.jayway.jsonpath",
+      "purl": "pkg:maven/com.jayway.jsonpath/json-path-assert@2.8.0"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/json-smart-2.4.10.jar",
+      "sha256": "70cab5e9488630dc631b1fc6e7fa550d95cddd19ba14db39ceca7cabfbd4e5ae",
+      "sizeBytes": 120206,
+      "name": "json-smart",
+      "version": "2.4.10",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/json-smart-2.4.10.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/json-smart-2.4.10.jar!/META-INF/maven/net.minidev/json-smart/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/net/minidev/json-smart/2.4.10/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "groupId": "net.minidev",
+          "artifactId": "json-smart",
+          "version": "2.4.10"
+        }
+      ],
+      "group": "net.minidev",
+      "purl": "pkg:maven/net.minidev/json-smart@2.4.10"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/jspecify-1.0.0.jar",
+      "sha256": "1fad6e6be7557781e4d33729d49ae1cdc8fdda6fe477bb0cc68ce351eafdfbab",
+      "sizeBytes": 3819,
+      "name": "jspecify",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/jspecify-1.0.0.jar (distribution filename)"
+      ],
+      "metadataStatus": "distribution-label",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://github.com/w3c/epubcheck",
+      "sourceKind": "upstream project; exact distribution build not independently verified",
+      "embeddedMavenComponents": []
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar",
+      "sha256": "b372a037d4230aa57fbeffdef30fd6123f9c0c2db85d0aced00c91b974f33f99",
+      "sizeBytes": 2199,
+      "name": "listenablefuture",
+      "version": "9999.0-empty-to-avoid-conflict-with-guava",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar!/META-INF/maven/com.google.guava/listenablefuture/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "version": "9999.0-empty-to-avoid-conflict-with-guava",
+          "groupId": "com.google.guava",
+          "artifactId": "listenablefuture"
+        }
+      ],
+      "group": "com.google.guava",
+      "purl": "pkg:maven/com.google.guava/listenablefuture@9999.0-empty-to-avoid-conflict-with-guava"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/sac-1.3.jar",
+      "sha256": "003785669f921aafe4f137468dd20a01a36111e94fd7449f26c16e7924d82d23",
+      "sizeBytes": 15808,
+      "name": "sac",
+      "version": "1.3",
+      "license": "W3C Software License",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/sac-1.3.jar (distribution filename)",
+        "tools/validators/epubcheck/epubcheck.jar!/META-INF/maven/org.w3c/epubcheck/pom.xml"
+      ],
+      "metadataStatus": "distribution-pom-dependency",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/w3c/css/sac/1.3/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [],
+      "group": "org.w3c.css",
+      "purl": "pkg:maven/org.w3c.css/sac@1.3"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/slf4j-api-1.7.36.jar",
+      "sha256": "d3ef575e3e4979678dc01bf1dcce51021493b4d11fb7f1be8ad982877c16a1c0",
+      "sizeBytes": 41125,
+      "name": "slf4j-api",
+      "version": "1.7.36",
+      "license": "MIT",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/slf4j-api-1.7.36.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/slf4j-api-1.7.36.jar!/META-INF/maven/org.slf4j/slf4j-api/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/1.7.36/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "slf4j-api",
+          "groupId": "org.slf4j",
+          "version": "1.7.36"
+        }
+      ],
+      "group": "org.slf4j",
+      "purl": "pkg:maven/org.slf4j/slf4j-api@1.7.36"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/slf4j-nop-1.7.36.jar",
+      "sha256": "c214958b07816cb4412b30c7bdbd4308ffdc6ba2a83767b8f3a9229cbd9274d6",
+      "sizeBytes": 3946,
+      "name": "slf4j-nop",
+      "version": "1.7.36",
+      "license": "MIT",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/slf4j-nop-1.7.36.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/slf4j-nop-1.7.36.jar!/META-INF/maven/org.slf4j/slf4j-nop/pom.properties"
+      ],
+      "metadataStatus": "embedded-maven-metadata",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/slf4j/slf4j-nop/1.7.36/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [
+        {
+          "artifactId": "slf4j-nop",
+          "groupId": "org.slf4j",
+          "version": "1.7.36"
+        }
+      ],
+      "group": "org.slf4j",
+      "purl": "pkg:maven/org.slf4j/slf4j-nop@1.7.36"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/xercesImpl-2.12.2.jar",
+      "sha256": "6fc991829af1708d15aea50c66f0beadcd2cfeb6968e0b2f55c1b0909883fe16",
+      "sizeBytes": 1446149,
+      "name": "xercesImpl",
+      "version": "2.12.2",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/xercesImpl-2.12.2.jar (distribution filename)",
+        "tools/validators/epubcheck/epubcheck.jar!/META-INF/maven/org.w3c/epubcheck/pom.xml"
+      ],
+      "metadataStatus": "distribution-pom-dependency",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://repo.maven.apache.org/maven2/xerces/xercesImpl/2.12.2/",
+      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "embeddedMavenComponents": [],
+      "group": "xerces",
+      "purl": "pkg:maven/xerces/xercesImpl@2.12.2"
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/xml-apis-1.4.01.jar",
+      "sha256": "a840968176645684bb01aed376e067ab39614885f9eee44abe35a5f20ebe7fad",
+      "sizeBytes": 220536,
+      "name": "xml-apis",
+      "version": "1.4.01",
+      "license": "Apache-2.0; SAX License; W3C License (see bundled notice)",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/xml-apis-1.4.01.jar (distribution filename)"
+      ],
+      "metadataStatus": "distribution-label",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://github.com/w3c/epubcheck",
+      "sourceKind": "upstream project; exact distribution build not independently verified",
+      "embeddedMavenComponents": []
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/xmlresolver-4.4.3-data.jar",
+      "sha256": "a57db23d75c3580cb15eb6e1a854683f4579cfd265f5cf1011a6983d9aed0f1f",
+      "sizeBytes": 1027769,
+      "name": "xmlresolver",
+      "version": "4.4.3",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/xmlresolver-4.4.3-data.jar (distribution filename)"
+      ],
+      "metadataStatus": "distribution-label",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://github.com/w3c/epubcheck",
+      "sourceKind": "upstream project; exact distribution build not independently verified",
+      "embeddedMavenComponents": []
+    },
+    {
+      "path": "tools/validators/epubcheck/lib/xmlresolver-4.4.3.jar",
+      "sha256": "9d642c96c3f6811e20a9f6cfee3ca15ec84ecb939f6be639fee065670773a7d1",
+      "sizeBytes": 152670,
+      "name": "xmlresolver",
+      "version": "4.4.3",
+      "license": "Apache-2.0",
+      "licenseEvidence": [
+        "tools/validators/epubcheck/THIRD-PARTY.txt"
+      ],
+      "identityEvidence": [
+        "tools/validators/epubcheck/lib/xmlresolver-4.4.3.jar (distribution filename)"
+      ],
+      "metadataStatus": "distribution-label",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": "https://github.com/w3c/epubcheck",
+      "sourceKind": "upstream project; exact distribution build not independently verified",
+      "embeddedMavenComponents": []
+    },
+    {
+      "path": "tools/converters/libmobi/mobitool.exe",
+      "sha256": "5010513a6b77972fa7da4184501233b826b47528fe713f85938e09f33644cdb8",
+      "sizeBytes": 438351,
+      "name": "mobitool",
+      "version": "unknown (runtime not verified)",
+      "license": "LGPL-3.0 (bundled notice; exact build requires review)",
+      "licenseEvidence": [
+        "tools/converters/libmobi/COPYING"
+      ],
+      "identityEvidence": [
+        "tools/converters/libmobi/mobitool.exe (distribution filename)"
+      ],
+      "metadataStatus": "unverified-native-build",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": null,
+      "sourceKind": "unresolved upstream build provenance"
+    }
+  ]
+}

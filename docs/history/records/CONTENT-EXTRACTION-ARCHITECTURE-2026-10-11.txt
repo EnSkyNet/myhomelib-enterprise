@@ -1,0 +1,26 @@
+Command: python3 tools/architecture-check.py
+Exit code: 0
+
+MyHomeLib architecture check
+================================
+myhomelib-shared             -> -
+myhomelib-domain             -> myhomelib-shared
+myhomelib-application        -> myhomelib-domain, myhomelib-shared
+myhomelib-epub-optimizer     -> myhomelib-shared
+myhomelib-library-organizer  -> myhomelib-application, myhomelib-domain, myhomelib-epub-optimizer, myhomelib-shared
+myhomelib-converter-toolchain -> myhomelib-application, myhomelib-domain, myhomelib-epub-optimizer, myhomelib-shared
+myhomelib-plugin-api         -> myhomelib-application
+myhomelib-plugin-samples     -> myhomelib-application, myhomelib-plugin-api
+myhomelib-converter-calibre-plugin -> myhomelib-application, myhomelib-domain, myhomelib-plugin-api, myhomelib-shared
+myhomelib-infrastructure     -> myhomelib-application, myhomelib-converter-toolchain, myhomelib-domain, myhomelib-epub-optimizer, myhomelib-library-organizer, myhomelib-shared
+myhomelib-reader             -> myhomelib-shared
+myhomelib-ui                 -> myhomelib-application, myhomelib-domain, myhomelib-epub-optimizer, myhomelib-library-organizer, myhomelib-reader, myhomelib-shared
+myhomelib-updater            -> -
+myhomelib-bootstrap          -> myhomelib-application, myhomelib-converter-calibre-plugin, myhomelib-converter-toolchain, myhomelib-domain, myhomelib-epub-optimizer, myhomelib-infrastructure, myhomelib-library-organizer, myhomelib-opds, myhomelib-plugin-api, myhomelib-reader, myhomelib-shared, myhomelib-ui
+myhomelib-mcp                -> myhomelib-shared
+myhomelib-opds               -> myhomelib-application, myhomelib-shared, myhomelib-web
+myhomelib-web                -> myhomelib-application
+
+INFO: UI debt ratchet: output-port users 15/18 baseline; non-value domain-model users 25/28 baseline
+
+PASS: architecture baseline is intact

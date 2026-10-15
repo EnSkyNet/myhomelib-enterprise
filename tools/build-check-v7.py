@@ -405,7 +405,7 @@ def check_source_invariants() -> None:
     require(readme, "MyHomeLib Enterprise 8.0.0", "README release identity")
     forbid(readme, "# MyHomeLib Enterprise 1.0.0", "stale README release identity")
     root_md = sorted(p.name for p in ROOT.glob("*.md"))
-    expected_root_md = {"README.md", "ARCHITECTURE.md"}
+    expected_root_md = {"README.md", "ARCHITECTURE.md", "CONTRIBUTING.md", "SECURITY.md", "LICENSE.md", "NOTICE.md"}
     missing_root_md = sorted(expected_root_md - set(root_md))
     unexpected_root_md = sorted(name for name in root_md if name not in expected_root_md)
     assert not missing_root_md and not unexpected_root_md, \

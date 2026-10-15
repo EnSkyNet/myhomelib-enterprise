@@ -137,6 +137,30 @@ class FolderSyncServiceTest {
 
 
     @Test
+    void failedImportDoesNotReconcileBookAvailability() throws Exception {
+        BookQueryRepository queries = mock(BookQueryRepository.class);
+        CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
+        SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
+        LibraryScanner scanner = mock(LibraryScanner.class);
+        ImporterRegistry registry = mock(ImporterRegistry.class);
+        InpxImportPipeline inpx = mock(InpxImportPipeline.class);
+        Path file = Files.writeString(temp.resolve("faulty.fb2"), "incomplete").toAbsolutePath().normalize();
+        Path root = temp.toAbsolutePath().normalize();
+        when(scanner.streamSupportedFiles(eq(root), anyBoolean(), anyInt(), anyLong()))
+                .thenReturn(Stream.of(file));
+        when(queries.findByStorage(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(Optional.empty());
+        BookImporterPort importer = mock(BookImporterPort.class);
+        when(registry.findImporter(file)).thenReturn(importer);
+        when(importer.importBooks(file)).thenThrow(new IllegalStateException("read failure"));
+        FolderSyncService service = new FolderSyncService(queries, mutations, synchronizer, scanner, registry, inpx);
+        var result = service.syncFolder(root, SyncOptions.builder().deleteOrphans(true).build());
+        assertThat(result.getErrors()).isEqualTo(1);
+        verify(queries, never()).streamAll();
+        verify(mutations, never()).updateAvailability(any(), anyBoolean());
+    }
+
+    @Test
     void multipleInpxFilesUseOneBoundedSelectiveLuceneFinalization() throws Exception {
         Path first = temp.resolve("first.inpx").toAbsolutePath().normalize();
         Path second = temp.resolve("second.inpx").toAbsolutePath().normalize();

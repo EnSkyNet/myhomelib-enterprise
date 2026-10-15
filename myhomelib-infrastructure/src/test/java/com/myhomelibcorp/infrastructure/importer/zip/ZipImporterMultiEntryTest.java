@@ -64,6 +64,19 @@ class ZipImporterMultiEntryTest {
     }
 
     @Test
+    void lateParserFailureDoesNotLeakPartialBooksFromSameZipMember() throws Exception {
+        Path zip = temp.resolve("partial.zip");
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(zip), StandardCharsets.UTF_8)) {
+            add(out, "partial.txt", "PARTIAL");
+            add(out, "good.txt", "Good");
+        }
+        ZipImporter importer = createImporter();
+        try (Stream<Book> stream = importer.importBooks(zip)) {
+            assertThat(stream.toList()).extracting(Book::getTitle).containsExactly("Good");
+        }
+    }
+
+    @Test
     void detectsWindows1251EntryNamesInsteadOfPersistingMojibake() throws Exception {
         assertLegacyEntryName(Charset.forName("Windows-1251"), "Книги/Дмитрий Дорничев.txt");
     }
@@ -106,6 +119,11 @@ class ZipImporterMultiEntryTest {
                 try {
                     String title = Files.readString(file, StandardCharsets.UTF_8).trim();
                     if ("BAD".equals(title)) throw new IllegalArgumentException("malformed test book");
+                    if ("PARTIAL".equals(title)) return Stream.of("Leaked", "BROKEN")
+                            .map(value -> {
+                                if ("BROKEN".equals(value)) throw new IllegalStateException("late parser failure");
+                                return Book.builder().title(value).file(BookFile.empty()).build();
+                            });
                     return Stream.of(Book.builder().title(title).file(BookFile.empty()).build());
                 } catch (Exception e) {
                     throw new RuntimeException(e);

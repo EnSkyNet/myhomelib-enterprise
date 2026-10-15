@@ -44,13 +44,33 @@ public final class CanonicalBookPathService {
     }
 
     private Map<String,String> values(NormalizedBookIdentity i,String ext) {
-        String author=i.firstAuthorDisplayName(); if(author.isBlank())author="_Невідомий автор";
-        String authors=i.authors().stream().map(a->a.displayName()).filter(v->!v.isBlank()).reduce((a,b)->a+" & "+b).orElse(author);
+        String author=i.authors().isEmpty() ? "" : fileAuthorName(i.authors().getFirst());
+        if (author.isBlank()) author="_Невідомий автор";
+        String authors=i.authors().stream().map(CanonicalBookPathService::fileAuthorName)
+                .filter(v->!v.isBlank()).reduce((a,b)->a+" & "+b).orElse(author);
         Map<String,String> v=new HashMap<>();
         v.put("Author",author);v.put("FirstAuthor",author);v.put("Authors",authors);v.put("Title",i.title().isBlank()?"Untitled":i.title());
         v.put("Series",i.series());v.put("SeriesNo",number(i.seriesNumber(),null));v.put("Language",i.language());v.put("ISBN",i.isbn());
         v.put("ext",safeExtension(ext));v.put("Format",safeExtension(ext));v.put("Year","");v.put("Id","");
         return v;
+    }
+
+    /** Path-only formatting: never infer a family name from whitespace-separated creator text. */
+    private static String fileAuthorName(com.myhomelibcorp.organizer.metadata.NormalizedAuthor author) {
+        if (author.structured() && !author.familyName().isBlank()) {
+            return String.join(" ", List.of(author.familyName(), author.givenName(), author.middleName())
+                    .stream().filter(value -> !value.isBlank()).toList());
+        }
+        // A comma is a declared family/given boundary even when metadata normalization
+        // is disabled. Preserve unidentified creator strings exactly as supplied.
+        String display = author.displayName();
+        int comma = display.indexOf(',');
+        if (comma > 0 && comma == display.lastIndexOf(',')) {
+            String family = display.substring(0, comma).strip();
+            String given = display.substring(comma + 1).strip();
+            if (!family.isBlank() && !given.isBlank()) return family + " " + given;
+        }
+        return display;
     }
 
     private String render(String template,Map<String,String> values) {
@@ -95,5 +115,13 @@ public final class CanonicalBookPathService {
         return value;
     }
     private String number(BigDecimal n,String format){if(n==null)return "";return n.stripTrailingZeros().toPlainString();}
-    private String safeExtension(String ext){String v=ext==null?"":ext.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]","");return v.isBlank()?"epub":v;}
+    private String safeExtension(String ext) {
+        // Conversion format ids are not always filename extensions. In particular,
+        // fb2_zip denotes the compound .fb2.zip suffix, never the invalid .fb2zip.
+        String normalized = ext == null ? "" : ext.trim().toLowerCase(Locale.ROOT);
+        if (normalized.equals("fb2_zip") || normalized.equals("fb2zip")
+                || normalized.equals("fb2.zip")) return "fb2.zip";
+        String safe = normalized.replaceAll("[^a-z0-9]", "");
+        return safe.isBlank() ? "epub" : safe;
+    }
 }

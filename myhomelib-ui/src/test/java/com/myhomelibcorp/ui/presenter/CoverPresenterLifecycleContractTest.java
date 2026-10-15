@@ -20,7 +20,7 @@ class CoverPresenterLifecycleContractTest {
         assertThat(source).contains("coverImageView.getImage() != null");
         assertThat(source).contains("currentLoadingRequest.compareAndSet(requestKey, null)");
         assertThat(source).contains("public void showCover(BookDto book)");
-        assertThat(source).contains("return coverExtractor.extractCover(book);");
+        assertThat(source).contains("byte[] bytes = coverExtractor.extractCover(book);");
         assertThat(source).contains("fxImage.isError()", "fxImage.getWidth() <= 0", "fxImage.getHeight() <= 0");
         assertThat(source).contains("coverExtractor.invalidateCover(book)");
         assertThat(source).contains("safe(book.getCollectionRoot())", "safe(book.getArchiveEntry())", "safe(book.getPreferredArtifactId())");

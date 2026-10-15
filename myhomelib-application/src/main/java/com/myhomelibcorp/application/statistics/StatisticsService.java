@@ -17,6 +17,8 @@ public class StatisticsService {
 
     private final StatisticsRepository statisticsRepository;
     private final LibraryOperationCoordinator operationCoordinator;
+    /** A status-bar auto-refresh and an explicit user refresh may share one EDIT root. */
+    private final Object refreshMonitor = new Object();
 
     /** Compatibility constructor for isolated tests/non-Spring embedding. */
     public StatisticsService(StatisticsRepository statisticsRepository) {
@@ -45,7 +47,9 @@ public class StatisticsService {
     public void refreshStatistics() {
         log.info("Перерахунок статистики активної колекції");
         withOperation(LibraryOperationType.EDIT, () -> {
-            statisticsRepository.refreshStatistics();
+            synchronized (refreshMonitor) {
+                statisticsRepository.refreshStatistics();
+            }
             return null;
         });
     }

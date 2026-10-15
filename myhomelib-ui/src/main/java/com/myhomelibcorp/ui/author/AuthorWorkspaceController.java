@@ -131,6 +131,8 @@ public class AuthorWorkspaceController implements WorkspaceLifecycle {
     private boolean updatingMasterSelection;
     private boolean applyingProfile;
     private boolean downloadedOnly;
+    private boolean selectionRefreshQueued;
+    private boolean disposed;
 
     @FXML
     public void initialize() {
@@ -140,8 +142,17 @@ public class AuthorWorkspaceController implements WorkspaceLifecycle {
         configureFilters();
         configureProfilePersistence();
         subscriptions.listen(bookSelectionService.selectedCountProperty(), (obs, oldValue, newValue) -> {
-            booksTableView.refresh();
-            updateSelectionStatus();
+            // Selection property changes may arrive while TableView cells are updating.
+            // Coalesce refreshes into a later FX pulse, never recursively refresh cells
+            // while the selection model is notifying its listeners.
+            if (selectionRefreshQueued || disposed) return;
+            selectionRefreshQueued = true;
+            javafx.application.Platform.runLater(() -> {
+                selectionRefreshQueued = false;
+                if (disposed) return;
+                booksTableView.refresh();
+                updateSelectionStatus();
+            });
         });
         updateSelectionStatus();
         subscriptions.listen(appState.currentLibraryCollectionProperty(), (obs, oldCollection, newCollection) -> {
@@ -841,6 +852,7 @@ public class AuthorWorkspaceController implements WorkspaceLifecycle {
 
     @Override
     public void dispose() {
+        disposed = true;
         UiAsyncRequestGuard.invalidate(metadataGeneration);
         UiAsyncRequestGuard.invalidate(booksGeneration);
         cancelMetadataTask();

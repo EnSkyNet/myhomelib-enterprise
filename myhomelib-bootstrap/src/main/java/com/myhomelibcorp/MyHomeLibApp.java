@@ -55,6 +55,7 @@ public class MyHomeLibApp extends Application {
     private static ConfigurableApplicationContext applicationContext;
     private Stage splashStage;
     private final AtomicBoolean isShuttingDown = new AtomicBoolean(false);
+    private com.myhomelibcorp.diagnostics.FxStallWatchdog fxStallWatchdog;
 
     @Override
     public void init() {
@@ -218,6 +219,8 @@ public class MyHomeLibApp extends Application {
         primaryStage.centerOnScreen();
         primaryStage.setOnHiding(event -> sessionService.saveWindowState(primaryStage.getWidth(), primaryStage.getHeight()));
         primaryStage.show();
+        fxStallWatchdog = new com.myhomelibcorp.diagnostics.FxStallWatchdog();
+        fxStallWatchdog.start();
         com.myhomelibcorp.update.ApplicationUpdateHealthMarker.markHealthyIfRequested();
     }
 
@@ -240,6 +243,7 @@ public class MyHomeLibApp extends Application {
         }
 
         log.info("Завершення програми...");
+        if (fxStallWatchdog != null) fxStallWatchdog.close();
 
         // 1. Dispose active workspace/Reader before stopping executors and DB.
         if (context == null) {

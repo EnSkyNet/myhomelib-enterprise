@@ -1,8 +1,12 @@
 # MyHomeLib Enterprise 8.0.0
 
-Поточний source checkpoint: **V34, 2026-10-02**. Після стабілізованого V29 послідовно додано V30 Kobo native sync, V31 fail-closed application updater, V32 Readwise annotation export, V33 локальні metadata recommendations і V34 exact duplicate comic-page diagnostics. Live/device/provider acceptance навмисно відокремлено від локальних deterministic gates.
+Поточні виправлення й перевірки: [аудит 2026-10-15](docs/release/AUDIT-REMEDIATION-2026-10-15-UA.md).
 
-Exact-current локальна перевірка: **2076 tests / 0 failures / 0 errors / 22 skipped; 21/21 reactor projects SUCCESS** на JDK 21 + Maven 3.9.16, UTF-8 locale та Xvfb. UI-модуль: **366 tests**, Reader: **150**, E2E: **15**, Architecture: **20**. User-action contract: **484/484** — **483 automated action-specific + 1 justified exclusion**, 273 FXML + 205 programmatic + 6 Web actions.
+Поточний source checkpoint: **R18 + виправлення упорядника й аудит, 2026-10-15**. Виправлено перехід до результату після помилки, логування етапів і винятків, скасування підготовки, довгі тимчасові назви; буфери SHA-256 зменшено до 64 KiB. Збережено оптимізації FB2/EPUB/TXT, захист заголовків і межі метаданих EPUB.
+
+Повний root `-Pproduction clean verify` від **2026-10-13: BUILD SUCCESS**, 2347 тестів у звітах, 23 пропущено, **2324 виконано; 0 failures / 0 errors**. 15 жовтня підтверджено тотожність усіх 2448 файлів тестового маніфесту та пройдено 11 перевірок вихідного коду й пакування. Новий root-прогін 15 жовтня не виконувався. **Stage 25C залишається FAIL: FolderSyncService 375 рядків при межі 360**; Windows/user-library acceptance та live SCA відкриті. Докладні докази й межі — у поточному звіті.
+
+Після оновлення потрібна **одноразова перебудова повнотекстового індексу** (schema 1 → 2) у вікні перевірки цілісності колекції.
 
 Канонічна історія розвитку українською: [docs/history/HISTORY-UA.md](docs/history/HISTORY-UA.md). Історичні checkpoint/task/audit матеріали зберігаються під `docs/history/`; активні специфікації — під `docs/current/` і `docs/release/`.
 
@@ -51,7 +55,7 @@ MyHomeLib підтримує кілька SQLite-колекцій, INPX і direc
 - [docs/release/CURRENT-VALIDATION.md](docs/release/CURRENT-VALIDATION.md) — exact-current validation evidence;
 - [docs/release/DEEP-PROJECT-AUDIT-V34-2026-10-02-UA.md](docs/release/DEEP-PROJECT-AUDIT-V34-2026-10-02-UA.md) — фінальний deep source/docs/hygiene audit перед зовнішнім тестуванням;
 - [docs/release/REAL-DATA-ACCEPTANCE-V34-2026-10-02.md](docs/release/REAL-DATA-ACCEPTANCE-V34-2026-10-02.md) — large real-data acceptance: 707 154-record INPX, migration/search/restart/V33/V34 probes;
-- [docs/release/WHAT-REMAINS-UA.md](docs/release/WHAT-REMAINS-UA.md) — лише справді незакриті external/live gates;
+- [docs/release/WHAT-REMAINS-UA.md](docs/release/WHAT-REMAINS-UA.md) — незакриті локальні та зовнішні перевірки;
 - [docs/history/HISTORY-UA.md](docs/history/HISTORY-UA.md) — загальна історія робіт українською;
 - [docs/README.md](docs/README.md) — карта документації.
 

@@ -100,8 +100,8 @@ public final class MetadataNormalizationService {
                 String[] parts = remainder.split(" ");
                 String given = parts[0];
                 String middle = parts.length > 1 ? String.join(" ", java.util.Arrays.copyOfRange(parts, 1, parts.length)) : "";
-                return new NormalizedAuthor(String.join(" ", List.of(given, middle, family).stream().filter(s -> !s.isBlank()).toList()),
-                        given, middle, family, true);
+                return new NormalizedAuthor(String.join(" ", List.of(family, given, middle).stream()
+                        .filter(s -> !s.isBlank()).toList()), given, middle, family, true);
             }
         }
         // Without a reliable delimiter, preserve display order instead of guessing family/given semantics.

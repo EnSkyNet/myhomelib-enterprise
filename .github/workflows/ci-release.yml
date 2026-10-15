@@ -10,7 +10,11 @@ permissions:
   contents: read
 
 jobs:
+  source-integrity:
+    uses: ./.github/workflows/source-integrity.yml
+
   supply-chain:
+    needs: source-integrity
     name: Supply-chain release gate
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -58,10 +62,21 @@ jobs:
       - name: Validate supply-chain policy
         run: python3 tools/supply-chain-policy-check.py
 
+      - name: Set up Python for vendor review
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Verify vendor binaries and generate supplementary SBOM
+        run: python tools/vendor-binary-inventory.py --check --sbom target/vendor-bom.cdx.json
+
       - name: Generate CycloneDX SBOM and scan dependencies
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: ./tools/invoke-maven.sh -B -ntp -DskipTests -Psbom,dependency-check verify
+
+      - name: Require actual vendor JAR scan coverage
+        run: python tools/vendor-binary-inventory.py --check --sca-report target/dependency-check-report.json
 
       - name: Require both release SBOM formats
         shell: bash
@@ -78,6 +93,7 @@ jobs:
             target/bom.json
             target/bom.xml
             target/github-release-codeql-gate/**
+            target/vendor-bom.cdx.json
             **/target/dependency-check-report.html
             **/target/dependency-check-report.json
             **/target/dependency-check-report.sarif
@@ -124,10 +140,19 @@ jobs:
         shell: pwsh
         run: .\tools\invoke-maven.ps1 clean verify -Pproduction
 
-      - name: Full production Maven verification (Linux/macOS)
-        if: matrix.platform != 'windows'
+      - name: Install virtual display for Linux verification
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0
+
+      - name: Full production Maven verification (Linux)
+        if: matrix.platform == 'linux'
         shell: bash
-        run: ./tools/invoke-maven.sh clean verify -Pproduction
+        run: xvfb-run -a ./tools/invoke-maven.sh -B -ntp -Pproduction clean verify
+
+      - name: Full production Maven verification (macOS)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: ./tools/invoke-maven.sh -B -ntp -Pproduction clean verify
 
       - name: Source/static release validation
         if: matrix.platform == 'linux'
@@ -229,6 +254,37 @@ jobs:
         run: |
           $env:MHL_SKIP_BUILD = "1"
           .\package-desktop.ps1 -Type exe
+
+      - name: Scan final app-image before removal (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          .\tools\invoke-maven.ps1 -B -ntp -DskipTests -Pdependency-check verify
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/vendor-binary-inventory.py --check --sca-report target/dependency-check-report.json --image-root dist
+
+      - name: Scan final app-image before removal (Linux/macOS)
+        if: matrix.platform != 'windows'
+        shell: bash
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          ./tools/invoke-maven.sh -B -ntp -DskipTests -Pdependency-check verify
+          python tools/vendor-binary-inventory.py --check --sca-report target/dependency-check-report.json --image-root dist
+
+      - name: Retain platform test and scan evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: platform-verification-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+            **/target/dependency-check-report.*
 
       - name: Remove intermediate app-image before publication checksums (Windows)
         if: matrix.platform == 'windows'

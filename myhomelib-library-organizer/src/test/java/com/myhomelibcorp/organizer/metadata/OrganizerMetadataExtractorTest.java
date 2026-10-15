@@ -38,9 +38,76 @@ class OrganizerMetadataExtractorTest {
                         ".fb2", false, "fixture"));
 
         assertThat(metadata.rawTitle()).isEqualTo("Назва");
-        assertThat(metadata.rawAuthors()).contains("Іван Тест");
+        assertThat(metadata.rawAuthors()).contains("Тест, Іван");
         assertThat(metadata.annotation().length()).isLessThanOrEqualTo(1024 * 1024);
         assertThat(metadata.warnings()).contains("FB2 annotation was truncated to the metadata safety limit");
+    }
+
+    @Test
+    void preservesStructuredFb2SurnameAndPatronymicInOrganizerPath() throws Exception {
+        String xml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+                  <description><title-info>
+                    <author><first-name>Іван</first-name><middle-name>Петрович</middle-name>
+                      <last-name>Іваненко</last-name></author>
+                    <book-title>Книга</book-title><lang>uk</lang>
+                  </title-info></description><body><section><p>Текст</p></section></body>
+                </FictionBook>
+                """;
+        Path fb2 = tempDir.resolve("author-order.fb2");
+        Files.writeString(fb2, xml, StandardCharsets.UTF_8);
+        ExtractedBookMetadata raw = new OrganizerMetadataExtractor().extract(fb2,
+                new DetectedBookFormat("fb2", "application/x-fictionbook+xml", DetectionConfidence.CERTAIN,
+                        ".fb2", false, "fixture"));
+        assertThat(raw.rawAuthors()).containsExactly("Іваненко, Іван Петрович");
+        var identity = new MetadataNormalizationService().normalize(raw);
+        assertThat(identity.authors().getFirst().structured()).isTrue();
+        assertThat(identity.authors().getFirst().familyName()).isEqualTo("Іваненко");
+        assertThat(identity.authors().getFirst().middleName()).isEqualTo("Петрович");
+        var path = new com.myhomelibcorp.organizer.naming.CanonicalBookPathService()
+                .relativePath(identity, com.myhomelibcorp.organizer.policy.OrganizerProfile.safeDefault(), "fb2");
+        assertThat(path.getName(0).toString()).isEqualTo("Іваненко Іван Петрович");
+        // Normalization-disabled profiles must also retain the explicit FB2 field boundary.
+        var rawPath = new com.myhomelibcorp.organizer.naming.CanonicalBookPathService()
+                .relativePath(new MetadataNormalizationService().normalize(raw, false),
+                        com.myhomelibcorp.organizer.policy.OrganizerProfile.safeDefault(), "fb2");
+        assertThat(rawPath.getName(0).toString()).isEqualTo("Іваненко Іван Петрович");
+    }
+
+    @Test
+    void preservesCompoundFamilyNameAndOptionalMiddleNameFromFb2() throws Exception {
+        String xml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+                  <description><title-info><book-title>Книга</book-title>
+                    <author><first-name>Анна</first-name><last-name>ван дер Меєр</last-name></author>
+                    <author><first-name>Олег</first-name><middle-name>Миколайович</middle-name>
+                      <last-name>Петренко-Левченко</last-name></author>
+                  </title-info></description><body><section><p>Текст</p></section></body>
+                </FictionBook>
+                """;
+        Path fb2 = tempDir.resolve("two-authors.fb2");
+        Files.writeString(fb2, xml, StandardCharsets.UTF_8);
+        var metadata = new OrganizerMetadataExtractor().extract(fb2,
+                new DetectedBookFormat("fb2", "application/x-fictionbook+xml", DetectionConfidence.CERTAIN,
+                        ".fb2", false, "fixture"));
+        var identity = new MetadataNormalizationService().normalize(metadata);
+        assertThat(identity.authors()).hasSize(2);
+        assertThat(identity.authors().get(0).displayName()).isEqualTo("ван дер Меєр Анна");
+        assertThat(identity.authors().get(1).displayName())
+                .isEqualTo("Петренко-Левченко Олег Миколайович");
+    }
+
+    @Test
+    void keepsUnstructuredCreatorNamesWithoutGuessingSurname() {
+        var raw = new ExtractedBookMetadata("Title", java.util.List.of("Mary Ann van der Meer"), "", "", "en",
+                "", "", null, "", java.util.List.of(), false, "epub", DetectionConfidence.CERTAIN,
+                java.util.List.of());
+        var identity = new MetadataNormalizationService().normalize(raw);
+        var path = new com.myhomelibcorp.organizer.naming.CanonicalBookPathService()
+                .relativePath(identity, com.myhomelibcorp.organizer.policy.OrganizerProfile.safeDefault(), "epub");
+        assertThat(path.getName(0).toString()).isEqualTo("Mary Ann van der Meer");
     }
 
     @Test

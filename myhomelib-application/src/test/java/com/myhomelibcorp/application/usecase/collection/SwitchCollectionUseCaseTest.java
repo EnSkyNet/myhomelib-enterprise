@@ -57,6 +57,33 @@ class SwitchCollectionUseCaseTest {
         verify(lifecycle, never()).initializeCollection(any(), anyBoolean());
     }
     @Test
+    void conflictingBackupMustNotCancelUnrelatedBackgroundRebuild() {
+        CollectionRepository repository = mock(CollectionRepository.class);
+        CollectionLifecycleService lifecycle = mock(CollectionLifecycleService.class);
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        SwitchCollectionUseCase useCase = new SwitchCollectionUseCase(repository, lifecycle, coordinator);
+        Collection target = new Collection("b", "B", null, "b.db", 0,
+                null, null, null, null);
+
+        try (var backup = coordinator.acquire(com.myhomelibcorp.application.operation.LibraryOperationType.BACKUP)) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> useCase.execute(target))
+                    .isInstanceOf(com.myhomelibcorp.application.operation.LibraryOperationConflictException.class);
+            verify(lifecycle, never()).cancelBackgroundRebuildAndAwait();
+            verify(lifecycle, never()).initializeCollection(any(), anyBoolean());
+        }
+    }
+
+    @Test
+    void nullTargetMustNotCancelBackgroundRebuild() {
+        CollectionLifecycleService lifecycle = mock(CollectionLifecycleService.class);
+        SwitchCollectionUseCase useCase = new SwitchCollectionUseCase(
+                mock(CollectionRepository.class), lifecycle, new LibraryOperationCoordinator());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> useCase.execute((Collection) null))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(lifecycle, never()).cancelBackgroundRebuildAndAwait();
+    }
+
+    @Test
     void switchQuiescesOldContentIndexWorkBeforeActivatingNewCollection() {
         CollectionRepository repository = mock(CollectionRepository.class);
         CollectionLifecycleService lifecycle = mock(CollectionLifecycleService.class);

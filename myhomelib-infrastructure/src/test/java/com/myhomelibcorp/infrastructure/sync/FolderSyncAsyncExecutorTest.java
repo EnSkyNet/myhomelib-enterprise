@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.sync;
 
 import com.myhomelibcorp.application.imports.scanner.LibraryScanner;
+import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.search.SearchIndexSynchronizer;
@@ -84,6 +85,66 @@ class FolderSyncAsyncExecutorTest {
         } finally {
             io.shutdownNow();
         }
+    }
+
+    @Test
+    void cancellingQueuedSyncDoesNotCancelDifferentRunningSync() throws Exception {
+        BookQueryRepository queries = mock(BookQueryRepository.class);
+        CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
+        SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
+        LibraryScanner scanner = mock(LibraryScanner.class);
+        ImporterRegistry registry = mock(ImporterRegistry.class);
+        InpxImportPipeline inpx = mock(InpxImportPipeline.class);
+        BookImporterPort importer = mock(BookImporterPort.class);
+        Path book = temp.resolve("queued-cancellation.fb2");
+        CountDownLatch scanning = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(scanner.streamSupportedFiles(any(Path.class), anyBoolean(), anyInt(), anyLong())).thenAnswer(invocation -> {
+            scanning.countDown();
+            if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("Scanner timeout");
+            return Stream.of(book);
+        });
+        when(registry.findImporter(book)).thenReturn(importer);
+        when(importer.importBooks(book)).thenReturn(Stream.empty());
+
+        ExecutorService io = Executors.newSingleThreadExecutor();
+        try {
+            FolderSyncService service = new FolderSyncService(
+                    queries, mutations, synchronizer, scanner, registry, inpx, io);
+            CompletableFuture<?> running = service.syncFolderAsync(temp, SyncOptions.builder().build());
+            assertThat(scanning.await(5, TimeUnit.SECONDS)).isTrue();
+            CompletableFuture<?> queued = service.syncFolderAsync(temp, SyncOptions.builder().build());
+            assertThat(queued.cancel(true)).isTrue();
+            release.countDown();
+            var result = (com.myhomelibcorp.domain.model.sync.SyncResult) running.get(5, TimeUnit.SECONDS);
+            assertThat(result.getErrors()).isZero();
+            verify(registry).findImporter(book);
+            assertThat(queued.isCancelled()).isTrue();
+        } finally {
+            release.countDown();
+            io.shutdownNow();
+        }
+    }
+
+    @Test
+    void lazyDirectoryTraversalErrorIsReportedInSyncResult() throws Exception {
+        BookQueryRepository queries = mock(BookQueryRepository.class);
+        CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
+        SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
+        LibraryScanner scanner = mock(LibraryScanner.class);
+        ImporterRegistry registry = mock(ImporterRegistry.class);
+        InpxImportPipeline inpx = mock(InpxImportPipeline.class);
+        when(scanner.streamSupportedFiles(any(Path.class), anyBoolean(), anyInt(), anyLong())).thenReturn(
+                Stream.<Path>generate(() -> {
+                    throw new java.io.UncheckedIOException(new java.io.IOException("access denied during walk"));
+                }).limit(1));
+        FolderSyncService service = new FolderSyncService(
+                queries, mutations, synchronizer, scanner, registry, inpx, Runnable::run);
+
+        var result = service.syncFolder(temp, SyncOptions.builder().build());
+        assertThat(result.getErrors()).isEqualTo(1);
+        assertThat(result.getErrorMessages()).anyMatch(msg -> msg.contains("access denied"));
+        assertThat(service.isSyncing()).isFalse();
     }
 
     @Test

@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.imports;
 
+import com.myhomelibcorp.application.imports.diagnostics.ImportIssue;
+import com.myhomelibcorp.application.imports.diagnostics.ImportSeverity;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.LocalizationService;
@@ -16,6 +18,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.lang.reflect.Method;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -69,6 +73,26 @@ class ImportWorkspaceActionBehaviorContractTest {
 
         assertThat(((java.util.concurrent.atomic.AtomicBoolean) UiActionTestSupport.getField(f.instance(), "cancelFlag")).get()).isTrue();
         assertThat(UiActionTestSupport.fx(cancel::isDisabled)).isTrue();
+    }
+
+    @Test
+    void diagnosticsFormatterDoesNotExposeDiagnosticContextPaths() throws Exception {
+        var f = fixture();
+        ImportIssue issue = new ImportIssue(ImportSeverity.ERROR, "import", "FILE_IMPORT_FAILED",
+                "broken.fb2", "failed at /private/user/library/broken.fb2", false,
+                Map.of("exceptionType", "IOException", "path", "/private/user/library/broken.fb2"));
+        ImportIssue externalMessage = new ImportIssue(ImportSeverity.WARNING, "validate", "EXTERNAL_WARNING",
+                "record-2", "Invalid source data at /private/user/library/secret.txt", false, Map.of());
+        when(f.dependency(LocalizationService.class).format(
+                eq("ui.import.diagnostics.file_failed"), eq("broken.fb2"), eq("IOException")))
+                .thenReturn("Could not import file broken.fb2");
+        Method formatter = ImportWorkspaceController.class.getDeclaredMethod("formatImportIssues", List.class);
+        formatter.setAccessible(true);
+
+        String formatted = (String) formatter.invoke(f.instance(), List.of(issue, externalMessage));
+
+        assertThat(formatted).contains("FILE_IMPORT_FAILED", "broken.fb2", "EXTERNAL_WARNING");
+        assertThat(formatted).doesNotContain("/private/user/library", "secret.txt");
     }
 
     @Test

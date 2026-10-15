@@ -1,0 +1,333 @@
+--- a/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/EpubContentExtractor.java
++++ b/myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/EpubContentExtractor.java
+@@ -22,6 +22,7 @@
+ import java.nio.file.Path;
+ import java.util.ArrayDeque;
+ import java.util.ArrayList;
++import java.util.Collections;
+ import java.util.Enumeration;
+ import java.util.LinkedHashMap;
+ import java.util.HashMap;
+@@ -34,6 +35,9 @@
+ /** EPUB content extractor that follows OPF spine order and rejects unsafe archive/XML input. */
+ @Component
+ public final class EpubContentExtractor implements ContentExtractor {
++    // OPF/container XML is metadata, not chapter content. Bound parser and collection memory separately.
++    static final long MAX_METADATA_BYTES = 8L * 1024 * 1024;
++    static final int MAX_PACKAGE_RECORDS = ArchiveSafetyLimits.MAX_ENTRY_COUNT;
+     private static final java.util.Set<String> BLOCKS = java.util.Set.of(
+             "p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "pre", "dt", "dd");
+     // These extractors are singleton beans and may be invoked concurrently by indexing workers.
+@@ -89,9 +93,9 @@
+         ContentDocumentBuilder document = new ContentDocumentBuilder(request.source().id(), "epub",
+                 maxTextChars, ContentDocumentBuilder.MAX_PARAGRAPHS);
+         try (ZipFile zip = new ZipFile(temp.toFile())) {
+-            EntryIndex entries = validateAndIndexArchive(zip);
+-            String opfPath = locatePackageDocument(zip, entries);
+-            EpubPackage pkg = readPackage(zip, entries, opfPath);
++            EntryIndex entries = validateAndIndexArchive(zip, context);
++            String opfPath = locatePackageDocument(zip, entries, context);
++            EpubPackage pkg = readPackage(zip, entries, opfPath, context);
+             int total = pkg.spineIds().size();
+             int chapterNumber = 0;
+             for (String idRef : pkg.spineIds()) {
+@@ -117,15 +121,18 @@
+         return document.build();
+     }
+ 
+-    private String locatePackageDocument(ZipFile zip, EntryIndex entries) throws IOException, XMLStreamException {
++    private String locatePackageDocument(ZipFile zip, EntryIndex entries, ContentExtractionContext context)
++            throws IOException, XMLStreamException {
++        context.throwIfCancelled();
+         ZipEntry container = entries.find("META-INF/container.xml");
+         if (container == null) throw new IOException("EPUB container.xml not found");
+-        checkEntry(container, "EPUB container.xml");
++        checkMetadataEntry(container, "EPUB container.xml");
+         try (InputStream raw = zip.getInputStream(container);
+-             InputStream bounded = new LimitedInputStream(raw, ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
++             InputStream bounded = new LimitedInputStream(raw, MAX_METADATA_BYTES)) {
+             XMLStreamReader reader = xmlFactory.get().createXMLStreamReader(bounded);
+             try {
+                 while (reader.hasNext()) {
++                    context.throwIfCancelled();
+                     if (reader.next() == XMLStreamConstants.START_ELEMENT
+                             && "rootfile".equalsIgnoreCase(reader.getLocalName())) {
+                         String value = attribute(reader, "full-path");
+@@ -139,20 +146,28 @@
+         throw new IOException("EPUB package document is not declared");
+     }
+ 
+-    private EpubPackage readPackage(ZipFile zip, EntryIndex entries, String opfPath) throws IOException, XMLStreamException {
++    private EpubPackage readPackage(ZipFile zip, EntryIndex entries, String opfPath, ContentExtractionContext context)
++            throws IOException, XMLStreamException {
++        context.throwIfCancelled();
+         ZipEntry opf = entries.find(opfPath);
+         if (opf == null) throw new IOException("EPUB package document not found: " + opfPath);
+-        checkEntry(opf, "EPUB package document");
++        checkMetadataEntry(opf, "EPUB package document");
+         Map<String, ManifestItem> manifest = new LinkedHashMap<>();
+         List<String> spine = new ArrayList<>();
++        int manifestRecords = 0;
++        int spineRecords = 0;
+         try (InputStream raw = zip.getInputStream(opf);
+-             InputStream bounded = new LimitedInputStream(raw, ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
++             InputStream bounded = new LimitedInputStream(raw, MAX_METADATA_BYTES)) {
+             XMLStreamReader reader = xmlFactory.get().createXMLStreamReader(bounded);
+             try {
+                 while (reader.hasNext()) {
++                    context.throwIfCancelled();
+                     if (reader.next() != XMLStreamConstants.START_ELEMENT) continue;
+                     String local = reader.getLocalName().toLowerCase(Locale.ROOT);
+                     if ("item".equals(local)) {
++                        if (++manifestRecords > MAX_PACKAGE_RECORDS) {
++                            throw new IOException("EPUB manifest record count exceeds safety limit of " + MAX_PACKAGE_RECORDS);
++                        }
+                         String id = attribute(reader, "id");
+                         String href = attribute(reader, "href");
+                         String mediaType = attribute(reader, "media-type");
+@@ -160,6 +175,9 @@
+                             manifest.put(id.trim(), new ManifestItem(href.trim(), mediaType == null ? "" : mediaType.trim()));
+                         }
+                     } else if ("itemref".equals(local)) {
++                        if (++spineRecords > MAX_PACKAGE_RECORDS) {
++                            throw new IOException("EPUB spine record count exceeds safety limit of " + MAX_PACKAGE_RECORDS);
++                        }
+                         String idRef = attribute(reader, "idref");
+                         if (idRef != null && !idRef.isBlank()) spine.add(idRef.trim());
+                     }
+@@ -171,7 +189,8 @@
+         if (spine.isEmpty()) throw new IOException("EPUB spine is empty");
+         int slash = opfPath.lastIndexOf('/');
+         String base = slash < 0 ? "" : opfPath.substring(0, slash + 1);
+-        return new EpubPackage(base, Map.copyOf(manifest), List.copyOf(spine));
++        // The private package owns these collections; wrappers avoid copying both large tables at once.
++        return new EpubPackage(base, Collections.unmodifiableMap(manifest), Collections.unmodifiableList(spine));
+     }
+ 
+     private String parseXhtml(InputStream input, ContentExtractionContext context,
+@@ -266,13 +285,15 @@
+     }
+ 
+     /** Validate and index the ZIP once. Repeated case-insensitive fallback scans cost O(chapters * entries). */
+-    private EntryIndex validateAndIndexArchive(ZipFile zip) throws IOException {
++    private EntryIndex validateAndIndexArchive(ZipFile zip, ContentExtractionContext context) throws IOException {
++        context.throwIfCancelled();
+         int count = 0;
+         long totalDeclared = 0L;
+         Map<String, ZipEntry> exact = new HashMap<>();
+         Map<String, ZipEntry> insensitive = new HashMap<>();
+         Enumeration<? extends ZipEntry> iterator = zip.entries();
+         while (iterator.hasMoreElements()) {
++            context.throwIfCancelled();
+             ZipEntry entry = iterator.nextElement();
+             if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("EPUB contains too many entries");
+             if (!ArchiveImportSupport.isSafeEntryName(entry.getName())) {
+@@ -294,6 +315,13 @@
+     private static void checkEntry(ZipEntry entry, String role) throws IOException {
+         if (entry == null) return;
+         ArchiveEntrySafety.check(entry.getName(), entry.isDirectory(), entry.getSize(), entry.getCompressedSize(), role);
++    }
++
++    private static void checkMetadataEntry(ZipEntry entry, String role) throws IOException {
++        checkEntry(entry, role);
++        if (entry.getSize() > MAX_METADATA_BYTES) {
++            throw new IOException(role + " metadata exceeds safety limit of " + MAX_METADATA_BYTES + " bytes");
++        }
+     }
+ 
+     /** Preserve exact-name precedence and the first case-insensitive match, without rescanning ZIP. */
+--- a/myhomelib-bootstrap/src/test/java/com/myhomelibcorp/AppPathsLaunchDirTest.java
++++ b/myhomelib-bootstrap/src/test/java/com/myhomelibcorp/AppPathsLaunchDirTest.java
+@@ -5,8 +5,12 @@
+ import org.junit.jupiter.api.Test;
+ 
+ import java.nio.file.Path;
++import java.util.Optional;
+ 
+ import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.mockStatic;
++import static org.mockito.Mockito.when;
+ 
+ class AppPathsLaunchDirTest {
+     private final String oldExplicit = System.getProperty("myhomelib.launchDir");
+@@ -39,15 +43,46 @@
+ 
+     @Test
+     void jpackageRuntimeUsesNativeProcessDirectoryInsteadOfUserDir() {
+-        String command = ProcessHandle.current().info().command().orElseThrow();
+-        Path expected = Path.of(command).toAbsolutePath().normalize().getParent();
+-        Path unrelatedCwd = Path.of("target", "unrelated-cwd").toAbsolutePath().normalize();
++        Path executable = Path.of("target", "native-app", "MyHomeLib").toAbsolutePath().normalize();
++        configurePackagedRuntime();
++        ProcessHandle process = mock(ProcessHandle.class);
++        ProcessHandle.Info info = mock(ProcessHandle.Info.class);
++        when(process.info()).thenReturn(info);
++        when(info.command()).thenReturn(Optional.of(executable.toString()));
++        try (var handles = mockStatic(ProcessHandle.class)) {
++            handles.when(ProcessHandle::current).thenReturn(process);
++            assertEquals(executable.getParent(), AppPaths.launchDir());
++        }
++    }
+ 
++    @Test
++    void packagedRuntimeFallsBackWhenCommandMetadataIsUnavailable() {
++        Path cwd = configurePackagedRuntime();
++        ProcessHandle process = mock(ProcessHandle.class);
++        ProcessHandle.Info info = mock(ProcessHandle.Info.class);
++        when(process.info()).thenReturn(info);
++        when(info.command()).thenReturn(Optional.empty());
++        try (var handles = mockStatic(ProcessHandle.class)) {
++            handles.when(ProcessHandle::current).thenReturn(process);
++            assertEquals(cwd, AppPaths.launchDir());
++        }
++    }
++
++    @Test
++    void packagedRuntimeFallsBackWhenProcessAccessIsDenied() {
++        Path cwd = configurePackagedRuntime();
++        try (var handles = mockStatic(ProcessHandle.class)) {
++            handles.when(ProcessHandle::current).thenThrow(new SecurityException("Process metadata denied"));
++            assertEquals(cwd, AppPaths.launchDir());
++        }
++    }
++
++    private static Path configurePackagedRuntime() {
++        Path cwd = Path.of("target", "unrelated-cwd").toAbsolutePath().normalize();
+         System.clearProperty("myhomelib.launchDir");
+         System.setProperty("jpackage.app-version", "7.1.0-test");
+-        System.setProperty("user.dir", unrelatedCwd.toString());
+-
+-        assertEquals(expected, AppPaths.launchDir());
++        System.setProperty("user.dir", cwd.toString());
++        return cwd;
+     }
+ 
+     private static void restore(String key, String value) {
+--- /dev/null
++++ b/myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/content/EpubPackageBudgetTest.java
+@@ -0,0 +1,124 @@
++package com.myhomelibcorp.infrastructure.content;
++
++import com.myhomelibcorp.application.content.*;
++import org.junit.jupiter.api.Test;
++
++import java.io.*;
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.OptionalLong;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipOutputStream;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class EpubPackageBudgetTest {
++    private static final int METADATA_BYTES = 8 * 1024 * 1024;
++    private static final int RECORDS = 100_000;
++    private static final String CONTAINER = "<container><rootfiles><rootfile full-path=\"content.opf\"/></rootfiles></container>";
++    private static final String ITEM = "<item id=\"c\" href=\"chapter.xhtml\"/>";
++    private static final String REF = "<itemref idref=\"c\"/>";
++    private final ContentExtractionService service = new ContentExtractionService(List.of(new EpubContentExtractor()));
++
++    @Test
++    void rejectsOversizedPackageBeforeParsingIt() throws Exception {
++        assertBudgetFailure(extract(CONTAINER, pad(packageXml(ITEM, REF), METADATA_BYTES + 1)), "metadata");
++    }
++
++    @Test
++    void rejectsOversizedContainerEvenWhenRootfileAppearsFirst() throws Exception {
++        assertBudgetFailure(extract(pad(CONTAINER, METADATA_BYTES + 1), packageXml(ITEM, REF)), "metadata");
++    }
++
++    @Test
++    void countsRepeatedManifestDeclarationsAgainstBudget() throws Exception {
++        assertBudgetFailure(extract(CONTAINER, packageXml(ITEM.repeat(RECORDS + 1), REF)), "manifest");
++    }
++
++    @Test
++    void boundsSpineReferencesEvenWhenTheyDoNotResolveToChapters() throws Exception {
++        assertBudgetFailure(extract(CONTAINER, packageXml(ITEM,
++                "<itemref idref=\"missing\"/>".repeat(RECORDS + 1))), "spine");
++    }
++
++    @Test
++    void acceptsMetadataAtExactByteBoundary() throws Exception {
++        assertSingleChapter(extract(pad(CONTAINER, METADATA_BYTES), pad(packageXml(ITEM, REF), METADATA_BYTES)));
++    }
++
++    @Test
++    void acceptsManifestAndSpineAtExactRecordBoundaries() throws Exception {
++        assertSingleChapter(extract(CONTAINER, packageXml(ITEM.repeat(RECORDS),
++                "<itemref idref=\"missing\"/>".repeat(RECORDS - 1) + REF)));
++    }
++
++    @Test
++    void cancellationAfterMaterializationPrecedesInvalidPackageParsing() throws Exception {
++        AtomicBoolean cancelled = new AtomicBoolean();
++        byte[] bytes = epub("not XML", packageXml(ITEM, REF));
++        var source = source(bytes, cancelled);
++        var result = service.extract(ContentExtractionRequest.of(source),
++                ContentExtractionContext.create(cancelled, ignored -> { }));
++        assertEquals(ContentExtractionStatus.CANCELLED, result.status(), result.message());
++        assertNull(result.content());
++    }
++
++    private ContentExtractionResult extract(String container, String opf) throws IOException {
++        return service.extract(ContentExtractionRequest.of(source(epub(container, opf), null)),
++                ContentExtractionContext.none());
++    }
++
++    private static void assertBudgetFailure(ContentExtractionResult result, String budget) {
++        assertEquals(ContentExtractionStatus.FAILED, result.status(), result.message());
++        assertTrue(result.message().contains(budget), result.message());
++        assertTrue(result.message().contains("safety limit"), result.message());
++        assertNull(result.content());
++    }
++
++    private static void assertSingleChapter(ContentExtractionResult result) {
++        assertEquals(ContentExtractionStatus.SUCCESS, result.status(), result.message());
++        assertEquals("x", result.content().text());
++        assertEquals(1, result.content().chapters().size());
++        assertEquals(0, result.content().chapters().getFirst().startOffset());
++        assertEquals(1, result.content().chapters().getFirst().endOffset());
++    }
++
++    private static String pad(String xml, int size) { return xml + " ".repeat(size - xml.length()); }
++    private static String packageXml(String manifest, String spine) {
++        return "<package><manifest>" + manifest + "</manifest><spine>" + spine + "</spine></package>";
++    }
++
++    private static byte[] epub(String container, String opf) throws IOException {
++        var bytes = new ByteArrayOutputStream();
++        try (var zip = new ZipOutputStream(bytes, StandardCharsets.UTF_8)) {
++            zip.setLevel(0); // Test metadata budgets independently of compression-ratio guards.
++            entry(zip, "META-INF/container.xml", container);
++            entry(zip, "content.opf", opf);
++            entry(zip, "chapter.xhtml", "<html><body><p>x</p></body></html>");
++        }
++        return bytes.toByteArray();
++    }
++
++    private static ContentExtractionSource source(byte[] bytes, AtomicBoolean cancelOnClose) {
++        return new ContentExtractionSource() {
++            public String id() { return "package-budget"; }
++            public String name() { return "package-budget.epub"; }
++            public OptionalLong size() { return OptionalLong.of(bytes.length); }
++            public InputStream openStream() {
++                return new ByteArrayInputStream(bytes) {
++                    @Override public void close() throws IOException {
++                        super.close();
++                        if (cancelOnClose != null) cancelOnClose.set(true);
++                    }
++                };
++            }
++        };
++    }
++
++    private static void entry(ZipOutputStream zip, String name, String value) throws IOException {
++        zip.putNextEntry(new ZipEntry(name));
++        zip.write(value.getBytes(StandardCharsets.UTF_8));
++        zip.closeEntry();
++    }
++}

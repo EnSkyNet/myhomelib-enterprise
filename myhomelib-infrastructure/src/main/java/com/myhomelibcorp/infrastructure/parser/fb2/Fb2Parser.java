@@ -5,7 +5,6 @@ import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.infrastructure.parser.author.LocalAuthorNameParser;
 import lombok.extern.slf4j.Slf4j;
 
-import javax.xml.stream.XMLInputFactory;
 import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;

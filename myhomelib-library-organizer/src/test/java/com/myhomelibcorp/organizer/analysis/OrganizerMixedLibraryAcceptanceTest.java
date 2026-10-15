@@ -68,7 +68,7 @@ class OrganizerMixedLibraryAcceptanceTest {
         Files.writeString(source.resolve("notes/Loose notes.txt"), "plain text", StandardCharsets.UTF_8);
         writeMultiBookZip(source.resolve("archives/two-books.zip"));
 
-        Path occupied = destination.resolve("Author One/Saga/01 - First.fb2");
+        Path occupied = destination.resolve("One Author/Saga/01 - First.fb2");
         Files.createDirectories(occupied.getParent());
         Files.writeString(occupied, "foreign existing file", StandardCharsets.UTF_8);
 
@@ -83,9 +83,9 @@ class OrganizerMixedLibraryAcceptanceTest {
         assertThat(analysis.items()).hasSize(7); // 5 ordinary files + 2 logical entries from the multi-book ZIP
         assertThat(analysis.items()).anySatisfy(item -> {
             assertThat(item.extractedMetadata().rawTitle()).isEqualTo("First");
-            assertThat(item.identity().authors()).extracting(a -> a.displayName()).contains("Author One");
+            assertThat(item.identity().authors()).extracting(a -> a.displayName()).contains("One Author");
             assertThat(item.proposedRelativePath().toString().replace('\\', '/'))
-                    .isEqualTo("Author One/Saga/01 - First.fb2");
+                    .isEqualTo("One Author/Saga/01 - First.fb2");
         });
         assertThat(analysis.items()).anySatisfy(item -> {
             assertThat(item.extractedMetadata().rawTitle()).isEqualTo("ODT Book");
@@ -157,7 +157,7 @@ class OrganizerMixedLibraryAcceptanceTest {
             }
         }
         assertThat(Files.isRegularFile(archive)).isTrue();
-        assertThat(Files.isRegularFile(destination.resolve("Author One/Saga/01 - First.fb2"))).isTrue();
+        assertThat(Files.isRegularFile(destination.resolve("One Author/Saga/01 - First.fb2"))).isTrue();
         assertThat(Files.isRegularFile(destination.resolve("ODT Author/ODT Book.odt"))).isTrue();
         assertThat(Files.isRegularFile(destination.resolve("PDF Author/PDF Book.pdf"))).isTrue();
         assertThat(Files.isRegularFile(destination.resolve("MOBI Author/MOBI Book.mobi"))).isTrue();

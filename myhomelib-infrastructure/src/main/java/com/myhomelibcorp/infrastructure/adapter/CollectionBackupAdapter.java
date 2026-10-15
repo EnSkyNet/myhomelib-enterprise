@@ -65,7 +65,9 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
                     })
                     .filter(java.util.Objects::nonNull)
                     .max(Comparator.naturalOrder());
-        } catch (IOException error) {
+        } catch (IOException | java.io.UncheckedIOException error) {
+            // Files.walk() is lazy: traversal failures can surface from the Stream
+            // iterator as UncheckedIOException, not just from Files.walk() itself.
             log.debug("Cannot inspect backup age for collection {}: {}", collection.getId(), error.toString());
             return Optional.empty();
         }
@@ -87,6 +89,7 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
 
     private void createSnapshot(Collection collection, Path targetFile, boolean thoroughValidation) throws IOException {
         if (!collectionManager.hasActiveCollection()) throw new IOException("No active collection for database snapshot");
+        requireSnapshotCollection(collection);
         Path target = targetFile.toAbsolutePath().normalize();
         Path parent = target.getParent();
         if (parent == null) throw new IOException("SQLite snapshot target has no parent: " + target);
@@ -97,6 +100,9 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
         String quoted = staged.toString().replace("'", "''");
         try {
             collectionManager.getCurrentJdbcTemplate().execute("BACKUP main TO '" + quoted + "'");
+            // A directly invoked adapter can outlive the collection whose JDBC template was
+            // selected. Never publish that snapshot as if it belonged to a different catalogue.
+            requireSnapshotCollection(collection);
             SafeFilePublication.requireSafeRegularFile(staged, "SQLite staged snapshot");
             if (thoroughValidation) validateDatabaseFile(staged);
             else validateRecoveryCheckpoint(staged);
@@ -118,6 +124,22 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
     }
 
     /**
+     * A database snapshot must correspond to the collection named by the caller. Higher-level
+     * UI operations already hold a SWITCH-excluding lease, but the infrastructure port may also
+     * be invoked directly (maintenance, integrations and tests). Reject a mismatched session
+     * before creating or publishing snapshot bytes.
+     */
+    private void requireSnapshotCollection(Collection requested) throws IOException {
+        if (requested == null || requested.getId() == null || requested.getId().isBlank()) {
+            throw new IOException("Database snapshot requires an identified collection");
+        }
+        Collection active = collectionManager.getCurrentCollection();
+        if (active == null || !requested.getId().equals(active.getId())) {
+            throw new IOException("Database snapshot requested collection is not active: " + requested.getId());
+        }
+    }
+
+    /**
      * Fast validation for a transient update checkpoint. SQLite's backup API already guarantees
      * transactional page consistency; here we only prove that a non-empty SQLite file can be
      * opened read-only and that the core catalogue schema is visible. A user-created backup still
@@ -135,7 +157,7 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
         }
         byte[] header = new byte[16];
         try (var input = Files.newInputStream(safeDatabase, LinkOption.NOFOLLOW_LINKS)) {
-            int read = input.read(header);
+            int read = input.readNBytes(header, 0, header.length);
             if (read != header.length || !"SQLite format 3\000".equals(new String(header, java.nio.charset.StandardCharsets.ISO_8859_1))) {
                 throw new IOException("SQLite recovery checkpoint has an invalid header: " + databaseFile);
             }
@@ -200,90 +222,101 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
         if (parent == null) throw new IOException("Collection database has no parent: " + target);
         SafeFilePublication.createDirectoriesNoLinks(parent, "SQLite rollback target parent");
         Path workspace = SafeFilePublication.createPrivateWorkspace(parent, ".mhl-catalog-rollback-", "SQLite rollback workspace");
-        Path staged = workspace.resolve("candidate.db");
-        String snapshotHash = SafeFilePublication.sha256(safeSnapshot, "SQLite rollback snapshot");
-        try (var in = Files.newInputStream(safeSnapshot, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-            SafeFilePublication.copyFresh(in, staged, "SQLite rollback candidate");
-        }
-        String stagedHash = SafeFilePublication.sha256(staged, "SQLite rollback candidate");
-        if (!snapshotHash.equalsIgnoreCase(stagedHash)) {
-            throw new IOException("SQLite rollback candidate SHA-256 mismatch");
-        }
-        validateDatabaseFile(staged);
-
-        boolean closed = false;
-        Path detachedPrevious = null;
-        String previousHash = null;
-        boolean installed = false;
         try {
+            Path staged = workspace.resolve("candidate.db");
+            String snapshotHash = SafeFilePublication.sha256(safeSnapshot, "SQLite rollback snapshot");
+            try (var in = Files.newInputStream(safeSnapshot, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                SafeFilePublication.copyFresh(in, staged, "SQLite rollback candidate");
+            }
+            String stagedHash = SafeFilePublication.sha256(staged, "SQLite rollback candidate");
+            if (!snapshotHash.equalsIgnoreCase(stagedHash)) {
+                throw new IOException("SQLite rollback candidate SHA-256 mismatch");
+            }
+            validateDatabaseFile(staged);
+
+            // Check the active collection before entering the mutation/rollback block.
+            // Otherwise a mismatch can wrongly close a different, currently active library.
             Collection current = collectionManager.getCurrentCollection();
             if (current == null || current.getId() == null || !current.getId().equals(collection.getId())) {
                 throw new IOException("Cannot restore snapshot: requested collection is not active");
             }
-
-            collectionManager.closeCurrentCollection();
-            closed = true;
-            if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                previousHash = SafeFilePublication.sha256(target, "SQLite rollback current database");
-            }
-            SqliteSidecarSupport.delete(target);
-            if (previousHash != null) {
-                detachedPrevious = SafeFilePublication.detachIfOwned(
-                        target, previousHash, "SQLite rollback current database");
-            }
-            SafeFilePublication.moveNoReplace(staged, target, "SQLite rollback candidate install");
-            String installedHash = SafeFilePublication.sha256(target, "SQLite rollback installed database");
-            if (!stagedHash.equalsIgnoreCase(installedHash)) {
-                throw new IOException("SQLite rollback installed database SHA-256 mismatch");
-            }
-            installed = true;
-
-            collectionManager.switchToCollection(collection);
-            validateDatabaseFile(target);
-            if (detachedPrevious != null) {
-                try { SafeFilePublication.removeIfOwned(
-                        detachedPrevious, previousHash, "SQLite rollback old database cleanup"); }
-                catch (IOException cleanupFailure) {
-                    log.warn("Rollback succeeded but old database evidence was preserved: {}", detachedPrevious, cleanupFailure);
-                }
-            }
-            log.warn("Restored collection {} from pre-update SQLite checkpoint {}", collection.getId(), snapshotFile);
-        } catch (Exception restoreFailure) {
-            IOException failure = restoreFailure instanceof IOException io
-                    ? io : new IOException("Cannot restore SQLite update checkpoint", restoreFailure);
+            boolean closed = false;
+            Path detachedPrevious = null;
+            String previousHash = null;
+            boolean installed = false;
             try {
-                if (collectionManager.hasActiveCollection()) collectionManager.closeCurrentCollection();
-            } catch (RuntimeException closeFailure) {
-                failure.addSuppressed(closeFailure);
-            }
-            try {
-                if (installed && Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                    SafeFilePublication.removeIfOwned(
-                            target, stagedHash, "SQLite rollback failed candidate cleanup");
-                    SqliteSidecarSupport.delete(target);
+                collectionManager.closeCurrentCollection();
+                closed = true;
+                if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    previousHash = SafeFilePublication.sha256(target, "SQLite rollback current database");
                 }
+                SqliteSidecarSupport.delete(target);
+                if (previousHash != null) {
+                    detachedPrevious = SafeFilePublication.detachIfOwned(
+                            target, previousHash, "SQLite rollback current database");
+                }
+                SafeFilePublication.moveNoReplace(staged, target, "SQLite rollback candidate install");
+                // From this point on a candidate occupies the live pathname. Mark it as
+                // installed before hashing so an I/O failure during verification still
+                // enters the verified rollback/retained-evidence path.
+                installed = true;
+                String installedHash = SafeFilePublication.sha256(target, "SQLite rollback installed database");
+                if (!stagedHash.equalsIgnoreCase(installedHash)) {
+                    throw new IOException("SQLite rollback installed database SHA-256 mismatch");
+                }
+
+                collectionManager.switchToCollection(collection);
+                validateDatabaseFile(target);
                 if (detachedPrevious != null) {
-                    String detachedHash = SafeFilePublication.sha256(
-                            detachedPrevious, "SQLite rollback previous evidence");
-                    if (!previousHash.equalsIgnoreCase(detachedHash)) {
-                        throw new IOException("SQLite rollback previous evidence changed: " + detachedPrevious);
+                    try { SafeFilePublication.removeIfOwned(
+                            detachedPrevious, previousHash, "SQLite rollback old database cleanup"); }
+                    catch (IOException cleanupFailure) {
+                        log.warn("Rollback succeeded but old database evidence was preserved: {}", detachedPrevious, cleanupFailure);
                     }
-                    if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                        throw new IOException("SQLite rollback target was concurrently replaced; previous evidence retained at "
-                                + detachedPrevious);
+                }
+                log.warn("Restored collection {} from pre-update SQLite checkpoint {}", collection.getId(), snapshotFile);
+            } catch (Exception restoreFailure) {
+                IOException failure = restoreFailure instanceof IOException io
+                        ? io : new IOException("Cannot restore SQLite update checkpoint", restoreFailure);
+                // closeCurrentCollection may throw before any file is touched. There is
+                // nothing to roll back and no reason to close another live connection.
+                if (!closed) throw failure;
+                try {
+                    if (collectionManager.hasActiveCollection()) collectionManager.closeCurrentCollection();
+                } catch (RuntimeException closeFailure) {
+                    failure.addSuppressed(closeFailure);
+                }
+                try {
+                    if (installed && Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                        SafeFilePublication.removeIfOwned(
+                                target, stagedHash, "SQLite rollback failed candidate cleanup");
+                        SqliteSidecarSupport.delete(target);
                     }
-                    SafeFilePublication.moveNoReplace(
-                            detachedPrevious, target, "SQLite rollback previous database restore");
+                    if (detachedPrevious != null) {
+                        String detachedHash = SafeFilePublication.sha256(
+                                detachedPrevious, "SQLite rollback previous evidence");
+                        if (!previousHash.equalsIgnoreCase(detachedHash)) {
+                            throw new IOException("SQLite rollback previous evidence changed: " + detachedPrevious);
+                        }
+                        if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                            throw new IOException("SQLite rollback target was concurrently replaced; previous evidence retained at "
+                                    + detachedPrevious);
+                        }
+                        SafeFilePublication.moveNoReplace(
+                                detachedPrevious, target, "SQLite rollback previous database restore");
+                    }
+                    if ((previousHash != null && Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                            || (previousHash == null && closed)) {
+                        collectionManager.switchToCollection(collection);
+                    }
+                } catch (Exception recoveryFailure) {
+                    failure.addSuppressed(recoveryFailure);
                 }
-                if ((previousHash != null && Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS))
-                        || (previousHash == null && closed)) {
-                    collectionManager.switchToCollection(collection);
-                }
-            } catch (Exception recoveryFailure) {
-                failure.addSuppressed(recoveryFailure);
+                throw failure;
             }
-            throw failure;
         } finally {
+            // Staging and its validation happen before the database swap try/catch.
+            // The workspace must also be released if copy/hash/validation fails.
             try { SafeFilePublication.cleanupPrivateWorkspace(workspace); }
             catch (IOException cleanupFailure) { log.warn("Cannot delete rollback workspace {}", workspace, cleanupFailure); }
         }

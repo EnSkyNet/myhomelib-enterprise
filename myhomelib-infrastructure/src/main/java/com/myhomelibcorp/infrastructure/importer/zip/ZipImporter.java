@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.importer.zip;
 
 import com.myhomelibcorp.infrastructure.importer.archive.ArchiveImportSupport;
+import com.myhomelibcorp.infrastructure.importer.archive.ArchiveEntryImportSupport;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.shared.archive.SafeZipSupport;
 
@@ -8,7 +9,6 @@ import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.infrastructure.util.LimitedInputStream;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +20,7 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.NoSuchElementException;
@@ -151,6 +152,16 @@ public class ZipImporter implements BookImporterPort {
                     return true;
                 }
                 if (entry.isDirectory()) return true;
+                // Check the importer before materializing this ZIP entry. Previously an
+                // unsupported member was fully decompressed into a temporary file and
+                // discarded, wasting I/O and potentially failing an otherwise valid ZIP.
+                BookImporterPort importer;
+                try {
+                    importer = importerRegistry.findImporter(ArchiveImportSupport.importerProbePath(rawEntryName));
+                } catch (IllegalArgumentException unsupported) {
+                    log.debug("Пропущено непідтримуваний ZIP entry: {}", rawEntryName);
+                    return true;
+                }
 
                 long entrySize = entry.getSize();
                 long compressedSize = entry.getCompressedSize();
@@ -162,43 +173,28 @@ public class ZipImporter implements BookImporterPort {
                 Path tempFile = Files.createTempFile("zip_import_", ArchiveImportSupport.suffixFor(rawEntryName));
                 try {
                     long actualSize;
-                    try (InputStream entryInput = zip.getInputStream(entry);
-                         LimitedInputStream limitedIn = new LimitedInputStream(entryInput, ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
+                    try (InputStream entryInput = zip.getInputStream(entry)) {
+                        long previousTotal = totalDecompressedSize;
                         try {
-                            Files.copy(limitedIn, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                        } catch (IOException limitFailure) {
-                            if (limitFailure.getMessage() != null && limitFailure.getMessage().contains("Maximum size limit exceeded")) {
-                                log.warn("Пропущено ZIP entry, що фактично перевищив ліміт: {}", rawEntryName);
-                                return true;
-                            }
-                            throw limitFailure;
+                            totalDecompressedSize = ArchiveEntryImportSupport.copyEntryBounded(
+                                    entryInput::read, tempFile, totalDecompressedSize);
+                        } catch (ArchiveEntryImportSupport.EntryLimitException tooLarge) {
+                            log.warn("Пропущено ZIP entry, що фактично перевищив ліміт: {}", rawEntryName);
+                            return true;
                         }
-                        actualSize = limitedIn.getTotalRead();
-                    }
-
-                    totalDecompressedSize += actualSize;
-                    if (totalDecompressedSize > ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES) {
-                        throw new IOException("ZIP exceeds cumulative decompression safety limit: "
-                                + totalDecompressedSize + " > " + ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES);
+                        actualSize = totalDecompressedSize - previousTotal;
                     }
                     if (ArchiveSafetyLimits.exceedsCompressionRatio(actualSize, compressedSize)) {
                         log.warn("Підозрілий compression ratio (compressed: {}, unpacked: {})", compressedSize, actualSize);
                         return true;
                     }
 
-                    BookImporterPort importer;
-                    try {
-                        importer = importerRegistry.findImporter(ArchiveImportSupport.importerProbePath(rawEntryName));
-                    } catch (IllegalArgumentException e) {
-                        log.warn("Немає імпортера для запису: {}", rawEntryName);
-                        return true;
-                    }
-
+                    Queue<Book> parsedEntry = new ArrayDeque<>();
                     try (Stream<Book> bookStream = importer.importBooks(tempFile)) {
                         final long extractedSize = actualSize;
                         bookStream.filter(java.util.Objects::nonNull)
                                 .map(book -> ArchiveImportSupport.enrich(book, archivePath, rawEntryName, extractedSize))
-                                .forEach(bookQueue::add);
+                                .forEach(parsedEntry::add);
                     } catch (RuntimeException entryFailure) {
                         if (Thread.currentThread().isInterrupted()) {
                             close();
@@ -208,6 +204,8 @@ public class ZipImporter implements BookImporterPort {
                                 rawEntryName, archivePath, entryFailure.getMessage());
                         return true;
                     }
+                    // Publish an entry only after the entire parser stream closed successfully.
+                    bookQueue.addAll(parsedEntry);
                 } finally {
                     Files.deleteIfExists(tempFile);
                 }

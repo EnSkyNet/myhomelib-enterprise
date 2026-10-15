@@ -31,10 +31,12 @@ class CollectionBackupAdapterSnapshotTest {
         CollectionManager manager = mock(CollectionManager.class);
         when(manager.hasActiveCollection()).thenReturn(true);
         when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);
+        Collection requested = identifiedCollection("c1");
+        when(manager.getCurrentCollection()).thenReturn(requested);
         CollectionBackupAdapter adapter = new CollectionBackupAdapter(manager);
         Path snapshot = tempDir.resolve("checkpoint.db");
 
-        adapter.createDatabaseSnapshot(mock(Collection.class), snapshot);
+        adapter.createDatabaseSnapshot(requested, snapshot);
         jdbc.update("UPDATE sample SET value = ? WHERE id = 1", "after");
 
         assertThat(Files.size(snapshot)).isGreaterThan(0L);
@@ -58,10 +60,12 @@ class CollectionBackupAdapterSnapshotTest {
         CollectionManager manager = mock(CollectionManager.class);
         when(manager.hasActiveCollection()).thenReturn(true);
         when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);
+        Collection requested = identifiedCollection("c1");
+        when(manager.getCurrentCollection()).thenReturn(requested);
         CollectionBackupAdapter adapter = new CollectionBackupAdapter(manager);
         Path checkpoint = tempDir.resolve("recovery.db");
 
-        adapter.createRecoveryCheckpoint(mock(Collection.class), checkpoint);
+        adapter.createRecoveryCheckpoint(requested, checkpoint);
         jdbc.update("UPDATE books SET title='After' WHERE id='b1'");
 
         // Full validation after the fact proves the fast creation path still emitted a valid DB.
@@ -106,10 +110,12 @@ class CollectionBackupAdapterSnapshotTest {
         CollectionManager manager = mock(CollectionManager.class);
         when(manager.hasActiveCollection()).thenReturn(true);
         when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);
+        Collection requested = identifiedCollection("c1");
+        when(manager.getCurrentCollection()).thenReturn(requested);
         CollectionBackupAdapter adapter = new CollectionBackupAdapter(manager);
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                adapter.createDatabaseSnapshot(mock(Collection.class), target))
+                adapter.createDatabaseSnapshot(requested, target))
                 .isInstanceOf(java.io.IOException.class)
                 .hasMessageContaining("target changed before detach");
         assertThat(Files.readString(target)).isEqualTo("FOREIGN");
@@ -143,6 +149,154 @@ class CollectionBackupAdapterSnapshotTest {
                     .toList();
             assertThat(evidence).hasSize(1);
             adapter.validateDatabaseFile(evidence.getFirst());
+        }
+    }
+
+    @Test
+    void rollbackMustNotCloseDifferentActiveCollection() throws Exception {
+        Path target = tempDir.resolve("collection-a.db");
+        Path snapshot = tempDir.resolve("checkpoint-a.db");
+        createSimpleDatabase(target, "original-a");
+        createSimpleDatabase(snapshot, "backup-a");
+        Collection requested = new Collection("a", "A", null, target.toString(), 0,
+                null, null, null, null);
+        Collection active = new Collection("b", "B", null, tempDir.resolve("b.db").toString(), 0,
+                null, null, null, null);
+        CollectionManager manager = mock(CollectionManager.class);
+        when(manager.getCurrentCollection()).thenReturn(active);
+        CollectionBackupAdapter adapter = new CollectionBackupAdapter(manager);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                adapter.restoreDatabaseSnapshot(requested, snapshot))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("requested collection is not active");
+        verify(manager, never()).closeCurrentCollection();
+        verify(manager, never()).switchToCollection(any());
+        assertDatabaseValue(target, "original-a");
+        assertNoRollbackWorkspace();
+    }
+
+    @Test
+    void failedStagingValidationCleansWorkspaceWithoutTouchingActiveDatabase() throws Exception {
+        Path target = tempDir.resolve("collection-validation.db");
+        Path snapshot = tempDir.resolve("checkpoint-validation.db");
+        createSimpleDatabase(target, "original");
+        createSimpleDatabase(snapshot, "backup");
+        Collection requested = new Collection("a", "A", null, target.toString(), 0,
+                null, null, null, null);
+        CollectionManager manager = mock(CollectionManager.class);
+        CollectionBackupAdapter adapter = new CollectionBackupAdapter(manager) {
+            @Override
+            public void validateDatabaseFile(Path file) throws java.io.IOException {
+                super.validateDatabaseFile(file);
+                if ("candidate.db".equals(file.getFileName().toString())) {
+                    throw new java.io.IOException("Simulated staged database validation failure");
+                }
+            }
+        };
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                adapter.restoreDatabaseSnapshot(requested, snapshot))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("Simulated staged database validation failure");
+        verify(manager, never()).closeCurrentCollection();
+        assertDatabaseValue(target, "original");
+        assertNoRollbackWorkspace();
+    }
+
+    @Test
+    void failedCloseBeforeSwapDoesNotAttemptSecondCloseOrTouchDatabase() throws Exception {
+        Path target = tempDir.resolve("collection-close.db");
+        Path snapshot = tempDir.resolve("checkpoint-close.db");
+        createSimpleDatabase(target, "original");
+        createSimpleDatabase(snapshot, "backup");
+        Collection requested = new Collection("a", "A", null, target.toString(), 0,
+                null, null, null, null);
+        CollectionManager manager = mock(CollectionManager.class);
+        when(manager.getCurrentCollection()).thenReturn(requested);
+        doThrow(new IllegalStateException("close rejected")).when(manager).closeCurrentCollection();
+        CollectionBackupAdapter adapter = new CollectionBackupAdapter(manager);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                adapter.restoreDatabaseSnapshot(requested, snapshot))
+                .isInstanceOf(java.io.IOException.class)
+                .hasCauseInstanceOf(IllegalStateException.class);
+        verify(manager, times(1)).closeCurrentCollection();
+        assertDatabaseValue(target, "original");
+        assertNoRollbackWorkspace();
+    }
+
+    @Test
+    void snapshotRefusesToBackupAnotherActiveCollection() throws Exception {
+        Collection requested = identifiedCollection("a");
+        Collection active = identifiedCollection("b");
+        CollectionManager manager = mock(CollectionManager.class);
+        when(manager.hasActiveCollection()).thenReturn(true);
+        when(manager.getCurrentCollection()).thenReturn(active);
+        CollectionBackupAdapter adapter = new CollectionBackupAdapter(manager);
+        Path target = tempDir.resolve("wrong-collection.db");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                adapter.createDatabaseSnapshot(requested, target))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("requested collection is not active");
+        verify(manager, never()).getCurrentJdbcTemplate();
+        assertThat(Files.exists(target)).isFalse();
+    }
+
+    @Test
+    void snapshotRefusesPublicationIfActiveCollectionChangesDuringBackup() throws Exception {
+        Collection requested = identifiedCollection("a");
+        Collection another = identifiedCollection("b");
+        java.util.concurrent.atomic.AtomicReference<Collection> current =
+                new java.util.concurrent.atomic.AtomicReference<>(requested);
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        doAnswer(invocation -> {
+            String sql = invocation.getArgument(0);
+            Path staged = Path.of(sql.substring(sql.indexOf("TO '") + 4, sql.lastIndexOf("'")));
+            createSimpleDatabase(staged, "wrong-owner");
+            current.set(another);
+            return null;
+        }).when(jdbc).execute(anyString());
+        CollectionManager manager = mock(CollectionManager.class);
+        when(manager.hasActiveCollection()).thenReturn(true);
+        when(manager.getCurrentCollection()).thenAnswer(invocation -> current.get());
+        when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);
+        CollectionBackupAdapter adapter = new CollectionBackupAdapter(manager);
+        Path target = tempDir.resolve("switched-collection.db");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                adapter.createDatabaseSnapshot(requested, target))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("requested collection is not active");
+        assertThat(Files.exists(target)).isFalse();
+        try (var children = Files.list(tempDir)) {
+            assertThat(children.map(path -> path.getFileName().toString())
+                    .filter(name -> name.startsWith(".mhl-snapshot-"))
+                    .toList()).isEmpty();
+        }
+    }
+
+    private static Collection identifiedCollection(String id) {
+        Collection collection = mock(Collection.class);
+        when(collection.getId()).thenReturn(id);
+        return collection;
+    }
+
+    private void assertNoRollbackWorkspace() throws Exception {
+        try (var paths = Files.list(tempDir)) {
+            assertThat(paths.map(p -> p.getFileName().toString())
+                    .filter(name -> name.startsWith(".mhl-catalog-rollback-"))
+                    .toList()).isEmpty();
+        }
+    }
+
+    private static void assertDatabaseValue(Path database, String expected) throws Exception {
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             var statement = connection.createStatement();
+             var result = statement.executeQuery("SELECT value FROM sample")) {
+            assertThat(result.next()).isTrue();
+            assertThat(result.getString(1)).isEqualTo(expected);
         }
     }
 

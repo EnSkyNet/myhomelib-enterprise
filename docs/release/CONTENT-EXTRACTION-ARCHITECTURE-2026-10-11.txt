@@ -1,0 +1,2 @@
+Historical architecture evidence moved to docs/history/records/CONTENT-EXTRACTION-ARCHITECTURE-2026-10-11.txt
+The current audit evidence is documented in CURRENT-VALIDATION.md.

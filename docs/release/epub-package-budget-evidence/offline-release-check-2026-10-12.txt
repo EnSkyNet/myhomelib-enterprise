@@ -1,0 +1,20 @@
+Command: python3 tools/build-check-v7.py
+Exit code: 0
+Output captured from the completed tool result on 2026-10-12:
+
+MyHomeLib 8.0.0 offline release checks
+================================================
+PASS  Flyway sequential baseline + immutable V1-V36
+PASS  V41 reading statistics singleton
+PASS  V42 reader book preferences
+PASS  V65 reader scoped preferences
+PASS  V43 group membership lookup
+PASS  existing v7 DB -> v7.1 user-data upgrade
+PASS  metadata migrations
+PASS  XML/FXML
+PASS  v7.1 source invariants
+PASS  user-facing UI action coverage
+PASS  user-facing UI action behavior
+PASS  native file chooser boundary
+PASS  user-function documentation coverage
+PASS  release tree cleanliness

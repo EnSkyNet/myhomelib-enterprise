@@ -48,7 +48,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -60,7 +62,9 @@ import java.util.function.Function;
  */
 @Component
 public final class LuceneContentIndexService implements ContentIndexPort {
-    public static final int SCHEMA_VERSION = 1;
+    // Extraction semantics are part of the schema: EPUB block separators and TXT UTF-8
+    // boundary decoding changed, so v1 offsets must not be paired with newly extracted text.
+    public static final int SCHEMA_VERSION = 2;
     static final String SCHEMA_KEY = "myhomelib.content.schema";
     private static final String FIELD_BOOK_ID = "book_id";
     private static final String FIELD_ARTIFACT_ID = "artifact_id";
@@ -70,8 +74,13 @@ public final class LuceneContentIndexService implements ContentIndexPort {
     private static final String FIELD_CHAPTER_START = "chapter_start";
     private static final String FIELD_CHAPTER_END = "chapter_end";
     private static final String FIELD_ANCHOR = "anchor";
+    private static final Set<String> HIT_STORED_FIELDS = Set.of(
+            FIELD_BOOK_ID, FIELD_ARTIFACT_ID, FIELD_CHAPTER_ID, FIELD_CHAPTER_TITLE, FIELD_TEXT,
+            FIELD_CHAPTER_START, FIELD_CHAPTER_END);
     private static final FieldType CONTENT_TEXT_TYPE = contentTextType();
     private static final Analyzer ANALYZER = new StandardAnalyzer();
+    private static final Pattern PREVIEW_TOKEN_SPLIT = Pattern.compile("[^\\p{L}\\p{N}]+");
+    private static final Pattern PREVIEW_WHITESPACE = Pattern.compile("\\s+");
 
     private final Function<String, Path> pathResolver;
     private final ConcurrentHashMap<String, ReentrantReadWriteLock> locks = new ConcurrentHashMap<>();
@@ -166,11 +175,11 @@ public final class LuceneContentIndexService implements ContentIndexPort {
             if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return new ContentIndexPage(List.of(), 0, query.offset(), query.limit());
             ensureSafeIndexDirectory(path, false);
             try (Directory directory = FSDirectory.open(path)) {
-                ensureCompatible(directory);
                 if (!DirectoryReader.indexExists(directory)) {
                     return new ContentIndexPage(List.of(), 0, query.offset(), query.limit());
                 }
                 try (DirectoryReader reader = DirectoryReader.open(directory)) {
+                    ensureCompatible(reader);
                     IndexSearcher searcher = new IndexSearcher(reader);
                     Query textQuery = new QueryParser(FIELD_TEXT, ANALYZER).parse(QueryParser.escape(query.text()));
                     BooleanQuery.Builder builder = new BooleanQuery.Builder().add(textQuery, BooleanClause.Occur.MUST);
@@ -178,18 +187,23 @@ public final class LuceneContentIndexService implements ContentIndexPort {
                         builder.add(new org.apache.lucene.search.TermQuery(new Term(FIELD_BOOK_ID, query.bookId())), BooleanClause.Occur.FILTER);
                     }
                     Query finalQuery = builder.build();
+                    List<Pattern> previewPatterns = previewPatterns(query.text());
                     checkInterrupted();
-                    int required = Math.min(10_000, query.offset() + query.limit());
-                    long total = searcher.count(finalQuery);
-                    checkInterrupted();
+                    int required = (int) Math.min(10_000L, (long) query.offset() + query.limit());
                     TopDocs top = searcher.search(finalQuery, Math.max(1, required));
+                    long total = top.totalHits.value;
+                    if (top.totalHits.relation != org.apache.lucene.search.TotalHits.Relation.EQUAL_TO) {
+                        checkInterrupted();
+                        total = searcher.count(finalQuery);
+                    }
+                    checkInterrupted();
                     ScoreDoc[] scoreDocs = top.scoreDocs;
                     int from = Math.min(query.offset(), scoreDocs.length);
                     int to = Math.min(scoreDocs.length, from + query.limit());
                     List<ContentIndexHit> hits = new ArrayList<>(Math.max(0, to - from));
                     for (int i = from; i < to; i++) {
                         checkInterrupted();
-                        hits.add(toHit(searcher.storedFields().document(scoreDocs[i].doc), scoreDocs[i].score, query.text()));
+                        hits.add(toHit(searcher.storedFields().document(scoreDocs[i].doc, HIT_STORED_FIELDS), scoreDocs[i].score, previewPatterns));
                     }
                     return new ContentIndexPage(hits, total, query.offset(), query.limit());
                 } catch (org.apache.lucene.queryparser.classic.ParseException e) {
@@ -308,37 +322,41 @@ public final class LuceneContentIndexService implements ContentIndexPort {
         }
     }
 
-    private static ContentIndexHit toHit(Document document, float score, String queryText) {
+    private static ContentIndexHit toHit(Document document, float score, List<Pattern> previewPatterns) {
         long chapterStart = numeric(document, FIELD_CHAPTER_START);
         long chapterEnd = numeric(document, FIELD_CHAPTER_END);
         String text = document.get(FIELD_TEXT);
-        MatchPreview preview = preview(text, queryText, chapterStart);
+        MatchPreview preview = preview(text, previewPatterns, chapterStart);
         return new ContentIndexHit(
                 document.get(FIELD_BOOK_ID), document.get(FIELD_ARTIFACT_ID), document.get(FIELD_CHAPTER_ID),
                 document.get(FIELD_CHAPTER_TITLE), chapterStart, chapterEnd, preview.matchOffset(), preview.snippet(), score);
     }
 
-    private static MatchPreview preview(String text, String queryText, long chapterStart) {
+    private static List<Pattern> previewPatterns(String queryText) {
+        if (queryText == null || queryText.isBlank()) return List.of();
+        List<Pattern> patterns = new ArrayList<>();
+        for (String token : PREVIEW_TOKEN_SPLIT.split(queryText)) {
+            if (token.length() < 2) continue;
+            patterns.add(Pattern.compile(Pattern.quote(token), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE));
+        }
+        return List.copyOf(patterns);
+    }
+
+    private static MatchPreview preview(String text, List<Pattern> patterns, long chapterStart) {
         String source = text == null ? "" : text;
         if (source.isEmpty()) return new MatchPreview(chapterStart, "");
         int match = -1;
-        if (queryText != null) {
-            for (String token : queryText.split("[^\\p{L}\\p{N}]+")) {
-                if (token.length() < 2) continue;
-                var pattern = java.util.regex.Pattern.compile(
-                        java.util.regex.Pattern.quote(token),
-                        java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.UNICODE_CASE);
-                var matcher = pattern.matcher(source);
-                if (matcher.find()) {
-                    int candidate = matcher.start();
-                    if (match < 0 || candidate < match) match = candidate;
-                }
+        for (Pattern pattern : patterns) {
+            var matcher = pattern.matcher(source);
+            if (matcher.find()) {
+                int candidate = matcher.start();
+                if (match < 0 || candidate < match) match = candidate;
             }
         }
         if (match < 0) match = 0;
         int start = Math.max(0, match - 70);
         int end = Math.min(source.length(), Math.max(match + 150, start + 180));
-        String body = source.substring(start, end).replaceAll("\\s+", " ").trim();
+        String body = PREVIEW_WHITESPACE.matcher(source.substring(start, end)).replaceAll(" ").trim();
         String snippet = (start > 0 ? "…" : "") + body + (end < source.length() ? "…" : "");
         return new MatchPreview(chapterStart + match, snippet);
     }
@@ -377,10 +395,14 @@ public final class LuceneContentIndexService implements ContentIndexPort {
     private static void ensureCompatible(Directory directory) throws IOException {
         if (!DirectoryReader.indexExists(directory)) return;
         try (DirectoryReader reader = DirectoryReader.open(directory)) {
-            int actual = schemaVersion(reader.getIndexCommit());
-            if (actual != SCHEMA_VERSION) {
-                throw new IllegalStateException("Content index schema " + actual + " is incompatible with " + SCHEMA_VERSION + "; rebuild required");
-            }
+            ensureCompatible(reader);
+        }
+    }
+
+    private static void ensureCompatible(DirectoryReader reader) throws IOException {
+        int actual = schemaVersion(reader.getIndexCommit());
+        if (actual != SCHEMA_VERSION) {
+            throw new IllegalStateException("Content index schema " + actual + " is incompatible with " + SCHEMA_VERSION + "; rebuild required");
         }
     }
 
@@ -451,11 +473,22 @@ public final class LuceneContentIndexService implements ContentIndexPort {
     private static long directorySize(Path path) throws IOException {
         if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return 0L;
         SafeFilePublication.requireSafeDirectoryPath(path, "Content index size directory");
-        try (var stream = Files.walk(path)) {
-            return stream.filter(item -> Files.isRegularFile(item, LinkOption.NOFOLLOW_LINKS)).mapToLong(item -> {
-                try { return Files.size(item); } catch (IOException ignored) { return 0L; }
-            }).sum();
+        long total = 0L;
+        // Lucene stores index files in the collection directory itself. A non-recursive listing
+        // avoids walking the tree for every health check that precedes a content-search request.
+        try (var files = Files.list(path)) {
+            var iterator = files.iterator();
+            while (iterator.hasNext()) {
+                Path file = iterator.next();
+                if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) continue;
+                long size;
+                try { size = Files.size(file); }
+                catch (IOException ignored) { continue; }
+                if (size > Long.MAX_VALUE - total) return Long.MAX_VALUE;
+                total += size;
+            }
         }
+        return total;
     }
 
     private static void deleteTreeQuietly(Path path) {

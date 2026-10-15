@@ -17,6 +17,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from source_archive_policy import extract_archive,source_files,validate_archive
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
@@ -34,24 +35,14 @@ def is_excluded(rel: Path) -> bool:
 
 
 def copy_clean(src: Path, dst: Path) -> None:
+    paths = list(source_files(src))
     if dst.exists():
         shutil.rmtree(dst)
     dst.mkdir(parents=True)
-    for root, dirs, files in os.walk(src):
-        root_path = Path(root)
-        rel_root = root_path.relative_to(src)
-        dirs[:] = [d for d in dirs if not is_excluded(rel_root / d)]
-        for name in files:
-            rel = rel_root / name
-            if is_excluded(rel):
-                continue
-            source = src / rel
-            target = dst / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if source.is_symlink():
-                target.symlink_to(os.readlink(source))
-            else:
-                shutil.copy2(source, target)
+    for source in paths:
+        target = dst / source.relative_to(src)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
 
 
 def run(cmd: list[str], cwd: Path, *, capture: bool = False, accepted: set[int] | None = None) -> subprocess.CompletedProcess[str]:
@@ -72,6 +63,9 @@ def offline_checks(tree: Path) -> None:
     run([sys.executable, "tools/static-release-source-count-test.py"], tree)
     run([sys.executable, "tools/implementation-completeness-check.py"], tree)
     run([sys.executable, "tools/project-hygiene-check.py"], tree)
+    run([sys.executable, "tools/empty-catch-growth-check.py"], tree)
+    run([sys.executable, "tools/source-archive-policy-test.py"], tree)
+    run([sys.executable, "tools/vendor-binary-inventory.py", "--check"], tree)
     run([sys.executable, "tools/architecture-module-coverage-test.py"], tree)
     run([sys.executable, "tools/architecture-check.py"], tree)
     run([sys.executable, "tools/catalog-lifecycle-regression-check.py"], tree)
@@ -102,28 +96,25 @@ for p in sorted(Path('.github/workflows').glob('*.y*ml')):
 
 
 def create_zip(source: Path, archive: Path, top_dir: str) -> None:
-    if archive.exists():
-        archive.unlink()
-    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-        for path in sorted(source.rglob("*")):
-            if path.is_dir():
-                continue
-            rel = path.relative_to(source)
-            if is_excluded(rel):
-                continue
-            arc = Path(top_dir) / rel
-            if path.is_symlink():
-                info = zipfile.ZipInfo(str(arc).replace(os.sep, "/"))
+    paths = sorted(source_files(source))
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=".source-", suffix=".zip", dir=archive.parent)
+    os.close(fd)
+    pending = Path(name)
+    try:
+        with zipfile.ZipFile(pending, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+            for path in paths:
+                info = zipfile.ZipInfo.from_file(path, (Path(top_dir) / path.relative_to(source)).as_posix())
                 info.create_system = 3
-                info.external_attr = (stat.S_IFLNK | 0o777) << 16
-                zf.writestr(info, os.readlink(path))
-                continue
-            info = zipfile.ZipInfo.from_file(path, str(arc).replace(os.sep, "/"))
-            # Preserve executable bits for shell/build scripts.
-            mode = path.stat().st_mode
-            info.external_attr = (mode & 0xFFFF) << 16
-            with path.open("rb") as fh:
-                zf.writestr(info, fh.read(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+                mode = 0o755 if path.suffix == ".sh" or path.stat().st_mode & 0o111 else 0o644
+                info.external_attr = (stat.S_IFREG | mode) << 16
+                info.compress_type = zipfile.ZIP_DEFLATED
+                with path.open("rb") as src, zf.open(info, "w") as dst:
+                    shutil.copyfileobj(src, dst, 1024 * 1024)
+        validate_archive(pending, top_dir)
+        os.replace(pending, archive)
+    finally:
+        pending.unlink(missing_ok=True)
 
 
 def sha256(path: Path) -> str:
@@ -238,12 +229,7 @@ def verify_no_maven_payload(root: Path) -> None:
 def verify_archive(archive: Path, top_dir: str) -> None:
     with tempfile.TemporaryDirectory(prefix="mhl-v71-extracted-") as td:
         td_path = Path(td)
-        with zipfile.ZipFile(archive, "r") as zf:
-            bad = [n for n in zf.namelist() if Path(n).is_absolute() or ".." in Path(n).parts]
-            if bad:
-                raise RuntimeError(f"unsafe ZIP members: {bad[:5]}")
-            zf.extractall(td_path)
-        root = td_path / top_dir
+        root = extract_archive(archive, td_path, top_dir)
         if not root.is_dir():
             raise RuntimeError(f"ZIP top-level directory missing: {top_dir}")
         verify_no_maven_payload(root)
@@ -255,6 +241,10 @@ def verify_archive(archive: Path, top_dir: str) -> None:
         # this ZIP. Re-running every behavioral/static probe here is redundant and slow.
         # Revalidate the archive-specific contract plus critical release/source policies;
         # patch<->ZIP manifest equivalence below proves the extracted bytes match staging.
+        run([sys.executable, "tools/static_release_check.py"], root)
+        run([sys.executable, "tools/project-hygiene-check.py"], root)
+        run([sys.executable, "tools/empty-catch-growth-check.py"], root)
+        run([sys.executable, "tools/vendor-binary-inventory.py", "--check"], root)
         run([sys.executable, "tools/build-check-v7.py"], root)
         run([sys.executable, "tools/supply-chain-policy-check.py"], root)
 

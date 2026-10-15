@@ -1,6 +1,8 @@
 package com.myhomelibcorp.application.usecase.imports;
 
 import com.myhomelibcorp.application.imports.context.ImportContext;
+import com.myhomelibcorp.application.imports.diagnostics.ImportIssue;
+import com.myhomelibcorp.application.imports.diagnostics.ImportSeverity;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.progress.OperationProgress;
@@ -23,7 +25,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.stream.Stream;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.UUID;
@@ -32,6 +39,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Slf4j
 public class ImportDirectoryUseCase {
+
+    private static final int MAX_AGGREGATED_IMPORT_ISSUES = 100;
 
     @Value("${app.import.batch-size:1000}")
     private int defaultBatchSize;
@@ -91,6 +100,7 @@ public class ImportDirectoryUseCase {
 
         boolean cancelled = false;
         boolean childReportedWarningOrFailure = false;
+        IssueAccumulator issues = new IssueAccumulator();
         AtomicLong processed = new AtomicLong(0);
         try {
             if (context.getProgressListener() != null) context.getProgressListener().accept(-1.0);
@@ -125,18 +135,36 @@ public class ImportDirectoryUseCase {
                         totalStats.getSkipped().addAndGet(result.skipped());
                         totalStats.getDuplicates().addAndGet(result.duplicates());
                         totalStats.getErrors().addAndGet(result.errors());
+                        issues.addAll(result.issues());
+                        if (result.errors() > 0 && (result.issues() == null || result.issues().isEmpty())) {
+                            issues.add(new ImportIssue(ImportSeverity.ERROR, "import", "IMPORT_ERRORS_REPORTED",
+                                    safeFileName(file), "Importer reported errors; technical details are available in the application log.",
+                                    false, Map.of("errorCount", Long.toString(result.errors()))));
+                        }
                         changes.merge(result.changes());
                         if (result.status() == ImportStatus.CANCELLED) {
                             cancelled = true;
                             log.info("Дочірній імпорт скасовано: {}", file);
                             break;
                         }
-                        if (result.status() != ImportStatus.SUCCESS) {
+                        if (result.status() != ImportStatus.SUCCESS || !result.issues().isEmpty()) {
                             childReportedWarningOrFailure = true;
                         }
+                    } catch (CancellationException cancelledChild) {
+                        cancelled = true;
+                        log.info("Дочірній імпорт скасовано: {}", safeFileName(file));
+                        break;
                     } catch (Exception e) {
+                        if (isCancelled(context)) {
+                            cancelled = true;
+                            log.info("Імпорт скасовано під час обробки файлу: {}", safeFileName(file));
+                            break;
+                        }
                         log.error("Помилка імпорту файлу: {}", file, e);
                         totalStats.incrementErrors();
+                        issues.add(new ImportIssue(ImportSeverity.ERROR, "import", "FILE_IMPORT_FAILED",
+                                safeFileName(file), "File import failed; technical details are available in the application log.",
+                                false, Map.of("exceptionType", e.getClass().getSimpleName())));
                     }
                     long processedCount = processed.incrementAndGet();
                     emitOperation(context, OperationProgress.stage(operationId, OperationStage.IMPORTING, true)
@@ -150,7 +178,7 @@ public class ImportDirectoryUseCase {
                 }
             }
 
-        } catch (IOException e) {
+        } catch (IOException | UncheckedIOException e) {
             log.error("Помилка сканування каталогу: {}", directory, e);
             throw new RuntimeException("Помилка сканування каталогу", e);
         } finally {
@@ -169,7 +197,7 @@ public class ImportDirectoryUseCase {
                         : (totalStats.getErrors().get() > 0 || childReportedWarningOrFailure
                                 ? ImportStatus.SUCCESS_WITH_WARNINGS : ImportStatus.SUCCESS),
                 changeSet,
-                java.util.List.of());
+                issues.snapshot());
         log.info("Імпорт каталогу завершено. {}", finalResult);
 
         if (context.isIndexAfterSave() && requiresSearchFinalization(finalResult)) {
@@ -215,6 +243,39 @@ public class ImportDirectoryUseCase {
         }
         return finalResult;
     }
+    private static String safeFileName(Path file) {
+        if (file == null || file.getFileName() == null) return "";
+        String name = file.getFileName().toString().replaceAll("[\\p{Cc}]", " ").trim();
+        if (name.length() > 160) name = name.substring(0, 159) + "…";
+        return name;
+    }
+
+    private static final class IssueAccumulator {
+        private static final int MAX_RETAINED = MAX_AGGREGATED_IMPORT_ISSUES - 1;
+        private final List<ImportIssue> retained = new ArrayList<>(MAX_AGGREGATED_IMPORT_ISSUES);
+        private long omitted;
+
+        void addAll(List<ImportIssue> incoming) {
+            if (incoming == null) return;
+            for (ImportIssue issue : incoming) add(issue);
+        }
+
+        void add(ImportIssue issue) {
+            if (issue == null) return;
+            if (retained.size() < MAX_RETAINED) retained.add(issue);
+            else omitted++;
+        }
+
+        List<ImportIssue> snapshot() {
+            if (omitted == 0) return List.copyOf(retained);
+            List<ImportIssue> result = new ArrayList<>(retained);
+            result.add(new ImportIssue(ImportSeverity.WARNING, "summary", "ISSUES_TRUNCATED", "",
+                    "Additional diagnostics were omitted because the result limit was reached.", false,
+                    Map.of("omittedCount", Long.toString(omitted))));
+            return List.copyOf(result);
+        }
+    }
+
     private static boolean requiresSearchFinalization(ImportResult result) {
         if (result == null) return false;
         ImportChangeSet changes = result.changes();

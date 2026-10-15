@@ -6,10 +6,11 @@ import java.io.OutputStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.FileVisitResult;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.Comparator;
 import java.util.Locale;
 import java.util.Objects;
 
@@ -73,11 +74,20 @@ public final class NoLinkPathSafety {
     public static void cleanupPrivateWorkspace(Path workspace, String role) throws IOException {
         if (workspace == null || !Files.exists(workspace, LinkOption.NOFOLLOW_LINKS)) return;
         Path safeWorkspace = requireDirectory(workspace, role);
-        try (var paths = Files.walk(safeWorkspace)) {
-            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(path);
+        // Stream deletion instead of collecting and sorting every descendant in memory.
+        // walkFileTree does not follow symbolic links unless explicitly requested.
+        Files.walkFileTree(safeWorkspace, new SimpleFileVisitor<>() {
+            @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
             }
-        }
+
+            @Override public FileVisitResult postVisitDirectory(Path directory, IOException failure) throws IOException {
+                if (failure != null) throw failure;
+                Files.delete(directory);
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     /** Validates an existing prefix without creating missing suffix components. */
@@ -164,14 +174,42 @@ public final class NoLinkPathSafety {
     public static Path copyFreshFile(Path source, Path target, String role) throws IOException {
         Path safeSource = requireRegularFile(source, role + " source");
         Path safeTarget = prepareTarget(target, role + " target");
-        if (safeSource.equals(safeTarget)) return safeTarget;
+        if (safeSource.equals(safeTarget)) {
+            throw new IOException(role + " cannot copy a file onto itself: " + safeSource);
+        }
+        // CREATE_NEW still protects against replacing an existing target. Once the
+        // output has been created, remember its identity so a failed copy can remove
+        // only its own incomplete artifact, never a file swapped in by another actor.
+        Object createdFileKey = null;
+        boolean targetOpened = false;
         try (InputStream in = Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS);
              OutputStream out = openFreshOutputStream(safeTarget, role + " target")) {
+            targetOpened = true;
+            createdFileKey = Files.readAttributes(safeTarget, BasicFileAttributes.class,
+                    LinkOption.NOFOLLOW_LINKS).fileKey();
             byte[] buffer = new byte[COPY_BUFFER_BYTES];
             for (int read; (read = in.read(buffer)) >= 0; ) {
                 if (read > 0) out.write(buffer, 0, read);
             }
             out.flush();
+        } catch (IOException | RuntimeException failure) {
+            if (targetOpened) {
+                try {
+                    // A null fileKey offers no reliable ownership proof: retain the
+                    // incomplete artifact as diagnostic evidence rather than risk
+                    // deleting somebody else's file.
+                    if (createdFileKey != null && Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
+                        BasicFileAttributes current = Files.readAttributes(safeTarget,
+                                BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                        if (current.isRegularFile() && createdFileKey.equals(current.fileKey())) {
+                            Files.delete(safeTarget);
+                        }
+                    }
+                } catch (IOException cleanup) {
+                    failure.addSuppressed(cleanup);
+                }
+            }
+            throw failure;
         }
         return requireRegularFile(safeTarget, role + " target");
     }

@@ -24,6 +24,68 @@ class IncomingFolderImportCoordinatorTest {
     private static final String HASH = "a".repeat(64);
 
     @Test
+    void executorRejectionDoesNotPermanentlyBlockIncomingCollection() {
+        IncomingFolderWatchPort watcher = mock(IncomingFolderWatchPort.class);
+        ImportFileUseCase importer = mock(ImportFileUseCase.class);
+        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
+        when(collections.getCurrentCollection()).thenReturn(collection("target"));
+        var submitCount = new java.util.concurrent.atomic.AtomicInteger();
+        ExecutorPort rejectOnce = new ExecutorPort() {
+            @Override public <T> CompletableFuture<T> submit(Callable<T> task) {
+                throw new UnsupportedOperationException("not used");
+            }
+            @Override public void execute(Runnable task) {
+                if (submitCount.getAndIncrement() == 0) {
+                    throw new java.util.concurrent.RejectedExecutionException("simulated full queue");
+                }
+                task.run();
+            }
+        };
+        IncomingFolderImportCoordinator coordinator = new IncomingFolderImportCoordinator(
+                watcher, importer, collections, rejectOnce);
+
+        org.junit.jupiter.api.Assertions.assertThrows(java.util.concurrent.RejectedExecutionException.class,
+                () -> coordinator.schedule("target"));
+        coordinator.schedule("target");
+
+        verify(watcher).listReady("target", 25);
+        org.junit.jupiter.api.Assertions.assertEquals(2, submitCount.get());
+    }
+
+    @Test
+    void readyNotificationDuringLastEmptyQueryTriggersAnotherDrain() throws Exception {
+        IncomingFolderWatchPort watcher = mock(IncomingFolderWatchPort.class);
+        ImportFileUseCase importer = mock(ImportFileUseCase.class);
+        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
+        IncomingFolderImportCoordinator coordinator = new IncomingFolderImportCoordinator(
+                watcher, importer, collections, new DirectExecutor());
+        Path folder = Path.of("/tmp/incoming");
+        Path file = folder.resolve("late.txt");
+        IncomingFolderCandidate late = new IncomingFolderCandidate(
+                "target", file, HASH, 10, 20, IncomingFolderCandidateStatus.READY, Instant.now(), null);
+        when(collections.getCurrentCollection()).thenReturn(collection("target"));
+        var reads = new java.util.concurrent.atomic.AtomicInteger();
+        when(watcher.listReady("target", 25)).thenAnswer(invocation -> {
+            int pass = reads.getAndIncrement();
+            if (pass == 0) {
+                // Event occurs while the original draining worker is still registered.
+                coordinator.schedule("target");
+                return List.of();
+            }
+            return pass == 1 ? List.of(late) : List.of();
+        });
+        when(watcher.claimReady("target", file, HASH)).thenReturn(true);
+        when(watcher.findState("target")).thenReturn(Optional.of(new IncomingFolderWatchState(
+                "target", folder, true, 2, 3, Instant.now(), "WATCHING", 0, 1, 0, 0, 0, 0)));
+        when(importer.execute(any())).thenReturn(new ImportResult(1, 0, 0, 0, 1));
+
+        coordinator.schedule("target");
+
+        verify(watcher).markImported("target", file, HASH, 1, 0, 0);
+        org.junit.jupiter.api.Assertions.assertTrue(reads.get() >= 3);
+    }
+
+    @Test
     void inactiveCollectionRemainsQueuedAndActiveCollectionImportsInBackground() throws Exception {
         IncomingFolderWatchPort watcher = mock(IncomingFolderWatchPort.class);
         ImportFileUseCase importer = mock(ImportFileUseCase.class);

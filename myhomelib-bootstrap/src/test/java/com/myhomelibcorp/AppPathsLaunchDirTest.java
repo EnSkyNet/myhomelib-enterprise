@@ -5,8 +5,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
 
 class AppPathsLaunchDirTest {
     private final String oldExplicit = System.getProperty("myhomelib.launchDir");
@@ -39,15 +43,46 @@ class AppPathsLaunchDirTest {
 
     @Test
     void jpackageRuntimeUsesNativeProcessDirectoryInsteadOfUserDir() {
-        String command = ProcessHandle.current().info().command().orElseThrow();
-        Path expected = Path.of(command).toAbsolutePath().normalize().getParent();
-        Path unrelatedCwd = Path.of("target", "unrelated-cwd").toAbsolutePath().normalize();
+        Path executable = Path.of("target", "native-app", "MyHomeLib").toAbsolutePath().normalize();
+        configurePackagedRuntime();
+        ProcessHandle process = mock(ProcessHandle.class);
+        ProcessHandle.Info info = mock(ProcessHandle.Info.class);
+        when(process.info()).thenReturn(info);
+        when(info.command()).thenReturn(Optional.of(executable.toString()));
+        try (var handles = mockStatic(ProcessHandle.class)) {
+            handles.when(ProcessHandle::current).thenReturn(process);
+            assertEquals(executable.getParent(), AppPaths.launchDir());
+        }
+    }
 
+    @Test
+    void packagedRuntimeFallsBackWhenCommandMetadataIsUnavailable() {
+        Path cwd = configurePackagedRuntime();
+        ProcessHandle process = mock(ProcessHandle.class);
+        ProcessHandle.Info info = mock(ProcessHandle.Info.class);
+        when(process.info()).thenReturn(info);
+        when(info.command()).thenReturn(Optional.empty());
+        try (var handles = mockStatic(ProcessHandle.class)) {
+            handles.when(ProcessHandle::current).thenReturn(process);
+            assertEquals(cwd, AppPaths.launchDir());
+        }
+    }
+
+    @Test
+    void packagedRuntimeFallsBackWhenProcessAccessIsDenied() {
+        Path cwd = configurePackagedRuntime();
+        try (var handles = mockStatic(ProcessHandle.class)) {
+            handles.when(ProcessHandle::current).thenThrow(new SecurityException("Process metadata denied"));
+            assertEquals(cwd, AppPaths.launchDir());
+        }
+    }
+
+    private static Path configurePackagedRuntime() {
+        Path cwd = Path.of("target", "unrelated-cwd").toAbsolutePath().normalize();
         System.clearProperty("myhomelib.launchDir");
         System.setProperty("jpackage.app-version", "7.1.0-test");
-        System.setProperty("user.dir", unrelatedCwd.toString());
-
-        assertEquals(expected, AppPaths.launchDir());
+        System.setProperty("user.dir", cwd.toString());
+        return cwd;
     }
 
     private static void restore(String key, String value) {

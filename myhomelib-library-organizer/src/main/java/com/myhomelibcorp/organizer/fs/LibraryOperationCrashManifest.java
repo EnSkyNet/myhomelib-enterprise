@@ -47,13 +47,16 @@ public final class LibraryOperationCrashManifest {
     public static LibraryOperationCrashManifest create(OrganizationPlan plan, Path manifestPath) throws Exception {
         LibraryOperationCrashManifest manifest = new LibraryOperationCrashManifest(plan, manifestPath);
         manifest.persist();
+        ManifestEventLog.create(manifestPath);
         return manifest;
     }
 
     public synchronized void operationState(OrganizationOperationState state, String message) throws Exception {
         this.operationState = Objects.requireNonNull(state, "state");
         this.operationMessage = safe(message);
-        persist();
+        ManifestEventLog.append(manifestPath, "{\"type\":\"operation\",\"state\":\""
+                + state.name() + "\",\"message\":\"" + json(operationMessage)
+                + "\",\"updatedAt\":\"" + Instant.now() + "\"}");
     }
 
     public synchronized void itemState(OrganizationPlanItem item, OrganizationItemState state,
@@ -63,7 +66,29 @@ public final class LibraryOperationCrashManifest {
         items.put(item.itemId(), new ItemSnapshot(item.itemId(), item.action().name(), item.sourcePath(), item.sourceEntry(),
                 item.targetPath(), Objects.requireNonNull(state, "state"), safe(sourceSha256),
                 safe(targetSha256), backupPath, safe(message)));
-        persist();
+        ItemSnapshot snapshot = items.get(item.itemId());
+        ManifestEventLog.append(manifestPath, itemEventJson(snapshot));
+    }
+
+    /** Persist a batch of no-file-change decisions with one durable event-log sync. */
+    public synchronized void skippedItems(java.util.List<OrganizationPlanItem> skipped) throws Exception {
+        if (skipped == null || skipped.isEmpty()) return;
+        java.util.List<ItemSnapshot> snapshots = new java.util.ArrayList<>(skipped.size());
+        java.util.List<String> events = new java.util.ArrayList<>(skipped.size());
+        for (OrganizationPlanItem item : skipped) {
+            if (item == null || !switch (item.action()) {
+                case NOOP, KEEP_AS_IS, REVIEW_DUPLICATE, SKIP_UNSUPPORTED -> true;
+                default -> false;
+            }) throw new IllegalArgumentException("Only non-mutating organizer items may be batched");
+            if (!items.containsKey(item.itemId()))
+                throw new IllegalArgumentException("Unknown item in crash manifest skip batch");
+            ItemSnapshot snapshot = new ItemSnapshot(item.itemId(), item.action().name(), item.sourcePath(),
+                    item.sourceEntry(), item.targetPath(), OrganizationItemState.SKIPPED, "", "", null, "");
+            snapshots.add(snapshot);
+            events.add(itemEventJson(snapshot));
+        }
+        ManifestEventLog.appendBatch(manifestPath, events);
+        for (ItemSnapshot snapshot : snapshots) items.put(snapshot.itemId(), snapshot);
     }
 
     public Path path() { return manifestPath; }
@@ -99,10 +124,20 @@ public final class LibraryOperationCrashManifest {
         }
     }
 
+    private String itemEventJson(ItemSnapshot item) {
+        return "{\"type\":\"item\","
+                + "\"itemId\":\"" + item.itemId() + "\","
+                + "\"state\":\"" + item.state().name() + "\","
+                + "\"sourceSha256\":\"" + json(item.sourceSha256()) + "\","
+                + "\"targetSha256\":\"" + json(item.targetSha256()) + "\","
+                + "\"backupPath\":" + pathJson(item.backupPath()) + ","
+                + "\"message\":\"" + json(item.message()) + "\"}";
+    }
+
     private String json() {
         StringBuilder out = new StringBuilder(2048);
         out.append("{\n")
-                .append("  \"schemaVersion\": 2,\n")
+                .append("  \"schemaVersion\": 3,\n")
                 .append("  \"operationId\": \"").append(json(operationId.toString())).append("\",\n")
                 .append("  \"profileId\": \"").append(json(profileId)).append("\",\n")
                 .append("  \"sourceRoot\": ").append(pathJson(sourceRoot)).append(",\n")

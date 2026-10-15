@@ -22,6 +22,7 @@ import org.springframework.stereotype.Service;
 import com.myhomelibcorp.infrastructure.sync.FolderSyncCounters.FileResult;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -36,6 +37,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 @Service
@@ -57,6 +59,8 @@ public class FolderSyncService implements FolderSyncPort {
 
     private final AtomicBoolean isSyncing = new AtomicBoolean(false);
     private final AtomicBoolean cancelFlag = new AtomicBoolean(false);
+    // Cancellation of a queued async request must never cancel a different active sync.
+    private final AtomicReference<SyncFuture> activeAsyncFuture = new AtomicReference<>();
 
     @Autowired
     public FolderSyncService(
@@ -90,6 +94,10 @@ public class FolderSyncService implements FolderSyncPort {
 
     @Override
     public SyncResult syncFolder(Path directory, SyncOptions options) {
+        return syncFolderInternal(directory, options, null);
+    }
+
+    private SyncResult syncFolderInternal(Path directory, SyncOptions options, SyncFuture owner) {
         if (!isSyncing.compareAndSet(false, true)) {
             throw new IllegalStateException("Синхронізація вже виконується");
         }
@@ -101,6 +109,11 @@ public class FolderSyncService implements FolderSyncPort {
         SyncOptions effective = options == null ? SyncOptions.builder().build() : options;
         Path root = directory.toAbsolutePath().normalize();
         cancelFlag.set(false);
+        if (owner != null) {
+            activeAsyncFuture.set(owner);
+            // A cancellation just before registering ownership must not be lost.
+            if (owner.isCancelled()) cancelFlag.set(true);
+        }
         LocalDateTime startTime = LocalDateTime.now();
 
         FolderSyncCounters counters = new FolderSyncCounters();
@@ -145,7 +158,10 @@ public class FolderSyncService implements FolderSyncPort {
                 }
             }
 
-            if (effective.isDeleteOrphans() && !cancelFlag.get()) {
+            // Reconciliation is destructive for the local-availability flag. It is only safe
+            // after a complete, error-free scan: a failing importer or incomplete enumeration
+            // must not turn already indexed books into unavailable items.
+            if (effective.isDeleteOrphans() && !cancelFlag.get() && counters.errors == 0) {
                 var missing = availabilitySupport.markMissingPhysicalFiles(
                         root, cancelFlag, bookQueryRepository, catalogMutations, syncSupport);
                 FileResult orphanResult = new FileResult(0, missing.updated(), 0, missing.errors());
@@ -161,11 +177,12 @@ public class FolderSyncService implements FolderSyncPort {
                 }
             }
 
-        } catch (IOException e) {
+        } catch (IOException | UncheckedIOException e) {
             counters.errors++;
             errorMessages.add("Помилка сканування: " + syncSupport.safeMessage(e));
             log.error("❌ Помилка сканування папки {}", root, e);
         } finally {
+            activeAsyncFuture.compareAndSet(owner, null);
             isSyncing.set(false);
             cancelFlag.set(false);
         }
@@ -192,7 +209,7 @@ public class FolderSyncService implements FolderSyncPort {
             ioExecutor.execute(() -> {
                 if (future.isCancelled()) return;
                 try {
-                    future.complete(syncFolder(directory, options));
+                    future.complete(syncFolderInternal(directory, options, future));
                 } catch (Throwable error) {
                     future.completeExceptionally(error);
                 }
@@ -206,8 +223,9 @@ public class FolderSyncService implements FolderSyncPort {
     private final class SyncFuture extends CompletableFuture<SyncResult> {
         @Override
         public boolean cancel(boolean mayInterruptIfRunning) {
-            cancelSync();
-            return super.cancel(mayInterruptIfRunning);
+            boolean cancelled = super.cancel(mayInterruptIfRunning);
+            if (cancelled && activeAsyncFuture.get() == this) cancelSync();
+            return cancelled;
         }
     }
 

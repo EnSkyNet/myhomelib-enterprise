@@ -79,6 +79,28 @@ class UiBackgroundExecutorCollectionScopeTest {
     }
 
     @Test
+    void deferredStatisticsRefreshWaitsForIndexWithoutBlockingCaller() throws Exception {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        UiBackgroundExecutor executor = new UiBackgroundExecutor(coordinator);
+        try {
+            var index = coordinator.acquireDetachedShared(LibraryOperationType.INDEX);
+            try {
+                var stats = executor.submitCollectionScopedAwait(LibraryOperationType.EDIT, () -> "refreshed");
+                assertEquals(LibraryOperationType.INDEX, coordinator.activeOperation());
+                assertFalse(stats.isDone(), "Refresh must be deferred, not rejected or run inside INDEX");
+                index.markCompleted("");
+                index.close();
+                assertEquals("refreshed", stats.get(3, TimeUnit.SECONDS));
+                assertFalse(coordinator.isBusy());
+            } finally {
+                index.close();
+            }
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
     void schedulingRejectionReleasesPreAcquiredLease() {
         LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
         UiBackgroundExecutor executor = new UiBackgroundExecutor(coordinator);

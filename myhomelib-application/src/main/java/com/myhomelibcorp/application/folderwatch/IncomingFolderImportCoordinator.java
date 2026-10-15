@@ -19,6 +19,7 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -38,6 +39,10 @@ public class IncomingFolderImportCoordinator {
     private final CollectionLifecyclePort collections;
     private final ExecutorPort executor;
     private final Set<String> draining = ConcurrentHashMap.newKeySet();
+    // A READY notification arriving just after the drain's final empty SELECT used to be
+    // dropped while the previous worker still held the draining flag. Retain a wake-up
+    // bit per collection so the current worker always performs one more pass.
+    private final Map<String, AtomicBoolean> pendingDrains = new ConcurrentHashMap<>();
     private final AtomicBoolean stopping = new AtomicBoolean();
 
     @EventListener(ContextRefreshedEvent.class)
@@ -58,11 +63,30 @@ public class IncomingFolderImportCoordinator {
 
     public void schedule(String collectionId) {
         if (stopping.get() || collectionId == null || collectionId.isBlank()) return;
+        AtomicBoolean pending = pendingDrains.computeIfAbsent(collectionId, ignored -> new AtomicBoolean());
+        pending.set(true);
         if (!draining.add(collectionId)) return;
-        executor.execute(() -> {
-            try { drain(collectionId); }
-            finally { draining.remove(collectionId); }
-        });
+        try {
+            executor.execute(() -> {
+                try {
+                    do {
+                        pending.set(false);
+                        drain(collectionId);
+                    } while (!stopping.get() && pending.get() && activeCollectionIs(collectionId));
+                } finally {
+                    draining.remove(collectionId);
+                    // If a wake-up raced with the final test above, hand it to a fresh
+                    // worker. AtomicBoolean is retained to avoid an ABA/removal race.
+                    if (!stopping.get() && pending.get() && activeCollectionIs(collectionId)) {
+                        schedule(collectionId);
+                    }
+                }
+            });
+        } catch (RuntimeException | Error rejection) {
+            // If ExecutorPort rejected submission, do not permanently block this collection.
+            draining.remove(collectionId);
+            throw rejection;
+        }
     }
 
     private void drain(String collectionId) {

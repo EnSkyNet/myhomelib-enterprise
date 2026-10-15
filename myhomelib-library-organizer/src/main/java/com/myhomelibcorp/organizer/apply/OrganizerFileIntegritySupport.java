@@ -13,16 +13,27 @@ import java.util.UUID;
 
 /** Shared race-aware file ownership and SHA-256 verification for organizer commit/rollback. */
 final class OrganizerFileIntegritySupport {
-    private static final int HASH_BUFFER_BYTES = 1024 * 1024;
+    private static final int HASH_BUFFER_BYTES = 64 * 1024;
 
     private OrganizerFileIntegritySupport() {}
 
+    static void checkCancelled(java.util.function.BooleanSupplier cancelled) {
+        if (cancelled != null && cancelled.getAsBoolean())
+            throw new java.util.concurrent.CancellationException("Library organization cancelled");
+    }
+
     static String sha256(Path path) throws Exception {
+        return sha256(path, () -> false);
+    }
+
+    static String sha256(Path path, java.util.function.BooleanSupplier cancelled) throws Exception {
+        checkCancelled(cancelled);
         Path safe = OrganizerPathSafety.canonicalExistingFile(path, "Organizer hash source");
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         byte[] buffer = new byte[HASH_BUFFER_BYTES];
         try (InputStream input = Files.newInputStream(safe, LinkOption.NOFOLLOW_LINKS)) {
             for (int read; (read = input.read(buffer)) >= 0;) {
+                checkCancelled(cancelled);
                 if (read > 0) digest.update(buffer, 0, read);
             }
         }
@@ -86,7 +97,7 @@ final class OrganizerFileIntegritySupport {
         if (parent == null) throw new IllegalStateException(role + ": path has no parent: " + safe);
 
         Path evidence = OrganizerPathSafety.canonicalForCreation(
-                parent.resolve("." + safe.getFileName() + ".mhl-remove-" + UUID.randomUUID() + ".tmp"),
+                parent.resolve(".mhl-remove-" + UUID.randomUUID() + ".tmp"),
                 role + " evidence");
         if (Files.exists(evidence, LinkOption.NOFOLLOW_LINKS)) {
             throw new FileAlreadyExistsException(evidence.toString());

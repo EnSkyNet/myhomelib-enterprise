@@ -17,7 +17,7 @@ import java.util.concurrent.CancellationException;
 
 /** Canonical safe ZIP-entry access for organizer apply/rollback operations. */
 final class OrganizerArchiveSupport {
-    private static final int HASH_BUFFER_BYTES = 1024 * 1024;
+    private static final int HASH_BUFFER_BYTES = 64 * 1024;
     private static final int COPY_BUFFER_BYTES = 64 * 1024;
 
     private OrganizerArchiveSupport() {}
@@ -46,6 +46,11 @@ final class OrganizerArchiveSupport {
     }
 
     static String sha256(Path archive, String sourceEntry) throws Exception {
+        return sha256(archive, sourceEntry, () -> false);
+    }
+
+    static String sha256(Path archive, String sourceEntry, BooleanSupplier cancelled) throws Exception {
+        OrganizerFileIntegritySupport.checkCancelled(cancelled);
         Path safeArchive = OrganizerPathSafety.canonicalExistingFile(archive, "Organizer source archive");
         try (ZipFile zip = SafeZipSupport.openDetected(safeArchive, "Organizer source archive")) {
             ZipArchiveEntry entry = requireEntry(zip, sourceEntry);
@@ -56,6 +61,7 @@ final class OrganizerArchiveSupport {
                 for (int read; (read = input.read(buffer)) >= 0;) {
                     if (read <= 0) continue;
                     total = checkedAdd(total, read);
+                    OrganizerFileIntegritySupport.checkCancelled(cancelled);
                     digest.update(buffer, 0, read);
                 }
             }

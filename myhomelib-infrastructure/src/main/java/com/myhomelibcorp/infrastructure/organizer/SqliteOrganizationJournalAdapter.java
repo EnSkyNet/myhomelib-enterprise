@@ -52,6 +52,12 @@ public class SqliteOrganizationJournalAdapter implements OrganizationJournalPort
 
     @Override public void updateItem(OrganizationJournalItem item){insertOrUpdate(item);}
 
+    @Override public void updateItems(List<OrganizationJournalItem> items) {
+        if (items == null || items.isEmpty()) return;
+        new TransactionTemplate(new DataSourceTransactionManager(journalDataSource)).executeWithoutResult(status ->
+                jdbc().batchUpdate(ITEM_UPSERT_SQL, items.stream().map(this::itemArgs).toList()));
+    }
+
     private void insertOrUpdate(OrganizationJournalItem item){
         jdbc().update(ITEM_UPSERT_SQL, itemArgs(item));
     }

@@ -65,9 +65,24 @@ public class SwitchCollectionUseCase {
      * inside the migration phase.
      */
     public SwitchResult executeWithStatus(Collection collection, boolean rebuildIndex) {
-        // A collection-specific rebuild must never survive into a different collection context.
+        if (collection == null) {
+            throw new IllegalArgumentException("Колекція не може бути null");
+        }
+        // INDEX has to be cancelled before SWITCH can acquire its exclusive lease. But a
+        // conflicting BACKUP/RESTORE/IMPORT must reject SWITCH *without* cancelling an unrelated
+        // queued rebuild. The second acquire below remains the authoritative race-safe guard.
+        LibraryOperationType currentOperation = operationCoordinator.activeOperation();
+        if (currentOperation != null && currentOperation != LibraryOperationType.INDEX) {
+            throw new com.myhomelibcorp.application.operation.LibraryOperationConflictException(
+                    currentOperation, LibraryOperationType.SWITCH);
+        }
         collectionLifecycleService.cancelBackgroundRebuildAndAwait();
         var lease = operationCoordinator.acquire(LibraryOperationType.SWITCH);
+        return executeWithAcquiredLease(collection, rebuildIndex, lease);
+    }
+
+    private SwitchResult executeWithAcquiredLease(
+            Collection collection, boolean rebuildIndex, LibraryOperationCoordinator.Lease lease) {
         try {
             SwitchResult result = executeLocked(collection, rebuildIndex);
             String name = result.collection() == null || result.collection().getName() == null

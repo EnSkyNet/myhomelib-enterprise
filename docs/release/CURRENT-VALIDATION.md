@@ -1,6 +1,28 @@
+# Поточні перевірки, 2026-10-15
+
+Дивіться [поточний звіт](AUDIT-REMEDIATION-2026-10-15-UA.md) і [зовнішню матрицю](AUDIT-EXTERNAL-ACCEPTANCE-2026-10-13-UA.md).
+
+Root `-Pproduction clean verify` від 2026-10-13: **BUILD SUCCESS**, 2347 tests / 0 failures / 0 errors / 23 skipped, **2324 виконано**, 671 XML, 21/21 reactor modules SUCCESS. 15 жовтня перевірено всі 2448 хешів тестового маніфесту: збігаються. Java/POM/resources не змінено; нового root-прогону цього дня немає.
+
+15 жовтня: **11 перевірок PASS**; окремо **Stage 25C FAIL** через FolderSyncService 375/360 рядків. Повний `offline_checks` не оголошується успішним. Докази: `audit-evidence-2026-10-13.zip` та `source-check-evidence-2026-10-15.zip`. Windows/user-book acceptance, новий performance A/B та live SCA відкриті.
+
+Поточні defaults: Hikari pool=3, cache=-8192 KiB, mmap=33554432 bytes. Твердження щодо pool=2, відсутності root-прогону та результати в історичних розділах нижче описують попередні кандидати.
+
+## Історичні перевірки попередніх версій
+
 # Current validation status
 
-**Current source candidate:** MyHomeLib Enterprise 8.0.0 / **V34 External Test R18 — post-live-test failure-transparency/persistence/integration hardening** derived from R17
+**Оновлення 2026-10-12: ліміти метаданих EPUB та перевірки AppPaths.** Виконаний 2026-10-11 цільовий Maven-прогін: **53 тести / 0 failures / 0 errors / 0 skipped**. На попередньому коді новий `EpubPackageBudgetTest` відтворив 5 failures із 7 випадків; після виправлення всі 7 пройшли. `AppPathsLaunchDirTest` — 5/5 після усунення залежності від доступності process metadata у тесті й додавання fallback-випадків.
+
+Перед пакуванням 2026-10-12 повторно внесено ті самі перевірені зміни до збереженої попередньої версії; Maven повторно не запускався. **Архітектурна перевірка та offline release checks фінального коду — PASS.** Запис результатів, diff і походження доказів: `docs/release/epub-package-budget-evidence/`.
+
+**Повний root clean verify цього патча не виконано.** Раніше в середовищі не працювала перевірка дерева дочірніх процесів; цей тест не змінено й не вимкнено. Цільові 53 тести не замінюють root-прогін або Windows acceptance.
+
+Схема content index залишається **2**; попередній перехід 1 → 2 потребує одноразової перебудови. Деталі: `docs/release/CONTENT-EXTRACTION-MEMORY-AUDIT-2026-10-11-UA.md`. Усі числа й acceptance-висновки нижче — історичні.
+
+## Historical R18 validation snapshot, 2026-10-05
+
+**Historical source candidate:** MyHomeLib Enterprise 8.0.0 / **V34 External Test R18 — post-live-test failure-transparency/persistence/integration hardening** derived from R17
 **Date:** 2026-10-05
 **Status:** **R5–R17 GUARANTEES RETAINED. R18 FIXES READER-PREFERENCES FAILURE TRANSPARENCY, KOBO REPOSITORY-ERROR MASKING, STALE READER-SESSION RESURRECTION, KOBO SPRING WIRING/PROXYABILITY, AND HARDENS TTS/COVER/WEBDAV/CLEANUP PATHS. EXACT R18 ROOT CLEAN VERIFY: 2123/0/0/23, 635 SUREFIRE REPORTS, 21/21 REACTOR PROJECTS SUCCESS, BUILD SUCCESS, 02:43. UI ACTION COVERAGE 486/486. WINDOWS/DEVICE/PROVIDER LIVE ACCEPTANCE REMAINS REQUIRED.**
 
@@ -12,7 +34,7 @@
 - **V33 — local recommendations:** deterministic metadata-only similarity policy with bounded SQLite candidate projection; no cloud, embeddings, vector DB or persisted recommendation index. Real-data profiling added keyword-only candidate coverage, normalized series identity, existing partial-index reuse and tighter bounded candidate selection. Book Details loads recommendations asynchronously.
 - **V34 — exact duplicate comic pages:** bounded page-level exact SHA-256 + length evidence for CBZ/CBR/CB7, cancellation, corrupt-entry continuation, deterministic groups and report-only Book Details UI. Perceptual/near matching remains outside V34.
 
-## Exact-current local evidence
+## Historical local evidence (2026-10-05)
 
 Detailed exact-current evidence: `docs/release/POST-R17-R18-VALIDATION-2026-10-05-UA.md`. Next live/platform tasks: `docs/release/NEXT-TASKS-AFTER-R18-2026-10-05-UA.md`. R16 evidence remains in `docs/release/POST-R15-R16-VALIDATION-2026-10-04-UA.md`. R15 evidence remains in `docs/release/POST-R14-R15-VALIDATION-2026-10-04-UA.md`. R14 full-root evidence remains in `docs/release/POST-R13-R14-VALIDATION-2026-10-04-UA.md`. R13 evidence remains in `docs/release/POST-R12-R13-VALIDATION-2026-10-04-UA.md`. R12 performance evidence remains in `docs/release/POST-R11-R12-VALIDATION-2026-10-04-UA.md`. R10 evidence remains in `docs/release/POST-R9-R10-VALIDATION-2026-10-04-UA.md`; R9 evidence remains in `docs/release/POST-R8-R9-VALIDATION-2026-10-04-UA.md`; R8 evidence remains in `docs/release/POST-R7-R8-VALIDATION-2026-10-04-UA.md`; R7 memory baseline remains in `docs/release/POST-R6-R7-VALIDATION-2026-10-04-UA.md`; R6 harness baseline remains in `docs/release/POST-R5-R6-VALIDATION-2026-10-04-UA.md`; R5 memory A/B evidence remains in `docs/release/POST-R4-R5-VALIDATION-2026-10-03-UA.md`.
 

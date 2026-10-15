@@ -137,6 +137,18 @@ If rollback is required, restore the backup rather than attempting a schema down
 
 ## 8. Search/index recovery
 
+### Content extraction update, 2026-10-11
+
+Full-text index schema is now **2** because corrected EPUB separators and TXT UTF-8 detection can change offsets. After upgrading from schema 1, rebuild the collection’s content/full-text index once in the integrity-check window. This does not change SQLite or the catalogue metadata index.
+
+FB2/EPUB/TXT extraction limits normalized text to **67,108,864 UTF-16 code units**, including separators, and **250,000 nonempty paragraphs** per artifact. Overflow returns a failed extraction without a partial extracted document. These adapters also serve other extracted-content consumers, including Web Reader. They do not impose these same byte limits on imported source files.
+
+Chapter titles additionally have limits of **65,536 UTF-16 code units per title** and **1,048,576 cumulatively per document**. EPUB head titles are bounded while parsing; the shared builder also checks body-derived and FB2 chapter titles before retaining a finished chapter. Excessive titles return `FAILED` without silent truncation. These bounds prevent the reproduced retained-title OOM; they do not guarantee that arbitrary content fits a 64 MiB heap. This follow-up keeps content index schema **2**, so no further schema transition is introduced for an index already rebuilt after the earlier extraction update.
+
+EPUB metadata follow-up, 2026-10-12: `container.xml` and the OPF package document are each limited to **8,388,608 uncompressed bytes**, checked before parsing and while reading. Manifest `item` declarations and spine `itemref` declarations each have a **100,000-record** cap, including duplicates and unresolved/invalid declarations. Limits are inclusive; excess returns `FAILED` without a partial document. These application resource limits can reject oversized metadata previously accepted under the generic ZIP limit. Cancellation is also checked during ZIP enumeration and metadata parsing. Index schema remains **2**.
+
+Validation boundary: `docs/release/CONTENT-EXTRACTION-MEMORY-AUDIT-2026-10-11-UA.md`.
+
 Lucene is rebuildable relative to the SQLite catalogue. User data and local files are not. Keep the catalogue backup until upgrade verification completes.
 
 A failed rebuild must not replace the previously committed healthy index. Startup should reuse a valid index marker/fingerprint instead of rebuilding unnecessarily.

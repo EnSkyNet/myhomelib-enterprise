@@ -25,7 +25,6 @@ public class ZipParser implements BookParser {
             StandardCharsets.UTF_8,
             Charset.forName("CP866"),
             Charset.forName("Windows-1251"),
-            Charset.forName("IBM866"),
             Charset.forName("KOI8-R")
     };
 
@@ -35,41 +34,48 @@ public class ZipParser implements BookParser {
     public ReaderDocument parse(BookSource source, ParseOptions options) throws IOException {
         log.info("📦 Парсинг ZIP: {}", source.name());
 
-        Exception lastException = null;
-        for (Charset charset : CHARSETS) {
-            if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("ZIP parsing cancelled");
-            try {
-                ReaderDocument result = parseWithCharset(source, charset, options);
-                if (result != null && !result.isEmpty()) {
-                    log.info("✅ ZIP розпарсено з кодуванням: {}", charset);
-                    return result;
+        // A BookSource may be remote or non-repeatable. Stage it exactly once, then retry
+        // decoding ZIP entry names against the same validated local archive.
+        java.nio.file.Path stagedArchive = java.nio.file.Files.createTempFile("zip_parser_", ".zip");
+        try {
+            try (InputStream in = source.openStream();
+                 OutputStream out = java.nio.file.Files.newOutputStream(stagedArchive)) {
+                copyInterruptibly(in, out, ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES);
+            }
+            Exception lastException = null;
+            for (Charset charset : CHARSETS) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("ZIP parsing cancelled");
+                try {
+                    ReaderDocument result = parseWithCharset(source, stagedArchive, charset, options);
+                    if (result != null && !result.isEmpty()) {
+                        log.info("✅ ZIP розпарсено з кодуванням: {}", charset);
+                        return result;
+                    }
+                    closeDocument(result);
+                } catch (InterruptedIOException e) {
+                    throw e;
+                } catch (Exception e) {
+                    log.debug("Не вдалося з кодуванням {}: {}", charset, e.getMessage());
+                    lastException = e;
                 }
-                closeDocument(result);
-            } catch (InterruptedIOException e) {
-                throw e;
-            } catch (Exception e) {
-                log.debug("Не вдалося з кодуванням {}: {}", charset, e.getMessage());
-                lastException = e;
+            }
+            throw new IOException("Не вдалося розпарсити ZIP жодним з підтримуваних кодувань", lastException);
+        } finally {
+            try { java.nio.file.Files.deleteIfExists(stagedArchive); } catch (IOException e) {
+                log.debug("Не вдалося видалити тимчасовий ZIP: {}", e.getMessage());
             }
         }
-
-        throw new IOException("Не вдалося розпарсити ZIP жодним з підтримуваних кодувань", lastException);
     }
 
-    private ReaderDocument parseWithCharset(BookSource source, Charset charset, ParseOptions options)
+    private ReaderDocument parseWithCharset(BookSource source, java.nio.file.Path stagedArchive,
+                                                Charset charset, ParseOptions options)
             throws IOException {
 
-        java.nio.file.Path tempFile = null;
         List<ReaderDocument> parsedBooks = new ArrayList<>();
         try {
-            tempFile = java.nio.file.Files.createTempFile("zip_parser_", ".zip");
-            try (InputStream is = source.openStream(); OutputStream out = java.nio.file.Files.newOutputStream(tempFile)) {
-                copyInterruptibly(is, out, ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES);
-            }
-
             Exception lastBookError = null;
             long totalExpandedBytes = 0;
-            try (ZipFile zipFile = new ZipFile(tempFile.toFile(), charset)) {
+            try (ZipFile zipFile = new ZipFile(stagedArchive.toFile(), charset)) {
                 Enumeration<? extends ZipEntry> entries = zipFile.entries();
                 int entryCount = 0;
 
@@ -138,12 +144,6 @@ public class ZipParser implements BookParser {
             closeDocuments(parsedBooks);
             log.error("Помилка парсингу ZIP з кодуванням {}: {}", charset, e.getMessage());
             throw new IOException("Не вдалося розпарсити ZIP з кодуванням " + charset, e);
-        } finally {
-            if (tempFile != null) {
-                try { java.nio.file.Files.deleteIfExists(tempFile); } catch (IOException e) {
-                    log.debug("Не вдалося видалити тимчасовий файл: {}", e.getMessage());
-                }
-            }
         }
     }
 

@@ -133,6 +133,210 @@ class UndoLibraryOrganizationUseCaseTest {
     }
 
 
+
+    @Test
+    void committedMoveRetryAfterRestoringFileOnlyCompletesJournal() throws Exception {
+        UUID operationId = UUID.randomUUID();
+        Path source = tempDir.resolve("recovered.fb2");
+        Path target = tempDir.resolve("previous-location.fb2");
+        Files.writeString(source, "already restored");
+        String hash = sha256(source);
+        MemoryJournal journal = new MemoryJournal(operation(operationId), new OrganizationJournalItem(
+                operationId, UUID.randomUUID(), source, "", target, hash, hash, "MOVE",
+                OrganizationItemState.COMMITTED, null, "", 0, 0, 0, 0.0, "{}", "", ""));
+
+        assertThat(new UndoLibraryOrganizationUseCase(journal, new LibraryOperationCoordinator(), List.of())
+                .undo(operationId)).isEqualTo(1);
+        assertThat(Files.readString(source)).isEqualTo("already restored");
+        assertThat(target).doesNotExist();
+        assertThat(journal.lastUpdatedItem.state()).isEqualTo(OrganizationItemState.ROLLED_BACK);
+    }
+
+    @Test
+    void committedMoveRefusesForeignExistingSourceWithoutDeletingTheTarget() throws Exception {
+        UUID operationId = UUID.randomUUID();
+        Path source = Files.writeString(tempDir.resolve("occupied.fb2"), "foreign book");
+        Path target = Files.writeString(tempDir.resolve("owned.fb2"), "original book");
+        String hash = sha256(target);
+        MemoryJournal journal = new MemoryJournal(operation(operationId), new OrganizationJournalItem(
+                operationId, UUID.randomUUID(), source, "", target, hash, hash, "MOVE",
+                OrganizationItemState.COMMITTED, null, "", 0, 0, 0, 0.0, "{}", "", ""));
+
+        assertThatThrownBy(() -> new UndoLibraryOrganizationUseCase(journal, new LibraryOperationCoordinator(), List.of())
+                .undo(operationId)).isInstanceOf(java.nio.file.FileAlreadyExistsException.class);
+        assertThat(Files.readString(source)).isEqualTo("foreign book");
+        assertThat(Files.readString(target)).isEqualTo("original book");
+        assertThat(journal.lastUpdatedItem).isNull();
+    }
+
+    @Test
+    void committedConversionWithMissingOriginalAndBackupCannotBeReportedAsUndone() throws Exception {
+        UUID operationId = UUID.randomUUID();
+        Path source = tempDir.resolve("missing.fb2");
+        Path target = tempDir.resolve("missing.epub");
+        String sourceHash = sha256(Files.writeString(tempDir.resolve("original-digest-only.fb2"), "original"));
+        String targetHash = sha256(Files.writeString(tempDir.resolve("converted-digest-only.epub"), "converted"));
+        MemoryJournal journal = new MemoryJournal(operation(operationId), new OrganizationJournalItem(
+                operationId, UUID.randomUUID(), source, "", target, sourceHash, targetHash, "CONVERT",
+                OrganizationItemState.COMMITTED, null, "", 0, 0, 0, 0.0, "{}", "", ""));
+
+        assertThatThrownBy(() -> new UndoLibraryOrganizationUseCase(journal, new LibraryOperationCoordinator(), List.of())
+                .undo(operationId)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no verified original or backup");
+        assertThat(journal.lastUpdatedItem).isNull();
+        assertThat(journal.lastOperationState).isNull();
+    }
+
+    @Test
+    void committedConversionRetryAcceptsVerifiedRestoredOriginal() throws Exception {
+        UUID operationId = UUID.randomUUID();
+        Path source = Files.writeString(tempDir.resolve("already-restored.fb2"), "original");
+        Path target = tempDir.resolve("already-removed.epub");
+        String hash = sha256(source);
+        MemoryJournal journal = new MemoryJournal(operation(operationId), new OrganizationJournalItem(
+                operationId, UUID.randomUUID(), source, "", target, hash, hash, "CONVERT",
+                OrganizationItemState.COMMITTED, null, "", 0, 0, 0, 0.0, "{}", "", ""));
+
+        assertThat(new UndoLibraryOrganizationUseCase(journal, new LibraryOperationCoordinator(), List.of())
+                .undo(operationId)).isEqualTo(1);
+        assertThat(Files.readString(source)).isEqualTo("original");
+        assertThat(journal.lastUpdatedItem.state()).isEqualTo(OrganizationItemState.ROLLED_BACK);
+    }
+
+    @Test
+    void unknownCommittedActionMustNotBeSilentlyMarkedRolledBack() throws Exception {
+        UUID operationId = UUID.randomUUID();
+        Path source = Files.writeString(tempDir.resolve("unknown.fb2"), "preserve");
+        String hash = sha256(source);
+        MemoryJournal journal = new MemoryJournal(operation(operationId), new OrganizationJournalItem(
+                operationId, UUID.randomUUID(), source, "", null, hash, hash, "UNKNOWN_FUTURE_ACTION",
+                OrganizationItemState.COMMITTED, null, "", 0, 0, 0, 0.0, "{}", "", ""));
+
+        assertThatThrownBy(() -> new UndoLibraryOrganizationUseCase(journal, new LibraryOperationCoordinator(), List.of())
+                .undo(operationId)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Unsupported organizer rollback action");
+        assertThat(Files.readString(source)).isEqualTo("preserve");
+        assertThat(journal.lastUpdatedItem).isNull();
+    }
+
+
+    @Test
+    void committedConversionPreservesResultWhenOriginalAndBackupAreMissing() throws Exception {
+        UUID operationId = UUID.randomUUID();
+        Path source = tempDir.resolve("lost-original.fb2");
+        Path converted = Files.writeString(tempDir.resolve("only-copy.epub"), "last surviving book");
+        String expectedSource = sha256(Files.writeString(tempDir.resolve("digest-source.fb2"), "lost source"));
+        MemoryJournal journal = new MemoryJournal(operation(operationId), new OrganizationJournalItem(
+                operationId, UUID.randomUUID(), source, "", converted, expectedSource, sha256(converted), "CONVERT",
+                OrganizationItemState.COMMITTED, null, "", 0, 0, 0, 0.0, "{}", "", ""));
+
+        assertThatThrownBy(() -> new UndoLibraryOrganizationUseCase(journal, new LibraryOperationCoordinator(), List.of())
+                .undo(operationId)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no verified original or backup");
+        assertThat(Files.readString(converted)).isEqualTo("last surviving book");
+        assertThat(journal.lastUpdatedItem).isNull();
+    }
+
+    @Test
+    void committedOptimizationPreservesResultIfBackupMissing() throws Exception {
+        UUID operationId = UUID.randomUUID();
+        Path optimized = Files.writeString(tempDir.resolve("optimized.epub"), "optimized survivor");
+        String expectedSource = sha256(Files.writeString(tempDir.resolve("original-digest.epub"), "original"));
+        MemoryJournal journal = new MemoryJournal(operation(operationId), new OrganizationJournalItem(
+                operationId, UUID.randomUUID(), optimized, "", optimized, expectedSource, sha256(optimized), "OPTIMIZE",
+                OrganizationItemState.COMMITTED, tempDir.resolve("missing-backup.epub"), "", 0, 0, 0, 0.0, "{}", "", ""));
+
+        assertThatThrownBy(() -> new UndoLibraryOrganizationUseCase(journal, new LibraryOperationCoordinator(), List.of())
+                .undo(operationId)).isInstanceOf(IllegalStateException.class);
+        assertThat(Files.readString(optimized)).isEqualTo("optimized survivor");
+        assertThat(journal.lastUpdatedItem).isNull();
+    }
+
+    @Test
+    void committedExtractionRetainsExtractedBookIfArchiveNoLongerMatches() throws Exception {
+        UUID operationId = UUID.randomUUID();
+        Path source = Files.writeString(tempDir.resolve("invalid-archive.zip"), "changed archive");
+        Path extracted = Files.writeString(tempDir.resolve("extracted.fb2"), "only extracted copy");
+        String expectedSource = sha256(Files.writeString(tempDir.resolve("old-archive.zip"), "old archive"));
+        MemoryJournal journal = new MemoryJournal(operation(operationId), new OrganizationJournalItem(
+                operationId, UUID.randomUUID(), source, "book.fb2", extracted, expectedSource, sha256(extracted), "EXTRACT",
+                OrganizationItemState.COMMITTED, null, "", 0, 0, 0, 0.0, "{}", "", ""));
+
+        assertThatThrownBy(() -> new UndoLibraryOrganizationUseCase(journal, new LibraryOperationCoordinator(), List.of())
+                .undo(operationId)).isInstanceOf(IllegalStateException.class);
+        assertThat(Files.readString(extracted)).isEqualTo("only extracted copy");
+        assertThat(journal.lastUpdatedItem).isNull();
+    }
+
+    @Test
+    void validatedConversionRetainsCandidateIfRecoveryMaterialMissing() throws Exception {
+        UUID operationId = UUID.randomUUID();
+        Path source = tempDir.resolve("missing-original.fb2");
+        Path converted = Files.writeString(tempDir.resolve("pending.epub"), "valid pending candidate");
+        String expectedSource = sha256(Files.writeString(tempDir.resolve("different.fb2"), "original content"));
+        MemoryJournal journal = new MemoryJournal(operation(operationId), new OrganizationJournalItem(
+                operationId, UUID.randomUUID(), source, "", converted, expectedSource, sha256(converted), "CONVERT",
+                OrganizationItemState.VALIDATED, null, "", 0, 0, 0, 0.0, "{}", "", ""));
+
+        assertThatThrownBy(() -> new UndoLibraryOrganizationUseCase(journal, new LibraryOperationCoordinator(), List.of())
+                .undo(operationId)).isInstanceOf(IllegalStateException.class);
+        assertThat(Files.readString(converted)).isEqualTo("valid pending candidate");
+        assertThat(journal.lastUpdatedItem).isNull();
+    }
+
+    @Test
+    void corruptedBackupIsRejectedBeforeDeletingConvertedOutput() throws Exception {
+        UUID operationId = UUID.randomUUID();
+        Path source = tempDir.resolve("missing-original.fb2");
+        Path backup = Files.writeString(tempDir.resolve("corrupt-backup.fb2"), "corrupt");
+        Path converted = Files.writeString(tempDir.resolve("surviving.epub"), "valuable converted copy");
+        String expectedSource = sha256(Files.writeString(tempDir.resolve("original-hash.fb2"), "original"));
+        MemoryJournal journal = new MemoryJournal(operation(operationId), new OrganizationJournalItem(
+                operationId, UUID.randomUUID(), source, "", converted, expectedSource, sha256(converted), "CONVERT",
+                OrganizationItemState.COMMITTED, backup, "", 0, 0, 0, 0.0, "{}", "", ""));
+
+        assertThatThrownBy(() -> new UndoLibraryOrganizationUseCase(journal, new LibraryOperationCoordinator(), List.of())
+                .undo(operationId)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("backup hash mismatch");
+        assertThat(Files.readString(converted)).isEqualTo("valuable converted copy");
+        assertThat(Files.readString(backup)).isEqualTo("corrupt");
+        assertThat(journal.lastUpdatedItem).isNull();
+    }
+
+
+    @Test
+    void committedInPlaceOptimizationWithOriginalAlreadyPresentDoesNotDeleteBook() throws Exception {
+        UUID operationId = UUID.randomUUID();
+        Path sourceAndTarget = Files.writeString(tempDir.resolve("unchanged-original.epub"), "verified original");
+        Path redundantBackup = Files.writeString(tempDir.resolve("redundant.epub"), "verified original");
+        String hash = sha256(sourceAndTarget);
+        MemoryJournal journal = new MemoryJournal(operation(operationId), new OrganizationJournalItem(
+                operationId, UUID.randomUUID(), sourceAndTarget, "", sourceAndTarget, hash, hash, "OPTIMIZE",
+                OrganizationItemState.COMMITTED, redundantBackup, "", 0, 0, 0, 0.0, "{}", "", ""));
+
+        assertThat(new UndoLibraryOrganizationUseCase(journal, new LibraryOperationCoordinator(), List.of())
+                .undo(operationId)).isEqualTo(1);
+        assertThat(Files.readString(sourceAndTarget)).isEqualTo("verified original");
+        assertThat(redundantBackup).doesNotExist();
+        assertThat(journal.lastUpdatedItem.state()).isEqualTo(OrganizationItemState.ROLLED_BACK);
+    }
+
+    @Test
+    void committedArchiveRetryRecognizesRestoredOriginalAndCleansVerifiedBackup() throws Exception {
+        UUID operationId = UUID.randomUUID();
+        Path source = Files.writeString(tempDir.resolve("restored-original.fb2"), "verified original");
+        Path backup = Files.writeString(tempDir.resolve("stray-backup.fb2"), "verified original");
+        String hash = sha256(source);
+        MemoryJournal journal = new MemoryJournal(operation(operationId), new OrganizationJournalItem(
+                operationId, UUID.randomUUID(), source, "", null, hash, hash, "ARCHIVE_ORIGINAL",
+                OrganizationItemState.COMMITTED, backup, "", 0, 0, 0, 0.0, "{}", "", ""));
+
+        assertThat(new UndoLibraryOrganizationUseCase(journal, new LibraryOperationCoordinator(), List.of())
+                .undo(operationId)).isEqualTo(1);
+        assertThat(Files.readString(source)).isEqualTo("verified original");
+        assertThat(backup).doesNotExist();
+    }
+
     private CollectionLifecyclePort lifecycle(String id, Path root) {
         Collection current = new Collection(id, id, root, "collection.db", 0, null, null, null, null);
         return new CollectionLifecyclePort() {

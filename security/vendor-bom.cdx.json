@@ -1,0 +1,1839 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "metadata": {
+    "properties": [
+      {
+        "name": "myhomelib:scope",
+        "value": "Supplementary vendor files; combine with Maven SBOM and image scan. Native provenance unresolved."
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/epubcheck.jar",
+      "name": "epubcheck",
+      "version": "5.4.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2146665a124998dc6c908010ffe0d09dc4f4c8014f2c8fd6a1aa11f64c40ac93"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/epubcheck.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/org.w3c/epubcheck@5.4.0",
+      "group": "org.w3c",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/org/w3c/epubcheck/5.4.0/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/Saxon-HE-11.4.jar",
+      "name": "Saxon-HE",
+      "version": "11.4",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "42e35494dc2e6b5e97256ae7cdf2b7ce30439c352566f35de02bed3a06a2b169"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MPL-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/Saxon-HE-11.4.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-pom-dependency"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/net.sf.saxon/Saxon-HE@11.4",
+      "group": "net.sf.saxon",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/net/sf/saxon/Saxon-HE/11.4/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/accessors-smart-2.4.9.jar",
+      "name": "accessors-smart",
+      "version": "2.4.9",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "accdd5c7ac4c49b155890aaea1ffca2a9ccd5826b562dd95a99fc1887003e031"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/accessors-smart-2.4.9.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/net.minidev/accessors-smart@2.4.9",
+      "group": "net.minidev",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/net/minidev/accessors-smart/2.4.9/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/asm-9.3.jar",
+      "name": "asm",
+      "version": "9.3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1263369b59e29c943918de11d6d6152e2ec6085ce63e5710516f8c67d368e4bc"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/asm-9.3.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-label"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "upstream project; exact distribution build not independently verified"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/w3c/epubcheck"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/common-image-3.9.4.jar",
+      "name": "common-image",
+      "version": "3.9.4",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a5f41991d2492f28ce4f04b82abfffb89f5ffa9dfc87f4e58f10d526e5ba4a83"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/common-image-3.9.4.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.twelvemonkeys.common/common-image@3.9.4",
+      "group": "com.twelvemonkeys.common",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/common/common-image/3.9.4/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/common-io-3.9.4.jar",
+      "name": "common-io",
+      "version": "3.9.4",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "cc7c27947bf21a75fbc3d613e79bdd8619908e67b88cc7d73091a55876e4fd38"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/common-io-3.9.4.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.twelvemonkeys.common/common-io@3.9.4",
+      "group": "com.twelvemonkeys.common",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/common/common-io/3.9.4/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/common-lang-3.9.4.jar",
+      "name": "common-lang",
+      "version": "3.9.4",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a521b797d58f65b80fa8ca365d95911622408cab220fd5d852169805f640acbd"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/common-lang-3.9.4.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.twelvemonkeys.common/common-lang@3.9.4",
+      "group": "com.twelvemonkeys.common",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/common/common-lang/3.9.4/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/commons-codec-1.19.0.jar",
+      "name": "commons-codec",
+      "version": "1.19.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5c3881e4f556855e9c532927ee0c9dfde94cc66760d5805c031a59887070af5f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/commons-codec-1.19.0.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/commons-codec/commons-codec@1.19.0",
+      "group": "commons-codec",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/commons-codec/commons-codec/1.19.0/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/commons-compress-1.28.0.jar",
+      "name": "commons-compress",
+      "version": "1.28.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e1522945218456f3649a39bc4afd70ce4bd466221519dba7d378f2141a4642ca"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/commons-compress-1.28.0.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/org.apache.commons/commons-compress@1.28.0",
+      "group": "org.apache.commons",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-compress/1.28.0/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/commons-io-2.20.0.jar",
+      "name": "commons-io",
+      "version": "2.20.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "df90bba0fe3cb586b7f164e78fe8f8f4da3f2dd5c27fa645f888100ccc25dd72"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/commons-io-2.20.0.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/commons-io/commons-io@2.20.0",
+      "group": "commons-io",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/commons-io/commons-io/2.20.0/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/commons-lang3-3.18.0.jar",
+      "name": "commons-lang3",
+      "version": "3.18.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "4eeeae8d20c078abb64b015ec158add383ac581571cddc45c68f0c9ae0230720"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/commons-lang3-3.18.0.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/org.apache.commons/commons-lang3@3.18.0",
+      "group": "org.apache.commons",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-lang3/3.18.0/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/error_prone_annotations-2.36.0.jar",
+      "name": "error_prone_annotations",
+      "version": "2.36.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "77440e270b0bc9a249903c5a076c36a722c4886ca4f42675f2903a1c53ed61a5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/error_prone_annotations-2.36.0.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.google.errorprone/error_prone_annotations@2.36.0",
+      "group": "com.google.errorprone",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/google/errorprone/error_prone_annotations/2.36.0/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/failureaccess-1.0.3.jar",
+      "name": "failureaccess",
+      "version": "1.0.3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "cbfc3906b19b8f55dd7cfd6dfe0aa4532e834250d7f080bd8d211a3e246b59cb"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/failureaccess-1.0.3.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.google.guava/failureaccess@1.0.3",
+      "group": "com.google.guava",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/google/guava/failureaccess/1.0.3/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/galimatias-0.1.3.jar",
+      "name": "galimatias",
+      "version": "0.1.3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b37cbc4513584ed6aa1d8f7529ebe77abbe28c1f54ec63b0ff28a00a2d9d2a9a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/galimatias-0.1.3.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-pom-dependency"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/nu.validator/galimatias@0.1.3",
+      "group": "nu.validator",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/nu/validator/galimatias/0.1.3/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/guava-33.4.8-jre.jar",
+      "name": "guava",
+      "version": "33.4.8-jre",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f3d7f57f67fd622f4d468dfdd692b3a5e3909246c28017ac3263405f0fe617ed"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/guava-33.4.8-jre.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.google.guava/guava@33.4.8-jre",
+      "group": "com.google.guava",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/google/guava/guava/33.4.8-jre/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/httpclient5-5.1.3.jar",
+      "name": "httpclient5",
+      "version": "5.1.3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "28c759254f4e35319e078bb6ffea75676608dc12cb243b24fb3c8732522977fe"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/httpclient5-5.1.3.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/org.apache.httpcomponents.client5/httpclient5@5.1.3",
+      "group": "org.apache.httpcomponents.client5",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/client5/httpclient5/5.1.3/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/httpcore5-5.1.3.jar",
+      "name": "httpcore5",
+      "version": "5.1.3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f2bf2f2c7772169c9e30699719667ad30f9b46c4e9d7841907deb2d12d9923fe"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/httpcore5-5.1.3.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/org.apache.httpcomponents.core5/httpcore5@5.1.3",
+      "group": "org.apache.httpcomponents.core5",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5/5.1.3/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/httpcore5-h2-5.1.3.jar",
+      "name": "httpcore5-h2",
+      "version": "5.1.3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d0e78ba15aa8ebe77982b660ac4b09a95d6e035dbdbea762577dc1c8e2935807"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/httpcore5-h2-5.1.3.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/org.apache.httpcomponents.core5/httpcore5-h2@5.1.3",
+      "group": "org.apache.httpcomponents.core5",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5-h2/5.1.3/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/icu4j-77.1.jar",
+      "name": "icu4j",
+      "version": "77.1",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b3640b9f416a4411fd33c59abbeea8fd57d024c23e1819bf9673220a97499fe3"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Unicode-3.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/icu4j-77.1.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.ibm.icu/icu4j@77.1",
+      "group": "com.ibm.icu",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/ibm/icu/icu4j/77.1/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/imageio-core-3.9.4.jar",
+      "name": "imageio-core",
+      "version": "3.9.4",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "244843a7bc8ecf6efb20aa5f817e977addafb3f6b0ce70393b3e6d1109591fae"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/imageio-core-3.9.4.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.twelvemonkeys.imageio/imageio-core@3.9.4",
+      "group": "com.twelvemonkeys.imageio",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/imageio/imageio-core/3.9.4/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/imageio-jpeg-3.9.4.jar",
+      "name": "imageio-jpeg",
+      "version": "3.9.4",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "cdc95ecde53b012774790ead020879af6c76928c8d8e0be4b964528937ec1b7d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/imageio-jpeg-3.9.4.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.twelvemonkeys.imageio/imageio-jpeg@3.9.4",
+      "group": "com.twelvemonkeys.imageio",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/imageio/imageio-jpeg/3.9.4/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/imageio-metadata-3.9.4.jar",
+      "name": "imageio-metadata",
+      "version": "3.9.4",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "580a334f8e20c99ff9127fa9b0022b0f02a981b46e6b38e0df393052329a6324"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/imageio-metadata-3.9.4.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.twelvemonkeys.imageio/imageio-metadata@3.9.4",
+      "group": "com.twelvemonkeys.imageio",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/imageio/imageio-metadata/3.9.4/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/isorelax-20030108.jar",
+      "name": "isorelax",
+      "version": "20030108",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "3427152431cf7f967f92e69e5cac16147c5d8fb4b4e5a8a72f5291788efcff8c"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/isorelax-20030108.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-label"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "upstream project; exact distribution build not independently verified"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/w3c/epubcheck"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/j2objc-annotations-3.0.0.jar",
+      "name": "j2objc-annotations",
+      "version": "3.0.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "88241573467ddca44ffd4d74aa04c2bbfd11bf7c17e0c342c94c9de7a70a7c64"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/j2objc-annotations-3.0.0.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.google.j2objc/j2objc-annotations@3.0.0",
+      "group": "com.google.j2objc",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/google/j2objc/j2objc-annotations/3.0.0/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/jackson-annotations-2.18.9.jar",
+      "name": "jackson-annotations",
+      "version": "2.18.9",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "798c85b86e7420d0b4eb91e7b3e37d4bee673c61de37a616ba51a7539631e6b7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/jackson-annotations-2.18.9.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.18.9",
+      "group": "com.fasterxml.jackson.core",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.18.9/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/jackson-core-2.18.8.jar",
+      "name": "jackson-core",
+      "version": "2.18.8",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "ab865e39f01403598748b090a3bf528616e701913a71afc37a227daa0fabb4ae"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/jackson-core-2.18.8.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.18.8",
+      "group": "com.fasterxml.jackson.core",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-core/2.18.8/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/jackson-databind-2.18.9.jar",
+      "name": "jackson-databind",
+      "version": "2.18.9",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "71595a3f7ff58344ec0496a9f9ec9f623ef7b85b45402d88f1ca261f1bc4b42c"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/jackson-databind-2.18.9.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.9",
+      "group": "com.fasterxml.jackson.core",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.18.9/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/jing-20181222.jar",
+      "name": "jing",
+      "version": "20181222",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e5e13fa92d9461f37b7c3d760780ea07cca5b7947440f99ebb7608b5b168aaa3"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/jing-20181222.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-pom-dependency"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/org.relaxng/jing@20181222",
+      "group": "org.relaxng",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/org/relaxng/jing/20181222/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/json-path-2.8.0.jar",
+      "name": "json-path",
+      "version": "2.8.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9601707e95cd79fb98570a01ea8cfb857b5cde948744d6e0edf733c11002c95b"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/json-path-2.8.0.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-label"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "upstream project; exact distribution build not independently verified"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/w3c/epubcheck"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/json-path-assert-2.8.0.jar",
+      "name": "json-path-assert",
+      "version": "2.8.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5de6305e6e1df4f4c1ad603f1d7ac2394b474c767b8165701a492643ac34a56a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/json-path-assert-2.8.0.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-pom-dependency"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.jayway.jsonpath/json-path-assert@2.8.0",
+      "group": "com.jayway.jsonpath",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/jayway/jsonpath/json-path-assert/2.8.0/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/json-smart-2.4.10.jar",
+      "name": "json-smart",
+      "version": "2.4.10",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "70cab5e9488630dc631b1fc6e7fa550d95cddd19ba14db39ceca7cabfbd4e5ae"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/json-smart-2.4.10.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/net.minidev/json-smart@2.4.10",
+      "group": "net.minidev",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/net/minidev/json-smart/2.4.10/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/jspecify-1.0.0.jar",
+      "name": "jspecify",
+      "version": "1.0.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1fad6e6be7557781e4d33729d49ae1cdc8fdda6fe477bb0cc68ce351eafdfbab"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/jspecify-1.0.0.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-label"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "upstream project; exact distribution build not independently verified"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/w3c/epubcheck"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar",
+      "name": "listenablefuture",
+      "version": "9999.0-empty-to-avoid-conflict-with-guava",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b372a037d4230aa57fbeffdef30fd6123f9c0c2db85d0aced00c91b974f33f99"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/com.google.guava/listenablefuture@9999.0-empty-to-avoid-conflict-with-guava",
+      "group": "com.google.guava",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/sac-1.3.jar",
+      "name": "sac",
+      "version": "1.3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "003785669f921aafe4f137468dd20a01a36111e94fd7449f26c16e7924d82d23"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "W3C Software License"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/sac-1.3.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-pom-dependency"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/org.w3c.css/sac@1.3",
+      "group": "org.w3c.css",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/org/w3c/css/sac/1.3/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/slf4j-api-1.7.36.jar",
+      "name": "slf4j-api",
+      "version": "1.7.36",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d3ef575e3e4979678dc01bf1dcce51021493b4d11fb7f1be8ad982877c16a1c0"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/slf4j-api-1.7.36.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/org.slf4j/slf4j-api@1.7.36",
+      "group": "org.slf4j",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/1.7.36/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/slf4j-nop-1.7.36.jar",
+      "name": "slf4j-nop",
+      "version": "1.7.36",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c214958b07816cb4412b30c7bdbd4308ffdc6ba2a83767b8f3a9229cbd9274d6"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/slf4j-nop-1.7.36.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "embedded-maven-metadata"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/org.slf4j/slf4j-nop@1.7.36",
+      "group": "org.slf4j",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/org/slf4j/slf4j-nop/1.7.36/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/xercesImpl-2.12.2.jar",
+      "name": "xercesImpl",
+      "version": "2.12.2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "6fc991829af1708d15aea50c66f0beadcd2cfeb6968e0b2f55c1b0909883fe16"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/xercesImpl-2.12.2.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-pom-dependency"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+        }
+      ],
+      "purl": "pkg:maven/xerces/xercesImpl@2.12.2",
+      "group": "xerces",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://repo.maven.apache.org/maven2/xerces/xercesImpl/2.12.2/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/xml-apis-1.4.01.jar",
+      "name": "xml-apis",
+      "version": "1.4.01",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a840968176645684bb01aed376e067ab39614885f9eee44abe35a5f20ebe7fad"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0; SAX License; W3C License (see bundled notice)"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/xml-apis-1.4.01.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-label"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "upstream project; exact distribution build not independently verified"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/w3c/epubcheck"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/xmlresolver-4.4.3-data.jar",
+      "name": "xmlresolver",
+      "version": "4.4.3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a57db23d75c3580cb15eb6e1a854683f4579cfd265f5cf1011a6983d9aed0f1f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/xmlresolver-4.4.3-data.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-label"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "upstream project; exact distribution build not independently verified"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/w3c/epubcheck"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "tools/validators/epubcheck/lib/xmlresolver-4.4.3.jar",
+      "name": "xmlresolver",
+      "version": "4.4.3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9d642c96c3f6811e20a9f6cfee3ca15ec84ecb939f6be639fee065670773a7d1"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/validators/epubcheck/lib/xmlresolver-4.4.3.jar"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "distribution-label"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "upstream project; exact distribution build not independently verified"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/w3c/epubcheck"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "tools/converters/libmobi/mobitool.exe",
+      "name": "mobitool",
+      "version": "unknown (runtime not verified)",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5010513a6b77972fa7da4184501233b826b47528fe713f85938e09f33644cdb8"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "LGPL-3.0 (bundled notice; exact build requires review)"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/converters/libmobi/mobitool.exe"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "unverified-native-build"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "unresolved upstream build provenance"
+        }
+      ]
+    }
+  ]
+}

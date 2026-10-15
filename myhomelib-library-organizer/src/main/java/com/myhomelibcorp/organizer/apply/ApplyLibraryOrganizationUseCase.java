@@ -29,6 +29,8 @@ import static com.myhomelibcorp.organizer.apply.OrganizerFileIntegritySupport.*;
 import static com.myhomelibcorp.organizer.apply.OrganizerArchiveSupport.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
 import java.nio.file.*;
@@ -52,7 +54,11 @@ import java.util.function.Consumer;
 /** Crash-safe Apply phase. No permanent deletion is performed in v1; destructive paths go to quarantine. */
 @Service
 public final class ApplyLibraryOrganizationUseCase {
+    private static final Logger log = LoggerFactory.getLogger(ApplyLibraryOrganizationUseCase.class);
     private static final long MAX_OUTPUT_BYTES=4L*1024L*1024L*1024L;
+    // Skipped items do not change any book bytes, so their journal transitions can be
+    // recorded in bounded batches without deferring a filesystem commit checkpoint.
+    private static final int SKIP_JOURNAL_BATCH_SIZE = 128;
     private final List<BookConverter> converters;
     private final OrganizationJournalPort journal;
     private final LibraryOperationCoordinator operations;
@@ -102,9 +108,18 @@ public final class ApplyLibraryOrganizationUseCase {
         // closes the queued-worker race where a SWITCH could otherwise redirect catalog writes to another DB.
         LibraryOperationCoordinator.Lease lease = operations.acquireDetached(LibraryOperationType.ORGANIZE);
         try {
+            log.info("ORGANIZER_APPLY_START operationId={} actions={}", plan.operationId(), plan.actions().size());
             requireExpectedCollection(plan);
-            return applyUnderLease(plan, cancelled, progress, lease);
+            ApplyResult result = applyUnderLease(plan, cancelled, progress, lease);
+            log.info("ORGANIZER_APPLY_DONE operationId={} cancelled={} committed={} failed={}",
+                    plan.operationId(), result.cancelled(), result.committed(), result.failed());
+            return result;
+        } catch (CancellationException cancellation) {
+            lease.markCancelled("Cancelled during organizer preparation");
+            log.info("ORGANIZER_APPLY_CANCELLED operationId={} phase=preparation", plan.operationId());
+            return new ApplyResult(plan.operationId(), 0, 0, 0, 0, 0, 0, true, 0, 0L, 0L, 0L, List.of());
         } catch (Exception failure) {
+            log.error("ORGANIZER_APPLY_FAILED operationId=" + plan.operationId(), failure);
             lease.markFailed(failure);
             throw failure;
         } finally {
@@ -118,13 +133,22 @@ public final class ApplyLibraryOrganizationUseCase {
                                         LibraryOperationCoordinator.Lease lease) throws Exception {
         BooleanSupplier cancellation = cancelled == null ? () -> false : cancelled;
         Consumer<OrganizationApplyProgress> progressSink = progress == null ? ignored -> { } : progress;
-        preflight(plan);
+        long preflightStarted = System.nanoTime();
+        log.info("ORGANIZER_APPLY_PREFLIGHT_START actions={}", plan.actions().size());
+        preflight(plan, cancellation, progressSink);
+        checkCancelled(cancellation);
+        log.info("ORGANIZER_APPLY_PREFLIGHT_DONE actions={} durationMs={}", plan.actions().size(),
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - preflightStarted));
+        emit(progressSink, OrganizationApplyProgress.preparing(plan.actions().size(), plan.actions().size(), null, OrganizationApplyProgress.Phase.JOURNAL));
+        long journalStarted = System.nanoTime();
         var journalItems = plan.actions().stream()
                 .map(item -> journalItem(plan.operationId(), item, OrganizationItemState.PLANNED, item.expectedSourceSha256(), null, null))
                 .toList();
         journal.begin(new OrganizationJournalOperation(plan.operationId(), plan.policy().id(), plan.sourceRoot(),
                 plan.destinationRoot(), OrganizationOperationState.PLANNED, Instant.now(), null, "",
                 plan.expectedCollectionId()), journalItems);
+        log.info("ORGANIZER_APPLY_JOURNAL_INITIALIZED actions={} durationMs={}", plan.actions().size(),
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - journalStarted));
         int committed = 0;
         int converted = 0;
         int moved = 0;
@@ -136,14 +160,23 @@ public final class ApplyLibraryOrganizationUseCase {
         int optimizedEpubs = 0;
         long optimizationSourceBytes = 0L, optimizationResultBytes = 0L, optimizationSavedBytes = 0L;
         boolean wasCancelled = false;
-        emit(progressSink, new OrganizationApplyProgress(plan.actions().size(), 0, 0, 0, 0, 0, 0, 0, null));
+        List<OrganizationPlanItem> pendingSkips = new ArrayList<>(SKIP_JOURNAL_BATCH_SIZE);
+        emit(progressSink, OrganizationApplyProgress.preparing(plan.actions().size(), plan.actions().size(), null, OrganizationApplyProgress.Phase.RECOVERY));
+        long recoveryStarted = System.nanoTime();
         LibraryOperationWorkspace workspace = LibraryOperationWorkspace.create(plan.operationId());
         LibraryOperationCrashManifest crashManifest = LibraryOperationCrashManifest.create(plan, workspace.manifestPath());
+        log.info("ORGANIZER_APPLY_RECOVERY_INITIALIZED actions={} durationMs={}", plan.actions().size(),
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - recoveryStarted));
+        emit(progressSink, new OrganizationApplyProgress(plan.actions().size(), 0, 0, 0, 0, 0, 0, 0, null));
+        long applyItemsStarted = System.nanoTime();
         try (workspace) {
             journal.updateOperation(plan.operationId(), OrganizationOperationState.APPLYING, "");
             crashManifest.operationState(OrganizationOperationState.APPLYING, "");
             try (ParallelStaging staging = startParallelStaging(plan, workspace, crashManifest, cancellation)) {
                 for (OrganizationPlanItem item : plan.actions()) {
+                    long itemStarted = System.nanoTime();
+                    log.info("ORGANIZER_APPLY_ITEM_START operationId={} itemId={} action={} item={} total={}",
+                            plan.operationId(), item.itemId(), item.action(), processed + 1, plan.actions().size());
                     if (cancellation.getAsBoolean()) {
                         wasCancelled = true;
                         throw new CancellationException("Library organization cancelled");
@@ -155,10 +188,17 @@ public final class ApplyLibraryOrganizationUseCase {
                         staging.throwIfFailed();
                         preparedJob = staging.job(item.itemId());
                         attemptedSourceHash = preparedJob == null ? "" : preparedJob.sourceHash();
-                        if (attemptedSourceHash.isBlank()) attemptedSourceHash = itemSourceHash(item);
+                        if (attemptedSourceHash.isBlank()) {
+                            // SKIPPED actions do not inspect the bytes in Apply, so their
+                            // journal entry must not claim a freshly verified source digest.
+                            attemptedSourceHash = isNonMutatingAction(item.action())
+                                    ? "" : sourceHashValidatedDuringPreflight(item);
+                        }
                         switch (item.action()) {
                             case NOOP, KEEP_AS_IS, REVIEW_DUPLICATE, SKIP_UNSUPPORTED -> {
-                                transition(crashManifest, item, journalItem(plan.operationId(), item, OrganizationItemState.SKIPPED, attemptedSourceHash, null, null));
+                                pendingSkips.add(item);
+                                if (pendingSkips.size() >= SKIP_JOURNAL_BATCH_SIZE)
+                                    flushSkippedItems(plan.operationId(), pendingSkips, crashManifest);
                                 skipped++;
                             }
                             case DELETE_EXACT_DUPLICATE -> {
@@ -197,19 +237,35 @@ public final class ApplyLibraryOrganizationUseCase {
                             }
                             case CONFLICT, ERROR -> throw new IllegalStateException("Blocking action reached Apply: " + item.action());
                         }
-                        cleanupCommittedStaging(workspace, item, warnings);
+                        // Nothing is staged for non-mutating actions. Avoid three directory
+                        // enumerations per skipped book (particularly expensive for large plans).
+                        if (!isNonMutatingAction(item.action())) {
+                            cleanupCommittedStaging(workspace, item, warnings);
+                        }
                         processed++;
+                        long itemDurationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - itemStarted);
+                        if (itemDurationMs >= 2_000L) {
+                            log.info("ORGANIZER_APPLY_SLOW_ITEM action={} durationMs={} processed={} total={}",
+                                    item.action(), itemDurationMs, processed, plan.actions().size());
+                        }
+                        if (processed % 100 == 0 || processed == plan.actions().size()) {
+                            log.info("ORGANIZER_APPLY_ITEMS_PROGRESS processed={} total={} elapsedMs={} committed={} skipped={}",
+                                    processed, plan.actions().size(),
+                                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - applyItemsStarted), committed, skipped);
+                        }
                         emit(progressSink, new OrganizationApplyProgress(plan.actions().size(), processed, committed, converted, moved, skipped, conflicts, failed, item.sourcePath()));
                     } catch (CancellationException cancellationException) {
                         staging.abort();
                         throw cancellationException;
                     } catch (Exception failure) {
+                        log.error("ORGANIZER_APPLY_ITEM_FAILED operationId=" + plan.operationId() + " itemId=" + item.itemId() + " action=" + item.action(), failure);
                         OrganizationPlanItem stagedFailureItem = staging.fatalPlanItem();
                         staging.abort();
                         if (isConflictFailure(failure)) conflicts++; else failed++;
                         processed++;
                         if (stagedFailureItem == null || stagedFailureItem.itemId().equals(item.itemId())) {
-                            transition(crashManifest, item, failedSnapshot(plan.operationId(), item, attemptedSourceHash, failure));
+                            try { transition(crashManifest, item, failedSnapshot(plan.operationId(), item, attemptedSourceHash, failure)); }
+                            catch (Exception journalFailure) { failure.addSuppressed(journalFailure); }
                         }
                         Path failedPath = stagedFailureItem == null ? item.sourcePath() : stagedFailureItem.sourcePath();
                         emit(progressSink, new OrganizationApplyProgress(plan.actions().size(), processed, committed, converted, moved, skipped, conflicts, failed, failedPath));
@@ -217,12 +273,16 @@ public final class ApplyLibraryOrganizationUseCase {
                     }
                 }
             }
+            // Completion is recorded only once all pending non-mutating states are durable.
+            flushSkippedItems(plan.operationId(), pendingSkips, crashManifest);
             String completedSummary = summary(committed, converted, moved, skipped, conflicts, failed);
             journal.updateOperation(plan.operationId(), OrganizationOperationState.COMPLETED, completedSummary);
             crashManifest.operationState(OrganizationOperationState.COMPLETED, completedSummary);
             lease.markCompleted(completedSummary);
             workspace.cleanup();
         } catch (CancellationException cancelledFailure) {
+            try { flushSkippedItems(plan.operationId(), pendingSkips, crashManifest); }
+            catch (Exception flushFailure) { cancelledFailure.addSuppressed(flushFailure); }
             wasCancelled = true;
             lease.markCancelled("Library organization cancelled");
             String cancelledSummary = summary(committed, converted, moved, skipped, conflicts, failed);
@@ -230,9 +290,13 @@ public final class ApplyLibraryOrganizationUseCase {
             try { crashManifest.operationState(OrganizationOperationState.CANCELLED, cancelledSummary); }
             catch (Exception manifestFailure) { cancelledFailure.addSuppressed(manifestFailure); }
         } catch (Exception failure) {
+            // Any unflushed SKIPPED items are still PLANNED, which is crash-safe because
+            // none changed a book. Do not retry a failed batch here: doing so could
+            // overwrite the FAILED state recorded for its current item.
             lease.markFailed(failure);
             String failedSummary = summary(committed, converted, moved, skipped, conflicts, conflicts > 0 ? failed : Math.max(1, failed));
-            journal.updateOperation(plan.operationId(), OrganizationOperationState.FAILED, failedSummary);
+            try { journal.updateOperation(plan.operationId(), OrganizationOperationState.FAILED, failedSummary); }
+            catch (Exception journalFailure) { failure.addSuppressed(journalFailure); }
             try { crashManifest.operationState(OrganizationOperationState.FAILED, failedSummary + ": " + rootMessage(failure)); }
             catch (Exception manifestFailure) { failure.addSuppressed(manifestFailure); }
             throw failure;
@@ -240,6 +304,19 @@ public final class ApplyLibraryOrganizationUseCase {
         emit(progressSink, new OrganizationApplyProgress(plan.actions().size(), processed, committed, converted, moved, skipped, conflicts, failed, null));
         return new ApplyResult(plan.operationId(), committed, converted, moved, skipped, conflicts, failed, wasCancelled, optimizedEpubs,
                 optimizationSourceBytes, optimizationResultBytes, optimizationSavedBytes, warnings);
+    }
+
+    private void flushSkippedItems(UUID operationId, List<OrganizationPlanItem> pending,
+                                   LibraryOperationCrashManifest manifest) throws Exception {
+        if (pending.isEmpty()) return;
+        // Database state remains authoritative; an interrupted manifest append will force
+        // conservative recovery review instead of silently accepting an inconsistent state.
+        List<OrganizationJournalItem> snapshots = pending.stream()
+                .map(item -> journalItem(operationId, item, OrganizationItemState.SKIPPED, "", null, null))
+                .toList();
+        journal.updateItems(snapshots);
+        manifest.skippedItems(pending);
+        pending.clear();
     }
 
     private void requireExpectedCollection(OrganizationPlan plan) {
@@ -409,7 +486,7 @@ public final class ApplyLibraryOrganizationUseCase {
                 prepared.sourceHash(), prepared.targetHash(), null));
         boolean targetCommitted = false;
         try {
-            targetPublisher.publish(prepared.staged(), item.targetPath());
+            targetPublisher.publish(prepared.staged(), item.targetPath(), prepared.targetHash());
             targetCommitted = true;
             applyCatalog(item);
         } catch (Exception failure) {
@@ -440,7 +517,7 @@ public final class ApplyLibraryOrganizationUseCase {
         }
         boolean targetCommitted = false;
         try {
-            targetPublisher.publish(prepared.staged(), item.targetPath());
+            targetPublisher.publish(prepared.staged(), item.targetPath(), prepared.targetHash());
             targetCommitted = true;
             applyCatalog(item);
             if (!item.archiveEntry() && !inPlace) {
@@ -481,7 +558,7 @@ public final class ApplyLibraryOrganizationUseCase {
 
         boolean targetCommitted = false;
         try {
-            targetPublisher.publish(prepared.staged(), item.targetPath());
+            targetPublisher.publish(prepared.staged(), item.targetPath(), prepared.targetHash());
             targetCommitted = true;
             applyCatalog(item);
             if (originalBackup != null) {
@@ -516,6 +593,9 @@ public final class ApplyLibraryOrganizationUseCase {
         private final AtomicReference<StageFailure> fatalFailure = new AtomicReference<>();
         private final Map<UUID, PreparedJob> jobs = new LinkedHashMap<>();
         private final List<OrganizationPlanItem> candidates;
+        // Constant-time membership lookup: the previous linear scan ran once for
+        // every skipped/moved item whenever the plan included staged work.
+        private final Set<UUID> candidateIds;
         private final OrganizationPlan plan;
         private final LibraryOperationWorkspace workspace;
         private final LibraryOperationCrashManifest manifest;
@@ -528,6 +608,7 @@ public final class ApplyLibraryOrganizationUseCase {
         private ParallelStaging() {
             this.executor = null;
             this.candidates = List.of();
+            this.candidateIds = Set.of();
             this.plan = null;
             this.workspace = null;
             this.manifest = null;
@@ -543,6 +624,13 @@ public final class ApplyLibraryOrganizationUseCase {
             this.manifest = manifest;
             this.cancelled = cancelled;
             this.candidates = List.copyOf(candidates);
+            Set<UUID> ids = new HashSet<>(this.candidates.size());
+            for (OrganizationPlanItem candidate : this.candidates) {
+                if (!ids.add(candidate.itemId())) {
+                    throw new IllegalArgumentException("Duplicate staged organizer item ID: " + candidate.itemId());
+                }
+            }
+            this.candidateIds = Set.copyOf(ids);
             this.enabled = true;
             this.executor = new ThreadPoolExecutor(
                     parallelism, parallelism, 30L, TimeUnit.SECONDS,
@@ -565,7 +653,7 @@ public final class ApplyLibraryOrganizationUseCase {
         PreparedJob job(UUID itemId) throws Exception {
             throwIfFailed();
             PreparedJob job = jobs.get(itemId);
-            if (job == null && enabled && candidates.stream().anyMatch(item -> item.itemId().equals(itemId))) {
+            if (job == null && enabled && candidateIds.contains(itemId)) {
                 throw new IllegalStateException("Parallel staging window lost plan order for item " + itemId);
             }
             return job;
@@ -575,6 +663,7 @@ public final class ApplyLibraryOrganizationUseCase {
             if (job == null) throw new IllegalArgumentException("Prepared job is required");
             try {
                 PreparedArtifact artifact;
+                long lastWaitLog = System.nanoTime();
                 while (true) {
                     throwIfFailed();
                     if (cancelled.getAsBoolean()) {
@@ -585,7 +674,10 @@ public final class ApplyLibraryOrganizationUseCase {
                         artifact = job.future().get(200L, TimeUnit.MILLISECONDS);
                         break;
                     } catch (TimeoutException waiting) {
-                        // Poll cancellation while a converter/optimizer is still working.
+                        if (System.nanoTime() - lastWaitLog >= TimeUnit.SECONDS.toNanos(5)) {
+                            log.info("ORGANIZER_STAGING_WAIT operationId={} itemId={}", plan.operationId(), job.itemId());
+                            lastWaitLog = System.nanoTime();
+                        }
                     }
                 }
                 jobs.remove(job.itemId());
@@ -613,7 +705,7 @@ public final class ApplyLibraryOrganizationUseCase {
             if (nextCandidate >= candidates.size()) return;
             if (cancelled.getAsBoolean()) throw new CancellationException("Library organization cancelled");
             OrganizationPlanItem item = candidates.get(nextCandidate++);
-            String sourceHash = itemSourceHash(item);
+            String sourceHash = sourceHashValidatedDuringPreflight(item);
             transition(manifest, item, journalItem(plan.operationId(), item, OrganizationItemState.STAGING, sourceHash, null, null));
             BooleanSupplier taskCancellation = () -> abortRequested.get() || cancelled.getAsBoolean() || Thread.currentThread().isInterrupted();
             Future<PreparedArtifact> future = executor.submit(() -> {
@@ -730,16 +822,25 @@ public final class ApplyLibraryOrganizationUseCase {
     private void commitExisting(OrganizationPlanItem item,OrganizationPlan plan,LibraryOperationWorkspace workspace,LibraryOperationCrashManifest manifest,String sourceHash)throws Exception {
         transition(manifest,item,journalItem(plan.operationId(),item,OrganizationItemState.STAGING,sourceHash,null,null));
         Path staged=workspace.staged(item.itemId(),extension(item.targetPath()));
+        log.info("ORGANIZER_STAGE operationId={} itemId={} stage=COPY_START", plan.operationId(), item.itemId());
         copyAndVerify(item.sourcePath(),staged,sourceHash);
-        transition(manifest,item,journalItem(plan.operationId(),item,OrganizationItemState.VALIDATED,sourceHash,sha256(staged),null));
-        targetPublisher.publish(staged,item.targetPath());
-        String targetHash=sha256(item.targetPath());
-        if(!targetHash.equals(sourceHash))throw new IllegalStateException("Target hash mismatch after commit");
+        log.info("ORGANIZER_STAGE operationId={} itemId={} stage=COPY_VERIFIED", plan.operationId(), item.itemId());
+        // copyAndVerify already validated the staged bytes against sourceHash; the publisher
+        // verifies both the destination temporary copy and the final target before returning.
+        transition(manifest,item,journalItem(plan.operationId(),item,OrganizationItemState.VALIDATED,sourceHash,sourceHash,null));
+        log.info("ORGANIZER_STAGE operationId={} itemId={} stage=PUBLISH_START", plan.operationId(), item.itemId());
+        targetPublisher.publish(staged,item.targetPath(),sourceHash);
+        log.info("ORGANIZER_STAGE operationId={} itemId={} stage=PUBLISH_VERIFIED", plan.operationId(), item.itemId());
+        String targetHash=sourceHash;
         try {
+            log.info("ORGANIZER_STAGE operationId={} itemId={} stage=CATALOG_START", plan.operationId(), item.itemId());
             applyCatalog(item);
+            log.info("ORGANIZER_STAGE operationId={} itemId={} stage=CATALOG_DONE", plan.operationId(), item.itemId());
             if(!same(item.sourcePath(),item.targetPath())) {
                 ensureSourceUnchanged(item, sourceHash);
+                log.info("ORGANIZER_STAGE operationId={} itemId={} stage=SOURCE_REMOVE_START", plan.operationId(), item.itemId());
                 removeOwnedFile(item.sourcePath(), sourceHash, "Organizer source removal after move");
+                log.info("ORGANIZER_STAGE operationId={} itemId={} stage=SOURCE_REMOVE_DONE", plan.operationId(), item.itemId());
             }
         } catch(Exception failure) {
             rollbackCatalog(item, failure);
@@ -795,8 +896,12 @@ public final class ApplyLibraryOrganizationUseCase {
     }
 
     private String sha256Source(OrganizationPlanItem item) throws Exception {
+        return sha256Source(item, () -> false);
+    }
+
+    private String sha256Source(OrganizationPlanItem item, BooleanSupplier cancelled) throws Exception {
         requireSafeRegularFile(item.sourcePath(), "Organizer source is unsafe");
-        return item.archiveEntry() ? OrganizerArchiveSupport.sha256(item.sourcePath(), item.sourceEntry()) : sha256(item.sourcePath());
+        return item.archiveEntry() ? OrganizerArchiveSupport.sha256(item.sourcePath(), item.sourceEntry(), cancelled) : sha256(item.sourcePath(), cancelled);
     }
 
     private long sourceSize(OrganizationPlanItem item) throws Exception {
@@ -885,7 +990,8 @@ public final class ApplyLibraryOrganizationUseCase {
         transition(manifest,item,journalItem(plan.operationId(),item,OrganizationItemState.STAGING,sourceHash,null,null));
         Path root=plan.destinationRoot().resolve(quarantine?".myhomelib-trash":".myhomelib-originals").resolve(plan.operationId().toString());
         Path backup=backupOriginal(item.sourcePath(),root,item.itemId(),sourceHash);
-        String backupHash=sha256(backup);
+        // backupOriginal verifies the backup content before returning.
+        String backupHash=sourceHash;
         transition(manifest,item,journalItem(plan.operationId(),item,OrganizationItemState.VALIDATED,sourceHash,backupHash,backup));
         verifyRequiredHash(item.sourcePath(),sourceHash,"Source changed before relocation commit");
         removeOwnedFile(item.sourcePath(), sourceHash, "Organizer relocated-original source removal");
@@ -902,16 +1008,20 @@ public final class ApplyLibraryOrganizationUseCase {
     private Path backupOriginal(Path source,Path root,UUID itemId,String expectedHash)throws Exception{
         OrganizerPathSafety.createDirectoriesNoLinks(root,"Organizer recovery directory");
         Path target=root.resolve(itemId+"-"+source.getFileName());
-        verifyRequiredHash(source,expectedHash,"Source changed before recovery backup");
         if(Files.exists(target,LinkOption.NOFOLLOW_LINKS)){
+            verifyRequiredHash(source,expectedHash,"Source changed before recovery backup");
             verifyRequiredHash(target,expectedHash,"Existing recovery backup is unsafe or belongs to different content");
         }else{
+            // copyAndVerify already checks the source before writing the recovery copy.
             copyAndVerify(source,target,expectedHash);
         }
         verifyRequiredHash(source,expectedHash,"Source changed while recovery backup was created");
         return target;
     }
-    private void preflight(OrganizationPlan plan)throws Exception{
+    private void preflight(OrganizationPlan plan, BooleanSupplier cancelled, Consumer<OrganizationApplyProgress> progress)throws Exception{
+        checkCancelled(cancelled);
+        int checked = 0;
+        long lastLog = System.nanoTime();
         Set<Path> targets = new HashSet<>();
         List<Long> stagingEstimates = new ArrayList<>();
         long destinationNeed = 0L;
@@ -923,9 +1033,20 @@ public final class ApplyLibraryOrganizationUseCase {
         FileStore destinationStore = Files.getFileStore(destinationExisting);
 
         for (var item : plan.actions()) {
+            emit(progress, OrganizationApplyProgress.preparing(plan.actions().size(), checked++, item.sourcePath(), OrganizationApplyProgress.Phase.PREFLIGHT));
+            checkCancelled(cancelled);
+            if (System.nanoTime() - lastLog >= TimeUnit.SECONDS.toNanos(5)) {
+                log.info("ORGANIZER_PREFLIGHT_PROGRESS operationId={} checked={} total={}", plan.operationId(), checked - 1, plan.actions().size());
+                lastLog = System.nanoTime();
+            }
             Path canonicalSource = OrganizerPathSafety.canonicalExistingFile(item.sourcePath(), "Organizer source file");
             OrganizerPathSafety.requireUnderRoot(sourceRoot, canonicalSource, "Organizer source file");
-            verifyExpectedSource(item);
+            if (isNonMutatingAction(item.action())) {
+                // No bytes are read or changed for these actions. Preserve path safety, but
+                // avoid hashing entire libraries solely to record a SKIPPED journal state.
+                continue;
+            }
+            verifyExpectedSource(item, cancelled);
             long sourceBytes = sourceSize(item);
 
             if (writesTarget(item.action()) && item.targetPath() != null) {
@@ -945,6 +1066,8 @@ public final class ApplyLibraryOrganizationUseCase {
             destinationTransientNeed = Math.max(destinationTransientNeed, estimatedDestinationTransient(item, sourceBytes, destinationStore));
         }
 
+        emit(progress, OrganizationApplyProgress.preparing(plan.actions().size(), checked, null, OrganizationApplyProgress.Phase.PREFLIGHT));
+        checkCancelled(cancelled);
         long reserve = 64L * 1024L * 1024L;
         int parallelism = Math.max(1, Math.min(4, plan.policy().maxParallelConversions()));
         stagingEstimates.sort(Comparator.reverseOrder());
@@ -1041,6 +1164,10 @@ public final class ApplyLibraryOrganizationUseCase {
                     + " bytes, available " + usable + " bytes");
         }
     }
+    private boolean isNonMutatingAction(OrganizationAction action) {
+        return action == OrganizationAction.NOOP || action == OrganizationAction.KEEP_AS_IS
+                || action == OrganizationAction.REVIEW_DUPLICATE || action == OrganizationAction.SKIP_UNSUPPORTED;
+    }
     private boolean writesTarget(OrganizationAction action){return action==OrganizationAction.RENAME||action==OrganizationAction.MOVE||action==OrganizationAction.MOVE_AND_RENAME||action==OrganizationAction.EXTRACT||action==OrganizationAction.OPTIMIZE||action==OrganizationAction.OPTIMIZE_AND_MOVE||action==OrganizationAction.CONVERT||action==OrganizationAction.CONVERT_AND_MOVE;}
     private void transition(LibraryOperationCrashManifest manifest, OrganizationPlanItem item, OrganizationJournalItem snapshot) throws Exception {
         journal.updateItem(snapshot);
@@ -1083,16 +1210,42 @@ public final class ApplyLibraryOrganizationUseCase {
     }
     private String json(String value){return value==null?"":value.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\\n").replace("\r","\\r");}
     private String itemSourceHash(OrganizationPlanItem i)throws Exception{
-        String actual=sha256Source(i);
+        return itemSourceHash(i, () -> false);
+    }
+    private String itemSourceHash(OrganizationPlanItem i, BooleanSupplier cancelled)throws Exception{
+        String actual=sha256Source(i, cancelled);
         String expected=i.expectedSourceSha256();
         if(expected!=null&&!expected.isBlank()&&!expected.equalsIgnoreCase(actual))
             throw new IllegalStateException("Source changed since Analyze/Preview: "+sourceLabel(i));
         return actual;
     }
-    private void verifyExpectedSource(OrganizationPlanItem i)throws Exception{itemSourceHash(i);}
+    private void verifyExpectedSource(OrganizationPlanItem i, BooleanSupplier cancelled)throws Exception{itemSourceHash(i, cancelled);}
+    /**
+     * Preflight has already compared the entire source with the Analyze/Preview fingerprint.
+     * Subsequent file-changing actions verify the bytes again at their commit boundary;
+     * do not hash every source a redundant time merely to fill out a journal field.
+     */
+    private String sourceHashValidatedDuringPreflight(OrganizationPlanItem item) throws Exception {
+        String expected = item.expectedSourceSha256();
+        return expected == null || expected.isBlank() ? itemSourceHash(item) : expected;
+    }
     private boolean same(Path a,Path b){return a!=null&&b!=null&&a.toAbsolutePath().normalize().equals(b.toAbsolutePath().normalize());}
-    private String extension(Path p){String n=p.getFileName().toString();int d=n.lastIndexOf('.');return d<0?"":n.substring(d);}
-    private String fileStem(Path p){String n=p.getFileName().toString();int d=n.lastIndexOf('.');return d>0?n.substring(0,d):n;}
+    private String extension(Path p) {
+        String name = p.getFileName().toString();
+        if (name.toLowerCase(Locale.ROOT).endsWith(".fb2.zip")) {
+            return name.substring(name.length() - ".fb2.zip".length());
+        }
+        int dot = name.lastIndexOf('.');
+        return dot < 0 ? "" : name.substring(dot);
+    }
+    private String fileStem(Path p) {
+        String name = p.getFileName().toString();
+        if (name.toLowerCase(Locale.ROOT).endsWith(".fb2.zip")) {
+            return name.substring(0, name.length() - ".fb2.zip".length());
+        }
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
     private boolean isConflictFailure(Throwable failure){
         Throwable current=failure;while(current!=null){if(current instanceof FileAlreadyExistsException)return true;current=current.getCause();}return false;
     }

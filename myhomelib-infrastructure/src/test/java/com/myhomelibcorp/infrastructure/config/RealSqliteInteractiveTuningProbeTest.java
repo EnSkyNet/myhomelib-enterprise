@@ -63,12 +63,12 @@ class RealSqliteInteractiveTuningProbeTest {
                 for (Connection connection : held) connection.close();
             }
 
-            double pageMedianMs = medianMillis(rounds, () -> scalar(ds, """
+            double pageMedianMs = medianMillis("page", rounds, () -> scalar(ds, """
                     SELECT COUNT(*) FROM (
                       SELECT id,title FROM books WHERE deleted=0 ORDER BY title,id LIMIT 100
                     )
                     """));
-            double authorMedianMs = medianMillis(rounds, () -> scalar(ds, """
+            double authorMedianMs = medianMillis("author", rounds, () -> scalar(ds, """
                     SELECT COUNT(*) FROM (
                       SELECT a.id, COUNT(DISTINCT b.id)
                       FROM authors a
@@ -78,11 +78,11 @@ class RealSqliteInteractiveTuningProbeTest {
                       GROUP BY a.id ORDER BY a.id LIMIT 250
                     )
                     """));
-            double statisticsMedianMs = medianMillis(rounds, () -> scalar(ds, """
+            double statisticsMedianMs = medianMillis("statistics", rounds, () -> scalar(ds, """
                     SELECT COUNT(*), SUM(CASE WHEN local=1 THEN 1 ELSE 0 END), SUM(file_size)
                     FROM books WHERE deleted=0
                     """));
-            double parallelMedianMs = medianMillis(rounds, () -> parallelRound(ds));
+            double parallelMedianMs = medianMillis("parallel4", rounds, () -> parallelRound(ds));
 
             forceGc();
             long heapAfter = usedHeapBytes();
@@ -125,13 +125,14 @@ class RealSqliteInteractiveTuningProbeTest {
         }
     }
 
-    private static double medianMillis(int rounds, ThrowingLongSupplier action) throws Exception {
+    private static double medianMillis(String label, int rounds, ThrowingLongSupplier action) throws Exception {
         long[] micros = new long[rounds];
         for (int i = 0; i < rounds; i++) {
             long started = System.nanoTime();
             action.getAsLong();
             micros[i] = TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - started);
         }
+        System.out.printf(Locale.ROOT, "REAL_SQLITE_SAMPLES query=%s micros=%s%n", label, java.util.Arrays.toString(micros));
         java.util.Arrays.sort(micros);
         return micros[micros.length / 2] / 1000.0;
     }

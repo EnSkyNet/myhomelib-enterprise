@@ -7,11 +7,103 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class SafeFilePublicationTest {
     @TempDir Path temp;
+
+    @Test
+    void userSelectedConversionPublicationIsCompleteAndLeavesNoStagingFolders() throws Exception {
+        Path input = Files.writeString(temp.resolve("source.epub"), "published-book-bytes");
+        Path directory = Files.createDirectory(temp.resolve("selected"));
+        Path target = directory.resolve("converted.epub");
+
+        var snapshot = SafeFilePublication.publishFreshToUserSelectedPath(input, target, "conversion");
+
+        assertEquals("published-book-bytes", Files.readString(target));
+        assertEquals(Files.size(input), snapshot.size());
+        assertEquals(SafeFilePublication.sha256(input, "source"), snapshot.sha256());
+        assertEquals("published-book-bytes", Files.readString(input));
+        try (var entries = Files.list(directory)) {
+            assertEquals(java.util.List.of(target), entries.toList());
+        }
+    }
+
+    @Test
+    void userSelectedConversionPublicationAcceptsExplicitSymlinkedParentWhenAvailable() throws Exception {
+        Path source = Files.writeString(temp.resolve("source-alias.epub"), "converted");
+        Path actual = Files.createDirectory(temp.resolve("real-device-folder"));
+        Path alias = temp.resolve("chosen-link");
+        try {
+            Files.createSymbolicLink(alias, actual.getFileName());
+        } catch (UnsupportedOperationException | java.io.IOException unsupported) {
+            return;
+        }
+        Path target = alias.resolve("converted.epub");
+
+        var snapshot = SafeFilePublication.publishFreshToUserSelectedPath(source, target, "conversion");
+
+        assertEquals("converted", Files.readString(actual.resolve("converted.epub")));
+        assertEquals(Files.size(source), snapshot.size());
+        try (var entries = Files.list(actual)) {
+            assertEquals(java.util.List.of(actual.resolve("converted.epub")), entries.toList());
+        }
+    }
+
+    @Test
+    void userSelectedConversionPublicationNeverOverwritesExistingBook() throws Exception {
+        Path input = Files.writeString(temp.resolve("source.epub"), "new book");
+        Path directory = Files.createDirectory(temp.resolve("selected"));
+        Path target = Files.writeString(directory.resolve("converted.epub"), "old book");
+
+        assertThrows(FileAlreadyExistsException.class,
+                () -> SafeFilePublication.publishFreshToUserSelectedPath(input, target, "conversion"));
+
+        assertEquals("old book", Files.readString(target));
+        try (var entries = Files.list(directory)) {
+            assertEquals(java.util.List.of(target), entries.toList());
+        }
+    }
+
+    @Test
+    void concurrentConversionPublishersNeverOverwriteTheWinner() throws Exception {
+        Path one = Files.writeString(temp.resolve("first.epub"), "FIRST EPUB");
+        Path two = Files.writeString(temp.resolve("second.epub"), "SECOND EPUB");
+        Path dir = Files.createDirectory(temp.resolve("concurrent-conversion"));
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            for (int i = 0; i < 12; i++) {
+                Path target = dir.resolve("book-" + i + ".epub");
+                CountDownLatch ready = new CountDownLatch(2);
+                CountDownLatch start = new CountDownLatch(1);
+                var first = pool.submit(() -> publishFromGate(one, target, ready, start));
+                var second = pool.submit(() -> publishFromGate(two, target, ready, start));
+                assertTrue(ready.await(5, TimeUnit.SECONDS));
+                start.countDown();
+                boolean wonFirst = first.get(10, TimeUnit.SECONDS);
+                boolean wonSecond = second.get(10, TimeUnit.SECONDS);
+                assertNotEquals(wonFirst, wonSecond, "Exactly one fresh publication may win");
+                assertEquals(wonFirst ? "FIRST EPUB" : "SECOND EPUB", Files.readString(target));
+            }
+        }
+        assertEquals("FIRST EPUB", Files.readString(one));
+        assertEquals("SECOND EPUB", Files.readString(two));
+    }
+
+    private static boolean publishFromGate(Path source, Path target, CountDownLatch ready,
+                                          CountDownLatch start) throws Exception {
+        ready.countDown();
+        if (!start.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("Publisher timeout");
+        try {
+            SafeFilePublication.publishFreshToUserSelectedPath(source, target, "conversion");
+            return true;
+        } catch (FileAlreadyExistsException alreadyExists) {
+            return false;
+        }
+    }
 
     @Test
     void moveNoReplaceNeverOverwritesExistingTarget() throws Exception {

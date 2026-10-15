@@ -1,11 +1,19 @@
 package com.myhomelibcorp.reader.format.zip;
 
+import com.myhomelibcorp.reader.api.BookSource;
 import com.myhomelibcorp.reader.api.FileBookSource;
 import com.myhomelibcorp.reader.api.ParseOptions;
 import com.myhomelibcorp.reader.api.ReaderDocument;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.Charset;
+import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -49,6 +57,30 @@ class ZipParserTest {
 
         assertThat(document.metadata().title()).isEqualTo("ZIP MOBI");
         assertThat(document.text().getFullText()).contains("Chapter", "Nested MOBI text");
+    }
+
+    @Test
+    void nonRepeatableSourceIsReadOnceWhenZipEntryNamesNeedLegacyEncoding() throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ZipOutputStream out = new ZipOutputStream(bytes, Charset.forName("CP866"))) {
+            add(out, "Книга.fb2", fb2("Назва", "Розділ", "Вміст книги."));
+        }
+        AtomicInteger opens = new AtomicInteger();
+        BookSource source = new BookSource() {
+            @Override public InputStream openStream() throws IOException {
+                if (opens.incrementAndGet() != 1) throw new IOException("Cannot reopen remote book");
+                return new ByteArrayInputStream(bytes.toByteArray());
+            }
+            @Override public OptionalLong size() { return OptionalLong.of(bytes.size()); }
+            @Override public String name() { return "cp866.zip"; }
+            @Override public String extension() { return "zip"; }
+            @Override public String id() { return "single-read-source"; }
+        };
+
+        ReaderDocument result = new ZipParser().parse(source, ParseOptions.withoutImages());
+
+        assertThat(result.text().getFullText()).contains("Вміст книги.");
+        assertThat(opens.get()).isEqualTo(1);
     }
 
     private static void add(ZipOutputStream out, String name, byte[] bytes) throws Exception {

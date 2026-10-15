@@ -313,61 +313,83 @@ public class BackupRestoreService {
         refuseExistingRecoveryPath(previousDb, "previous Restore database");
         refuseExistingRecoveryPath(pendingMarker, "Restore pending marker");
 
-        String sourceHash = SafeFilePublication.sha256(safeSource, "Restore source database");
-        try (var input = Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS)) {
-            SafeFilePublication.copyFresh(input, stagedDb, "Restore staged database");
-        }
-        String stagedHash = SafeFilePublication.sha256(stagedDb, "Restore staged database");
-        if (!sourceHash.equalsIgnoreCase(stagedHash)) {
-            throw new IOException("Staged Restore database SHA-256 mismatch");
-        }
-        if (Files.size(stagedDb) <= 0) throw new IOException("Staged database is empty");
-        collectionBackupPort.validateDatabaseFile(stagedDb);
-
-        // Durable transaction intent. The marker itself is fresh; an existing marker indicates
-        // unresolved recovery state and must never be overwritten by a new Restore.
-        RestoreRecoveryFiles.markPending(safeTarget);
-        String markerHash = SafeFilePublication.sha256(pendingMarker, "Restore pending marker");
-
-        collectionBackupPort.closeCurrentCollection();
-        boolean previousExisted = Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS);
-        String previousHash = null;
-        String installedHash = null;
+        // The staging file is created before the live database is closed. Validation can fail
+        // here (invalid SQLite, failed copy, wrong SHA), so its cleanup must not be scoped
+        // only to the subsequent swap block.
+        String stagedHash = null;
         try {
-            if (previousExisted) {
-                previousHash = SafeFilePublication.sha256(safeTarget, "Restore previous live database");
+            String sourceHash = SafeFilePublication.sha256(safeSource, "Restore source database");
+            try (var input = Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS)) {
+                SafeFilePublication.copyFresh(input, stagedDb, "Restore staged database");
             }
-            SqliteSidecarSupport.delete(safeTarget);
-            if (previousExisted) {
-                SafeFilePublication.moveNoReplace(safeTarget, previousDb, "Restore previous database detach");
-                String detachedHash = SafeFilePublication.sha256(previousDb, "Restore previous database");
-                if (!previousHash.equalsIgnoreCase(detachedHash)) {
-                    throw new IOException("Previous Restore database changed while being detached");
-                }
+            stagedHash = SafeFilePublication.sha256(stagedDb, "Restore staged database");
+            if (!sourceHash.equalsIgnoreCase(stagedHash)) {
+                throw new IOException("Staged Restore database SHA-256 mismatch");
             }
-            SafeFilePublication.moveNoReplace(stagedDb, safeTarget, "Restore candidate install");
-            installedHash = SafeFilePublication.sha256(safeTarget, "Restore installed candidate");
-            if (!stagedHash.equalsIgnoreCase(installedHash)) {
-                throw new IOException("Installed Restore database SHA-256 mismatch");
-            }
+            if (Files.size(stagedDb) <= 0) throw new IOException("Staged database is empty");
+            collectionBackupPort.validateDatabaseFile(stagedDb);
 
-            collectionBackupPort.openCollection(collection);
-            databaseMigrationPort.migrateCurrentCollection();
-            collectionBackupPort.validateDatabaseFile(safeTarget);
-            return new RestoreSwap(safeTarget, previousDb, pendingMarker, previousExisted,
-                    previousHash, installedHash, markerHash, stagedHash);
-        } catch (Exception installFailure) {
-            RestoreSwap failedSwap = new RestoreSwap(safeTarget, previousDb, pendingMarker, previousExisted,
-                    previousHash, installedHash, markerHash, stagedHash);
-            rollbackDatabaseSwap(collection, failedSwap, installFailure);
-            throw installFailure;
+            // Durable transaction intent. The marker itself is fresh; an existing marker indicates
+            // unresolved recovery state and must never be overwritten by a new Restore.
+            RestoreRecoveryFiles.markPending(safeTarget);
+            String markerHash = SafeFilePublication.sha256(pendingMarker, "Restore pending marker");
+
+            // Closing the collection may fail before any database file is detached. In that
+            // case the transaction has not begun: remove only our own pending marker so that
+            // a later restore is not blocked by a stale intent record. Never remove a marker
+            // that another process has replaced while close was running.
+            try {
+                collectionBackupPort.closeCurrentCollection();
+            } catch (Exception closeFailure) {
+                try {
+                    SafeFilePublication.removeIfOwned(pendingMarker, markerHash,
+                            "Restore pending marker cleanup after failed close");
+                } catch (IOException cleanupFailure) {
+                    closeFailure.addSuppressed(cleanupFailure);
+                }
+                throw closeFailure;
+            }
+            boolean previousExisted = Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS);
+            String previousHash = null;
+            String installedHash = null;
+            try {
+                if (previousExisted) {
+                    previousHash = SafeFilePublication.sha256(safeTarget, "Restore previous live database");
+                }
+                SqliteSidecarSupport.delete(safeTarget);
+                if (previousExisted) {
+                    SafeFilePublication.moveNoReplace(safeTarget, previousDb, "Restore previous database detach");
+                    String detachedHash = SafeFilePublication.sha256(previousDb, "Restore previous database");
+                    if (!previousHash.equalsIgnoreCase(detachedHash)) {
+                        throw new IOException("Previous Restore database changed while being detached");
+                    }
+                }
+                SafeFilePublication.moveNoReplace(stagedDb, safeTarget, "Restore candidate install");
+                installedHash = SafeFilePublication.sha256(safeTarget, "Restore installed candidate");
+                if (!stagedHash.equalsIgnoreCase(installedHash)) {
+                    throw new IOException("Installed Restore database SHA-256 mismatch");
+                }
+
+                collectionBackupPort.openCollection(collection);
+                databaseMigrationPort.migrateCurrentCollection();
+                collectionBackupPort.validateDatabaseFile(safeTarget);
+                return new RestoreSwap(safeTarget, previousDb, pendingMarker, previousExisted,
+                        previousHash, installedHash, markerHash, stagedHash);
+            } catch (Exception installFailure) {
+                RestoreSwap failedSwap = new RestoreSwap(safeTarget, previousDb, pendingMarker, previousExisted,
+                        previousHash, installedHash, markerHash, stagedHash);
+                rollbackDatabaseSwap(collection, failedSwap, installFailure);
+                throw installFailure;
+            }
         } finally {
-            if (Files.exists(stagedDb, LinkOption.NOFOLLOW_LINKS)) {
+            if (stagedHash != null && Files.exists(stagedDb, LinkOption.NOFOLLOW_LINKS)) {
                 try { SafeFilePublication.removeIfOwned(stagedDb, stagedHash, "Restore staged database cleanup"); }
                 catch (IOException cleanupError) {
                     log.warn("Cannot safely delete staged Restore file {}; preserving it as evidence", stagedDb, cleanupError);
                 }
             }
+            // An interrupted copy that has never been fingerprinted is deliberately retained.
+            // Deleting it would make assumptions about ownership of an unverified file.
         }
     }
 

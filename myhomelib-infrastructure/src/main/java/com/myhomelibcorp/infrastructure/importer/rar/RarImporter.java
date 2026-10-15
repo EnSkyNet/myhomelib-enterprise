@@ -16,6 +16,8 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -25,6 +27,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Queue;
+import java.util.concurrent.CancellationException;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.stream.Stream;
@@ -93,6 +96,7 @@ public class RarImporter implements BookImporterPort {
         private final Path archivePath;
         private final Archive archive;
         private final Iterator<FileHeader> headers;
+        private final boolean requiresSequentialConsumption;
         private final Queue<Book> queue = new ArrayDeque<>();
         private boolean finished;
         private int entryCount;
@@ -102,6 +106,11 @@ public class RarImporter implements BookImporterPort {
             this.archivePath = archivePath;
             this.archive = archive;
             this.headers = headers.iterator();
+            // Junrar internally extracts preceding members to a NullOutputStream when
+            // a solid member is requested. If any member/header marks the archive solid,
+            // process skipped members explicitly so that hidden decompression is bounded.
+            this.requiresSequentialConsumption = (archive.getMainHeader() != null && archive.getMainHeader().isSolid())
+                    || headers.stream().anyMatch(FileHeader::isSolid);
         }
 
         @Override public boolean hasNext() { fill(); return !queue.isEmpty(); }
@@ -116,16 +125,25 @@ public class RarImporter implements BookImporterPort {
                 if (!headers.hasNext()) { close(); return; }
                 FileHeader header = headers.next();
                 if (++entryCount > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
-                    log.warn("RAR contains too many entries: {}", archivePath);
                     close();
-                    return;
+                    throw new IllegalStateException("RAR exceeds archive entry safety limit: " + archivePath);
                 }
                 String name = header.getFileName();
+                if (requiresSequentialConsumption && header.getFullUnpackSize() > ArchiveSafetyLimits.MAX_ENTRY_BYTES) {
+                    close();
+                    throw new IllegalStateException("RAR entry exceeds per-entry decompression safety limit: " + name);
+                }
                 try {
-                    if (header.isDirectory() || !ArchiveImportSupport.isSafeEntryName(name) || ArchiveImportSupport.isNestedArchive(name)) continue;
+                    if (header.isDirectory() || !ArchiveImportSupport.isSafeEntryName(name) || ArchiveImportSupport.isNestedArchive(name)) {
+                        discardSolidEntry(header);
+                        continue;
+                    }
                     BookImporterPort importer;
                     try { importer = importerRegistry.findImporter(ArchiveImportSupport.importerProbePath(name)); }
-                    catch (Exception unsupported) { continue; }
+                    catch (Exception unsupported) {
+                        discardSolidEntry(header);
+                        continue;
+                    }
 
                     try (InputStream in = archive.getInputStream(header)) {
                         totalDecompressedBytes = ArchiveEntryImportSupport.materializeAndImport(
@@ -137,12 +155,34 @@ public class RarImporter implements BookImporterPort {
                                 queue);
                     }
                 } catch (ArchiveEntryImportSupport.CumulativeArchiveLimitException fatal) {
-                    log.warn("RAR safety limit reached for {}: {}", archivePath, fatal.getMessage());
                     close();
-                    return;
-                } catch (Exception e) {
-                    log.warn("Пропущено RAR entry {}: {}", name, e.getMessage());
+                    throw new IllegalStateException("RAR exceeds cumulative decompression safety limit: " + archivePath, fatal);
+                } catch (IOException unreadable) {
+                    // An I/O failure can corrupt the remainder of an archive. The caller
+                    // must roll back previously imported books, not report a partial success.
+                    close();
+                    throw new UncheckedIOException("Не вдалося прочитати RAR " + archivePath, unreadable);
+                } catch (CancellationException interrupted) {
+                    close();
+                    throw interrupted;
+                } catch (RuntimeException entryFailure) {
+                    log.warn("Пропущено пошкоджений RAR entry {}: {}", name, entryFailure.getMessage());
                 }
+            }
+        }
+
+        private void discardSolidEntry(FileHeader header) throws IOException {
+            if (!requiresSequentialConsumption) return;
+            try (InputStream in = archive.getInputStream(header)) {
+                totalDecompressedBytes = ArchiveEntryImportSupport.discardEntry(in::read, totalDecompressedBytes);
+            } catch (CancellationException interrupted) {
+                throw interrupted;
+            } catch (RuntimeException extractionFailure) {
+                // A failed skip in a solid archive can leave Junrar needing to skip the
+                // same member internally on the next extraction. Abort instead of
+                // treating it as a recoverable malformed book.
+                throw new IOException("Failed to safely consume skipped solid RAR entry: "
+                        + header.getFileName(), extractionFailure);
             }
         }
 

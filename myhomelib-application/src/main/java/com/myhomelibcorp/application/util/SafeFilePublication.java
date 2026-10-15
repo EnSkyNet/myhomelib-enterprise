@@ -74,31 +74,47 @@ public final class SafeFilePublication {
         if (parent == null || !Files.isDirectory(parent)) {
             throw new IOException(role + " parent is not an existing directory: " + parent);
         }
-        if (Files.exists(absolute, LinkOption.NOFOLLOW_LINKS)) {
-            throw new FileAlreadyExistsException(absolute.toString());
+        // Explicitly chosen directories may contain a symlink/junction in their original path.
+        // Resolve it before creating our private staging space; never follow a link in a
+        // catalogue-controlled path or through the final filename.
+        Path realParent = requireUserSelectedDirectory(parent, role + " destination parent");
+        Path finalTarget = realParent.resolve(absolute.getFileName());
+        if (Files.exists(finalTarget, LinkOption.NOFOLLOW_LINKS)) {
+            throw new FileAlreadyExistsException(finalTarget.toString());
         }
-
-        try (InputStream in = Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS);
-             OutputStream out = Files.newOutputStream(absolute, StandardOpenOption.CREATE_NEW,
-                     StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
-            byte[] buffer = new byte[1024 * 1024];
-            for (int read; (read = in.read(buffer)) >= 0; ) {
-                if (read > 0) out.write(buffer, 0, read);
+        Path workspace = createPrivateWorkspace(realParent, ".mhl-conversion-publish-", role + " workspace");
+        try {
+            Path pending = workspace.resolve("pending");
+            try (InputStream in = Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS)) {
+                copyFresh(in, pending, role + " staged publication");
             }
-            out.flush();
-        } catch (FileAlreadyExistsException race) {
-            throw new IOException(role + " target appeared while publishing: " + absolute, race);
+            FileSnapshot sourceAfter = snapshot(safeSource, role + " source verification");
+            FileSnapshot pendingSnapshot = snapshot(pending, role + " staged verification");
+            if (!sourceBefore.equals(sourceAfter) || !sourceBefore.equals(pendingSnapshot)) {
+                throw new IOException(role + " staged source changed during publication");
+            }
+            // Prefer atomic hard-link publication. On volumes that reject hard links
+            // with ERROR_INVALID_FUNCTION, use a fresh non-overwriting copy instead.
+            // That fallback can briefly expose incomplete *new* output, so the
+            // resulting file is verified before any catalog mutation or success.
+            SafeFilePrimitives.publishFreshNoReplace(pending, finalTarget, role);
+            FileSnapshot published = snapshotUserSelectedFile(finalTarget, role + " published file");
+            if (!sourceBefore.equals(published)) {
+                // A foreign replacement must never be removed by rollback.
+                removeUserSelectedFileIfOwned(finalTarget, pendingSnapshot.sha256(),
+                        role + " failed-publication rollback");
+                throw new IOException(role + " published bytes differ from staged source");
+            }
+            return published;
+        } finally {
+            // Successful publication must not be reported as failed solely because a
+            // disposable hidden staging directory could not be removed (Windows locks).
+            try { cleanupPrivateWorkspace(workspace); }
+            catch (IOException cleanup) {
+                System.getLogger(SafeFilePublication.class.getName()).log(System.Logger.Level.WARNING,
+                        "PUBLICATION_CLEANUP_FAILED temporary={0} error={1}", workspace.getFileName(), cleanup.getClass().getSimpleName());
+            }
         }
-
-        FileSnapshot sourceAfter = snapshot(safeSource, role + " source verification");
-        if (!sourceBefore.equals(sourceAfter)) {
-            throw new IOException(role + " staged source changed during publication");
-        }
-        FileSnapshot published = snapshotUserSelectedFile(absolute, role + " published file");
-        if (!sourceBefore.equals(published)) {
-            throw new IOException(role + " published bytes differ from staged source");
-        }
-        return published;
     }
 
     /** Snapshot of a fresh leaf under an explicitly user-selected directory; parent links are allowed. */

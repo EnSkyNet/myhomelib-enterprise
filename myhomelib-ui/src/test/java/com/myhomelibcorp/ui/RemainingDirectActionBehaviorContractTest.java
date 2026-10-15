@@ -94,7 +94,7 @@ class RemainingDirectActionBehaviorContractTest {
         var f = UiActionTestSupport.constructWithMocks(StatisticsController.class);
         var executor = f.dependency(UiBackgroundExecutor.class);
         CompletableFuture<Object> pending = new CompletableFuture<>();
-        doReturn(pending).when(executor).submitCollectionScoped(eq(LibraryOperationType.EDIT), any(Callable.class));
+        doReturn(pending).when(executor).submitCollectionScopedAwait(eq(LibraryOperationType.EDIT), any(Callable.class));
         for (String field : List.of("booksCount", "authorsCount", "seriesCount", "genresCount", "languagesCount",
                 "publishersCount", "totalSize", "duplicatesCount", "missingCoversCount", "localBooksCount",
                 "remoteBooksCount", "readBooksCount", "unreadBooksCount", "favoritesCount", "deletedBooksCount",
@@ -104,7 +104,7 @@ class RemainingDirectActionBehaviorContractTest {
 
         UiActionTestSupport.invoke(f.instance(), "onRefresh");
 
-        verify(executor).submitCollectionScoped(eq(LibraryOperationType.EDIT), any(Callable.class));
+        verify(executor).submitCollectionScopedAwait(eq(LibraryOperationType.EDIT), any(Callable.class));
     }
 
     @Test

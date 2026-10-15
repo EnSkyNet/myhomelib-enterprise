@@ -125,7 +125,29 @@ class BackupRestoreServiceSafetyTest {
                 new BackupRestoreService.RestoreOptions(backup, false, false, true)));
 
         assertEquals("old", Files.readString(f.targetDb));
+        assertFalse(Files.exists(RestoreRecoveryFiles.staged(f.targetDb)),
+                "An invalid staged snapshot must not block the next restore attempt");
         verify(f.backupPort, never()).closeCurrentCollection();
+    }
+
+    @Test
+    void validationFailureBeforeSwapDoesNotPoisonNextRestore() throws Exception {
+        Fixture f = new Fixture(temp);
+        Path backup = Files.createDirectories(temp.resolve("backup-retry"));
+        Files.writeString(backup.resolve("library.db"), "new");
+        doThrow(new IOException("first validation failed")).doNothing().doNothing()
+                .when(f.backupPort).validateDatabaseFile(any(Path.class));
+
+        assertThrows(IOException.class, () -> f.service.restore(
+                new BackupRestoreService.RestoreOptions(backup, false, false, true)));
+        assertFalse(Files.exists(RestoreRecoveryFiles.staged(f.targetDb)));
+        assertEquals("old", Files.readString(f.targetDb));
+
+        BackupRestoreService.RestoreResult retry = f.service.restore(
+                new BackupRestoreService.RestoreOptions(backup, false, false, true));
+        assertTrue(retry.isSuccess());
+        assertEquals("new", Files.readString(f.targetDb));
+        assertFalse(Files.exists(RestoreRecoveryFiles.staged(f.targetDb)));
     }
 
     @Test
@@ -165,6 +187,46 @@ class BackupRestoreServiceSafetyTest {
         assertTrue(RestoreRecoveryFiles.isPending(f.targetDb));
         assertTrue(error.getSuppressed().length > 0, "failed ownership rollback must be surfaced as suppressed evidence");
         verify(f.backupPort, times(3)).closeCurrentCollection();
+    }
+
+    @Test
+    void failedCollectionCloseBeforeSwapClearsOwnedMarkerAndAllowsRetry() throws Exception {
+        Fixture f = new Fixture(temp);
+        Path backup = Files.createDirectories(temp.resolve("backup-close-retry"));
+        Files.writeString(backup.resolve("library.db"), "new");
+        doThrow(new IllegalStateException("database handle still busy")).doNothing()
+                .when(f.backupPort).closeCurrentCollection();
+
+        IllegalStateException first = assertThrows(IllegalStateException.class, () -> f.service.restore(
+                new BackupRestoreService.RestoreOptions(backup, false, false, true)));
+        assertTrue(first.getMessage().contains("database handle still busy"));
+        assertEquals("old", Files.readString(f.targetDb));
+        assertFalse(RestoreRecoveryFiles.isPending(f.targetDb));
+        assertFalse(Files.exists(RestoreRecoveryFiles.previous(f.targetDb)));
+        assertFalse(Files.exists(RestoreRecoveryFiles.staged(f.targetDb)));
+
+        BackupRestoreService.RestoreResult retry = f.service.restore(
+                new BackupRestoreService.RestoreOptions(backup, false, false, true));
+        assertTrue(retry.isSuccess());
+        assertEquals("new", Files.readString(f.targetDb));
+    }
+
+    @Test
+    void failedCollectionCloseMustNotDeleteReplacedPendingMarker() throws Exception {
+        Fixture f = new Fixture(temp);
+        Path backup = Files.createDirectories(temp.resolve("backup-close-marker-race"));
+        Files.writeString(backup.resolve("library.db"), "new");
+        doAnswer(invocation -> {
+            Files.writeString(RestoreRecoveryFiles.pending(f.targetDb), "FOREIGN MARKER");
+            throw new IllegalStateException("failed close");
+        }).when(f.backupPort).closeCurrentCollection();
+
+        IllegalStateException error = assertThrows(IllegalStateException.class, () -> f.service.restore(
+                new BackupRestoreService.RestoreOptions(backup, false, false, true)));
+        assertEquals("failed close", error.getMessage());
+        assertTrue(error.getSuppressed().length > 0, "marker ownership failure must be visible");
+        assertEquals("FOREIGN MARKER", Files.readString(RestoreRecoveryFiles.pending(f.targetDb)));
+        assertEquals("old", Files.readString(f.targetDb));
     }
 
     @Test

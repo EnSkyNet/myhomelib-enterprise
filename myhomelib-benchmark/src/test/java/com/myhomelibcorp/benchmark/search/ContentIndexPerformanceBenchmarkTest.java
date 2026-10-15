@@ -54,15 +54,27 @@ class ContentIndexPerformanceBenchmarkTest {
             service.rebuild("benchmark", corpus);
             long rebuildMicros = (System.nanoTime() - rebuildStarted) / 1_000L;
 
+            int warmupRuns = Math.min(3, Math.max(1, runs));
+            for (int i = 0; i < warmupRuns; i++) {
+                service.search(ContentIndexQuery.allBooks("benchmark", "commonterm", 100));
+                service.health("benchmark");
+            }
+
             long[] warmMicros = new long[Math.max(1, runs)];
+            long[] healthMicros = new long[warmMicros.length];
             long totalHits = 0L;
             for (int i = 0; i < warmMicros.length; i++) {
                 long started = System.nanoTime();
                 var page = service.search(ContentIndexQuery.allBooks("benchmark", "commonterm", 100));
                 warmMicros[i] = (System.nanoTime() - started) / 1_000L;
                 totalHits = page.total();
+
+                started = System.nanoTime();
+                service.health("benchmark");
+                healthMicros[i] = (System.nanoTime() - started) / 1_000L;
             }
             Arrays.sort(warmMicros);
+            Arrays.sort(healthMicros);
             var health = service.health("benchmark");
             boolean catalogueUnchanged = Arrays.equals(sentinel, Files.readAllBytes(catalogueSentinel));
 
@@ -73,11 +85,12 @@ class ContentIndexPerformanceBenchmarkTest {
 
             Path parent = output.toAbsolutePath().normalize().getParent();
             if (parent != null) Files.createDirectories(parent);
-            String csv = "generated_at,documents,rebuild_us,documents_per_second,warm_runs,warm_min_us,warm_median_us,warm_max_us,total_hits,index_size_bytes,catalogue_sentinel_unchanged\n"
+            String csv = "generated_at,documents,rebuild_us,documents_per_second,warmup_runs,warm_runs,warm_min_us,warm_median_us,warm_max_us,health_min_us,health_median_us,health_max_us,total_hits,index_size_bytes,catalogue_sentinel_unchanged\n"
                     + Instant.now() + ',' + documents + ',' + rebuildMicros + ','
                     + String.format(Locale.ROOT, "%.2f", documents * 1_000_000.0 / Math.max(1L, rebuildMicros)) + ','
-                    + warmMicros.length + ',' + warmMicros[0] + ',' + warmMicros[warmMicros.length / 2] + ','
-                    + warmMicros[warmMicros.length - 1] + ',' + totalHits + ',' + health.sizeBytes() + ',' + catalogueUnchanged + '\n';
+                    + warmupRuns + ',' + warmMicros.length + ',' + warmMicros[0] + ',' + warmMicros[warmMicros.length / 2] + ','
+                    + warmMicros[warmMicros.length - 1] + ',' + healthMicros[0] + ',' + healthMicros[healthMicros.length / 2] + ','
+                    + healthMicros[healthMicros.length - 1] + ',' + totalHits + ',' + health.sizeBytes() + ',' + catalogueUnchanged + '\n';
             Files.writeString(output, csv, StandardCharsets.UTF_8);
         } finally {
             if (oldDataDir == null) System.clearProperty("myhomelib.dataDir");

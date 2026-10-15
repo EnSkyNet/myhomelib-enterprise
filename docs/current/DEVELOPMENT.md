@@ -1,5 +1,7 @@
 # MYHOMELIB — Development and Validation
 
+**Latest extraction follow-up, 2026-10-12:** 53 related tests passed in the completed 2026-10-11 Maven run (48 extraction/index tests and five AppPaths tests), with zero failures/errors/skips. Seven new EPUB metadata cases first reproduced five failures on the prior source. Final-source architecture and offline release checks passed on 2026-10-12. After workspace recovery, the same tested changes were reapplied; Maven was not rerun during final packaging. Original raw Surefire/Maven logs were lost; recorded output, provenance, diff and current static-check logs are in `docs/release/epub-package-budget-evidence/`. Full root validation of this patch has not been executed. The real descendant-process test remains unchanged and requires a host exposing process metadata. See `docs/release/CONTENT-EXTRACTION-MEMORY-AUDIT-2026-10-11-UA.md` for commands and scope. Earlier full-root counts below are historical.
+
 **Version:** 8.0.0  
 **Java:** 21
 

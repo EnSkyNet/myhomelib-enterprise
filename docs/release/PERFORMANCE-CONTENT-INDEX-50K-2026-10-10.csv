@@ -1,0 +1,2 @@
+generated_at,documents,rebuild_us,documents_per_second,warmup_runs,warm_runs,warm_min_us,warm_median_us,warm_max_us,health_min_us,health_median_us,health_max_us,total_hits,index_size_bytes,catalogue_sentinel_unchanged
+2026-10-10T10:27:53.588605345Z,50000,1919658,26046.31,3,31,4510,6393,12017,1469,1897,3877,50000,2938518,true

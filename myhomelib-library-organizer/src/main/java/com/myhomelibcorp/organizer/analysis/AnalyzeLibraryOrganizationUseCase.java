@@ -511,7 +511,8 @@ public final class AnalyzeLibraryOrganizationUseCase {
             case "epub" -> ext.equals("epub");
             case "pdf" -> ext.equals("pdf");
             case "fb2" -> ext.equals("fb2");
-            case "fb2_zip", "book_archive", "zip" -> ext.equals("zip");
+            case "fb2_zip" -> ext.equals("zip") || ext.equals("fb2zip");
+            case "book_archive", "zip" -> ext.equals("zip");
             case "docx" -> ext.equals("docx");
             case "odt" -> ext.equals("odt");
             case "html" -> ext.equals("html") || ext.equals("htm");

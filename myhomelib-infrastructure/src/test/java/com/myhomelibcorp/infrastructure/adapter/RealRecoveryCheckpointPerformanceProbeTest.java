@@ -34,6 +34,8 @@ class RealRecoveryCheckpointPerformanceProbeTest {
             when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);
             CollectionBackupAdapter adapter = new CollectionBackupAdapter(manager);
             Collection collection = mock(Collection.class);
+            when(collection.getId()).thenReturn("real-checkpoint-probe");
+            when(manager.getCurrentCollection()).thenReturn(collection);
 
             long started = System.nanoTime();
             adapter.createRecoveryCheckpoint(collection, checkpoint);

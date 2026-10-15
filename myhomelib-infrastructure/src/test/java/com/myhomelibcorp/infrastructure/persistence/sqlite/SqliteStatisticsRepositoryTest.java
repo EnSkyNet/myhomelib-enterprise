@@ -77,6 +77,28 @@ class SqliteStatisticsRepositoryTest {
         assertThat(stats.getMissingCoversCount()).isEqualTo(1);
     }
 
+    @Test
+    void countsDistinctSeriesFromActiveBookRowsInsteadOfEmptySeriesLookup() {
+        // A typical INPX import fills books.series while leaving the lookup table empty.
+        jdbc.update("INSERT INTO books(id,title,file_name,series,deleted) VALUES (?,?,?,?,?)",
+                "a", "A", "a.fb2", "Chronicles", 0);
+        jdbc.update("INSERT INTO books(id,title,file_name,series,deleted) VALUES (?,?,?,?,?)",
+                "b", "B", "b.fb2", " chronicles ", 0);
+        jdbc.update("INSERT INTO books(id,title,file_name,series,deleted) VALUES (?,?,?,?,?)",
+                "c", "C", "c.fb2", "Another", null);
+        jdbc.update("INSERT INTO books(id,title,file_name,series,deleted) VALUES (?,?,?,?,?)",
+                "d", "D", "d.fb2", "Deleted Only", 1);
+        jdbc.update("INSERT INTO books(id,title,file_name,series,deleted) VALUES (?,?,?,?,?)",
+                "e", "E", "e.fb2", "  ", 0);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM series", Long.class)).isZero();
+
+        repository.refreshStatistics();
+        assertThat(repository.getStatistics().getSeriesCount()).isEqualTo(2);
+        // Ensure the persisted cache row, not only a transient local variable, is correct.
+        assertThat(jdbc.queryForObject("SELECT series_count FROM library_statistics WHERE id=1", Long.class))
+                .isEqualTo(2L);
+    }
+
     private void insertBook(String id, Integer deleted, String language, String publisher,
                             long fileSize, int local, int progress, String coverHash) {
         jdbc.update("""

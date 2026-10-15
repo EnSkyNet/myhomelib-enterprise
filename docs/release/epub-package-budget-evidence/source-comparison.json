@@ -1,0 +1,28 @@
+{
+  "baseline_archive_sha256": "a46697c22ffb3955ec8d2ae5bbe0cfd36f9811a87fcd71c4b9ce57976429c44f",
+  "final_source_sha256_manifest": "CONTENT-EXTRACTION-SOURCE-SHA256-2026-10-12.json",
+  "changed_existing_source_files": [
+    "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/EpubContentExtractor.java",
+    "myhomelib-bootstrap/src/test/java/com/myhomelibcorp/AppPathsLaunchDirTest.java"
+  ],
+  "added_source_files": [
+    "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/content/EpubPackageBudgetTest.java"
+  ],
+  "all_other_existing_source_files_identical": true,
+  "missing_baseline_files": [],
+  "source_hashes": {
+    "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/EpubContentExtractor.java": {
+      "before": "e0367c7ed4ae52f5ea34b6975f366d325dd8cfa067599b9ac3785824e2b4718c",
+      "after": "35de0ce1e92a8eb1644646cc221998fb206db896414e5715cd036612c4d41e35"
+    },
+    "myhomelib-bootstrap/src/test/java/com/myhomelibcorp/AppPathsLaunchDirTest.java": {
+      "before": "3a358a9087f3368371cdbb29368c94176f4db2a6eb36c22ecb9a0527757ada47",
+      "after": "8117e7fdaf106181196824ce61f1bb6173cdb7d01caeb1964f4840413e4966c7"
+    },
+    "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/content/EpubPackageBudgetTest.java": {
+      "before": null,
+      "after": "ed69a2fa8d67b11cc8ec690996f9b3af083550067d3c415932cee08a23013fa8"
+    }
+  },
+  "date": "2026-10-12"
+}

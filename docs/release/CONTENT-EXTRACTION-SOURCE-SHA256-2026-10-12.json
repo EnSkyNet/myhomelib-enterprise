@@ -1,0 +1,23 @@
+{
+  "myhomelib-application/src/main/java/com/myhomelibcorp/application/content/ExtractedContent.java": "2115a9bfcd6e3a1628193e6ffe61f95dacfc39e4297e2c2381a18eb038ece88e",
+  "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/ContentDocumentBuilder.java": "bd1ff442fe2789dfdb94ff1ace8c9941d21e3074d561667599ea505f27aa6d38",
+  "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/NormalizedTextBuffer.java": "a69ada08df6cfdfc9f96543bf6aa1ae4f1e3fe68a7842499cd3471605733bf22",
+  "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/Fb2ContentExtractor.java": "2b2cb5a91c17cd618accec2db6273dd80ab5b741aac1876ffea5a025ad678f00",
+  "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/EpubContentExtractor.java": "35de0ce1e92a8eb1644646cc221998fb206db896414e5715cd036612c4d41e35",
+  "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/TxtContentExtractor.java": "afee5a4966febf16be7ebe86fe8f12c72626166beebfe414c54f47b1c5419d1e",
+  "myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/Utf8Validator.java": "e5a194cc1e039a5a28b2044bf47440e704d2b8c8ded736095d4bcd7e4ff80ee4",
+  "myhomelib-shared/src/main/java/com/myhomelibcorp/shared/text/TextStreamDecoder.java": "c7235f0b04a19d4cbf4f1b63b5309d0f59e6c7c4644f21e0813b882a6d199fe4",
+  "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/contentindex/LuceneContentIndexService.java": "172c1c55f664b56e73ba494a71fa3b70bf6da490b8d625e3fc8802aabf959105",
+  "myhomelib-application/src/test/java/com/myhomelibcorp/application/content/ExtractedContentTest.java": "189b2ab0b58201399179404f6c91166349c95bc76136956a69da9e17bfc64019",
+  "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/content/ContentDocumentBuilderTest.java": "7784e571fcc43e234112499fe84c5f0484c701736e63c26b3e26846af57d24be",
+  "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/content/ContentExtractionResourceRegressionTest.java": "b6c8576f79214997d8d5c3f272fc022323e323ac48fd7a36753c458172c5982d",
+  "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/content/ContentExtractorContractTest.java": "cdce9dbdf34f4b72319af7cc546a1dbc24f974f9909dfe60e646019cb8c829cd",
+  "myhomelib-shared/src/test/java/com/myhomelibcorp/shared/text/TextStreamDecoderTest.java": "fb40d4f60799c933b061689bf8269524ca0be6db41b6f75d1e59fa167a09bb2b",
+  "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/contentindex/LuceneContentIndexServiceIntegrationTest.java": "6c2a55ef2cfb2e0bbad72f67afa7a6fb012d8aef94f59855265d785ab652982b",
+  "myhomelib-benchmark/src/main/java/com/myhomelibcorp/benchmark/content/ContentExtractionMemoryProbe.java": "2a45aedbbba5f66561e010741038106e70c65a2f75cd5e1963e71618d8c20df5",
+  "tools/content-extraction-memory-probe.py": "7d17c9694634334b107281183965cbcf5991df4fba3dbf9cfdcffc537c245feb",
+  "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/content/EpubTitleBudgetTest.java": "3970294ddcf0d5999ff40c1ceb27a29621f064381d5128d7641a09558bda0d38",
+  "docs/release/epub-title-budget-evidence/TitleBudgetProbe.java": "aab3725395c52222389735312065f4baa6fae827e35c080d1d441d589cad6578",
+  "myhomelib-bootstrap/src/test/java/com/myhomelibcorp/AppPathsLaunchDirTest.java": "8117e7fdaf106181196824ce61f1bb6173cdb7d01caeb1964f4840413e4966c7",
+  "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/content/EpubPackageBudgetTest.java": "ed69a2fa8d67b11cc8ec690996f9b3af083550067d3c415932cee08a23013fa8"
+}

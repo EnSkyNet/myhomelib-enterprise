@@ -39,4 +39,52 @@ class NoLinkPathSafetyTest {
         assertThat(NoLinkPathSafety.nearestExistingAncestor(existing.resolve("c/d")))
                 .isEqualTo(existing.toAbsolutePath().normalize());
     }
+
+    @Test
+    void freshCopyMustNeverAcceptItsSourceAsDestination() throws Exception {
+        Path book = Files.writeString(tempDir.resolve("book.fb2"), "precious content");
+        assertThatThrownBy(() -> NoLinkPathSafety.copyFreshFile(book, book, "book copy"))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("onto itself");
+        assertThat(Files.readString(book)).isEqualTo("precious content");
+    }
+
+    @Test
+    void freshCopyRefusesExistingDestinationAndPreservesBothFiles() throws Exception {
+        Path source = Files.writeString(tempDir.resolve("new.fb2"), "new data");
+        Path existing = Files.writeString(tempDir.resolve("old.fb2"), "existing book");
+        assertThatThrownBy(() -> NoLinkPathSafety.copyFreshFile(source, existing, "book copy"))
+                .isInstanceOf(java.nio.file.FileAlreadyExistsException.class);
+        assertThat(Files.readString(source)).isEqualTo("new data");
+        assertThat(Files.readString(existing)).isEqualTo("existing book");
+    }
+
+    @Test
+    void freshCopyCreatesCompleteIndependentFile() throws Exception {
+        Path source = Files.writeString(tempDir.resolve("source.fb2"), "original data");
+        Path target = tempDir.resolve("target.fb2");
+        assertThat(NoLinkPathSafety.copyFreshFile(source, target, "book copy")).isEqualTo(target);
+        Files.writeString(source, "changed afterwards");
+        assertThat(Files.readString(target)).isEqualTo("original data");
+    }
+
+    @Test
+    void workspaceCleanupVisitsManyNestedFilesWithoutFollowingSymbolicLinks() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("mhl-private"));
+        for (int folder = 0; folder < 20; folder++) {
+            Path child = Files.createDirectory(workspace.resolve("part-" + folder));
+            for (int file = 0; file < 20; file++) {
+                Files.writeString(child.resolve("entry-" + file), "data");
+            }
+        }
+        Path outside = Files.writeString(tempDir.resolve("outside.fb2"), "untouched");
+        try {
+            Files.createSymbolicLink(workspace.resolve("external-link"), outside);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException | SecurityException unsupported) {
+            // Filesystems without symlink support still exercise streamed cleanup.
+        }
+        NoLinkPathSafety.cleanupPrivateWorkspace(workspace, "workspace");
+        assertThat(workspace).doesNotExist();
+        assertThat(Files.readString(outside)).isEqualTo("untouched");
+    }
 }

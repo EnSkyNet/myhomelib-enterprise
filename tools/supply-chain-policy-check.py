@@ -38,6 +38,9 @@ def check_pom() -> None:
     need(dcp is not None, "dependency-check profile missing OWASP plugin")
     threshold = float(dcp.findtext(".//m:failBuildOnCVSS", namespaces=NS) or "99")
     need(threshold <= 7.0, f"dependency policy too weak: failBuildOnCVSS={threshold}")
+    need(dcp.findtext(".//m:failOnError", namespaces=NS) == "true", "SCA errors must block the build")
+    directories = {n.text for n in dcp.findall(".//m:scanSet/m:fileSet/m:directory", NS)}
+    need({"tools", "dist"}.issubset(directories), "SCA must scan vendor tools and final app-image")
     suppression = dcp.findtext(".//m:suppressionFile", namespaces=NS) or ""
     need("security/dependency-check-suppressions.xml" in suppression, "dependency scan must use reviewed suppression file")
 
@@ -69,6 +72,14 @@ def read(path: str) -> str:
 def check_workflows() -> None:
     pr = read(".github/workflows/ci-pr.yml")
     rel = read(".github/workflows/ci-release.yml")
+    source = read(".github/workflows/source-integrity.yml")
+    for text, label in ((pr, "PR"), (rel, "release")):
+        need("uses: ./.github/workflows/source-integrity.yml" in text and "needs: source-integrity" in text, f"{label} requires source integrity")
+        need("--sca-report target/dependency-check-report.json" in text and "vendor-bom.cdx.json" in text, f"{label} requires actual vendor scan coverage")
+    for gate in ("project-hygiene-check.py", "empty-catch-growth-check.py", "source-archive-policy-test.py", "source-archive-smoke.py", "vendor-binary-inventory-test.py", "source_archive_policy.py --tree ."):
+        need(gate in source, f"source integrity job missing {gate}")
+    need("ContentExtractionResourceRegressionTest" in pr and "LibraryOrganizerUiServiceActionBehaviorContractTest" in pr, "PR requires extraction and organizer regressions")
+    need("--image-root dist" in rel and rel.index("Scan final app-image before removal") < rel.index("Remove intermediate app-image"), "scan final image before removal")
     perf = read(".github/workflows/performance-baseline.yml")
     codeql = read(".github/workflows/codeql.yml")
     connected = read(".github/workflows/github-acceptance.yml")

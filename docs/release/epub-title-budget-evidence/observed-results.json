@@ -1,0 +1,67 @@
+{
+  "date": "2026-10-11",
+  "provenance": "Recorded results of the completed earlier executions in this task; original JVM logs and Surefire XML were not retained. This JSON is a factual execution summary, not a raw benchmark log.",
+  "baseline_zip_sha256": "1818a0b3e1b2a8877790920208d1119f10f22593e0a9a6a173be5a523c8378b9",
+  "baseline_setup": "Exact prior ContentDocumentBuilder, NormalizedTextBuffer and EpubContentExtractor compiled from the baseline ZIP and prepended to the same runtime classpath; remaining production classes unchanged.",
+  "jvm_args": [
+    "-Xms16m",
+    "-Xmx64m",
+    "-XX:+UseG1GC"
+  ],
+  "runs_per_variant": 1,
+  "synthetic_input": {
+    "format": "EPUB",
+    "zip_compression": "STORED",
+    "source_bytes": 8389538,
+    "source_title_units": 8388608,
+    "spine_references": 16,
+    "body": "<p>x</p>"
+  },
+  "results": [
+    {
+      "variant": "before",
+      "heap_mib": 64,
+      "source_bytes": 8389538,
+      "source_title_units": 8388608,
+      "spine_references": 16,
+      "exit_code": 1,
+      "peak_rss_kib": 112288,
+      "out_of_memory": true,
+      "failed_extraction": false,
+      "title_limit_message": false
+    },
+    {
+      "variant": "after",
+      "heap_mib": 64,
+      "source_bytes": 8389538,
+      "source_title_units": 8388608,
+      "spine_references": 16,
+      "exit_code": 0,
+      "peak_rss_kib": 54248,
+      "out_of_memory": false,
+      "failed_extraction": true,
+      "title_limit_message": true
+    }
+  ],
+  "interpretation": "Oversized-input rejection avoids the demonstrated JVM OOM; this is not a comparison of two successful extractions and does not establish a RAM-reduction percentage or latency SLA.",
+  "title_regressions": {
+    "before": {
+      "tests": 3,
+      "failures": 2,
+      "errors": 0
+    },
+    "after": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0
+    },
+    "exact_aggregate_boundary_units": 1048576
+  },
+  "full_root": {
+    "status": "NOT_CONFIRMED",
+    "explicitly_excluded_method": "ProcessExecutionSupportTest#timeoutTerminatesDescendantProcessTree",
+    "failure": "AppPathsLaunchDirTest#jpackageRuntimeUsesNativeProcessDirectoryInsteadOfUserDir: NoSuchElementException from ProcessHandle.current().info().command().orElseThrow()",
+    "desktop_setup": "Full desktop JRE and native JavaFX dependencies installed for the completed attempt; Reader and UI passed before Bootstrap failed.",
+    "source_tests_modified_to_bypass_environment": false
+  }
+}

@@ -12,8 +12,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.io.IOException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.nio.file.Files;
+import java.nio.file.FileVisitResult;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
@@ -28,7 +36,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Stream;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipFile;
 
@@ -109,7 +116,7 @@ final class CollectionMaintenanceAnalyzer {
                         referencedPhysical.add(FileProcessor.pathKey(physical));
                     }
 
-                    if (!Files.isRegularFile(physical, LinkOption.NOFOLLOW_LINKS)) {
+                    if (fileProcessor.isProvenMissing(physical)) {
                         missingFiles++;
                         issues.sample(MaintenanceIssueType.MISSING_FILE, new MaintenanceIssue(
                                 issueId(MaintenanceIssueType.MISSING_FILE, book.id()),
@@ -140,7 +147,7 @@ final class CollectionMaintenanceAnalyzer {
                                     messageKey,
                                     arguments,
                                     safe(validation.error()),
-                                    true,
+                                    validation.error() == null, // Unreadable archive != proven missing entry.
                                     false));
                         }
                     }
@@ -160,6 +167,13 @@ final class CollectionMaintenanceAnalyzer {
         long duplicateBooks = countDuplicateBooks(jdbc);
         sampleDuplicateBooks(jdbc, issues);
 
+        // A user may switch collections while a background maintenance scan is running.
+        // Never return a report for a datasource that is no longer the active one.
+        if (collectionManager.getCurrentJdbcTemplate() != jdbc
+                || collectionManager.getCurrentCollection() != collection) {
+            throw new IllegalStateException("Active collection changed during maintenance analysis");
+        }
+
         boolean truncated = issues.truncated()
                 || missingFiles > issues.countSamples(MaintenanceIssueType.MISSING_FILE)
                 || invalidArchiveReferences > issues.countSamples(MaintenanceIssueType.INVALID_ARCHIVE_REFERENCE)
@@ -173,6 +187,48 @@ final class CollectionMaintenanceAnalyzer {
                 scannedBooks, orphanScan.scannedFiles(), missingFiles, invalidArchiveReferences,
                 orphanScan.orphanFiles(), orphanedAuthors, orphanedGenres, duplicateBooks,
                 truncated, issues.items());
+    }
+
+    /**
+     * Re-evaluate a repair against the row in the SAME transaction that will change it.
+     * The previous UI report is never sufficient evidence for clearing a local flag:
+     * a file/ZIP entry may have appeared, or its catalog path may have changed.
+     * Unexpected filesystem failures abort the repair instead of implying absence.
+     */
+    boolean isPhysicalIssueStillRepairable(Collection collection, Connection connection,
+                                           MaintenanceIssue issue) throws SQLException {
+        if (issue.type() != MaintenanceIssueType.MISSING_FILE
+                && issue.type() != MaintenanceIssueType.INVALID_ARCHIVE_REFERENCE) {
+            return true;
+        }
+        String sql = """
+                SELECT id, title, file_name, folder, archive_entry, collection_root, lib_id
+                  FROM books
+                 WHERE id=? AND COALESCE(local,0)=1 AND COALESCE(deleted,0)=0
+                """;
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setString(1, issue.target());
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (!rs.next()) return false;
+                BookPhysicalRef ref = new BookPhysicalRef(rs.getString("id"), rs.getString("title"),
+                        rs.getString("file_name"), rs.getString("folder"), rs.getString("archive_entry"),
+                        rs.getString("collection_root"), rs.getString("lib_id"));
+                FileProcessor processor = new FileProcessor(collection, new IssueCollector());
+                Path physical = processor.physicalPath(ref);
+                if (physical == null) return false;
+                if (issue.type() == MaintenanceIssueType.MISSING_FILE) {
+                    return processor.isProvenMissing(physical);
+                }
+                // An unreadable ZIP is not evidence that an entry is missing. Likewise,
+                // a changed catalog row pointing to an ordinary file is not a ZIP issue.
+                if (!notBlank(ref.archiveEntry()) || !processor.archiveValidator.isZipLike(physical)
+                        || processor.isProvenMissing(physical)) {
+                    return false;
+                }
+                ArchiveValidation check = processor.archiveValidator.validate(physical, ref.archiveEntry());
+                return !check.valid() && check.error() == null;
+            }
+        }
     }
 
     Collection requireActive(String collectionId) {
@@ -430,14 +486,40 @@ final class CollectionMaintenanceAnalyzer {
                 Path safeRoot = SafeFilePublication.requireSafeDirectoryPath(
                         normalizedRoot, "Maintenance collection root");
                 requireSafeExistingParents(normalizedCandidate, safeRoot);
-                if (Files.exists(normalizedCandidate, LinkOption.NOFOLLOW_LINKS)) {
-                    SafeFilePublication.requireSafeRegularFile(normalizedCandidate, "Maintenance book resource");
+                try {
+                    BasicFileAttributes attrs = Files.readAttributes(normalizedCandidate,
+                            BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                    if (!attrs.isRegularFile()) {
+                        throw new IOException("Maintenance resource is not a regular file: " + normalizedCandidate);
+                    }
+                } catch (NoSuchFileException missing) {
+                    // A missing leaf is a valid candidate for the MISSING_FILE diagnosis.
+                    return normalizedCandidate;
                 }
             } catch (IOException | SecurityException unsafePath) {
-                log.warn("Maintenance could not safely resolve book path {}", normalizedCandidate, unsafePath);
-                return null;
+                throw new IllegalStateException("Cannot safely verify book resource " + normalizedCandidate,
+                        unsafePath);
             }
             return normalizedCandidate;
+        }
+
+        /** Only a genuine ENOENT is evidence that the catalogue file has disappeared.
+         * An I/O failure, inaccessible drive, symlink or unexpected file type must
+         * abort maintenance rather than silently marking a book non-local. */
+        private boolean isProvenMissing(Path physical) {
+            try {
+                BasicFileAttributes attrs = Files.readAttributes(
+                        physical, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if (!attrs.isRegularFile()) {
+                    throw new IllegalStateException("Maintenance resource is not an ordinary file: " + physical);
+                }
+                return false;
+            } catch (NoSuchFileException trulyMissing) {
+                return true;
+            } catch (IOException | SecurityException unreadable) {
+                throw new IllegalStateException("Cannot determine availability of book resource: " + physical,
+                        unreadable);
+            }
         }
 
         private void requireSafeExistingParents(Path candidate, Path safeRoot) throws IOException {
@@ -447,7 +529,11 @@ final class CollectionMaintenanceAnalyzer {
             Path current = safeRoot;
             for (Path component : relative) {
                 current = current.resolve(component);
-                if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) return;
+                try {
+                    Files.readAttributes(current, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                } catch (NoSuchFileException missing) {
+                    return; // The parent path is genuinely absent; book can be marked missing.
+                }
                 SafeFilePublication.requireSafeDirectoryPath(current, "Maintenance book resource parent");
             }
         }
@@ -459,8 +545,9 @@ final class CollectionMaintenanceAnalyzer {
                 return SafeFilePublication.requireSafeDirectoryPath(
                         root.toAbsolutePath().normalize(), "Maintenance orphan-scan root");
             } catch (IOException | SecurityException unsafeRoot) {
-                log.warn("Cannot safely resolve collection root {} for orphan scan", root, unsafeRoot);
-                return null;
+                // A specified root that is inaccessible is NOT an empty library. Returning null here
+                // would silently skip the entire orphan scan while producing a completed report.
+                throw new IllegalStateException("Cannot safely scan collection root " + root, unsafeRoot);
             }
         }
 
@@ -476,32 +563,45 @@ final class CollectionMaintenanceAnalyzer {
             excluded.add(pathKey(databasePath(collection)));
             configuredSource(collectionId).ifPresent(path -> excluded.add(pathKey(path)));
 
-            long scanned = 0;
-            long orphan = 0;
-            try (Stream<Path> stream = Files.walk(root)) {
-                Iterator<Path> iterator = stream.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
-                        .filter(this::isPhysicalLibraryFile).iterator();
-                while (iterator.hasNext()) {
-                    Path file = iterator.next();
-                    scanned++;
-                    String key = pathKey(file);
-                    if (!referenced.contains(key) && !excluded.contains(key)) {
-                        orphan++;
-                        issues.sample(MaintenanceIssueType.ORPHAN_FILE, new MaintenanceIssue(
-                                issueId(MaintenanceIssueType.ORPHAN_FILE, key),
-                                MaintenanceIssueType.ORPHAN_FILE,
-                                file.toAbsolutePath().normalize().toString(),
-                                "ui.collection.maintenance.issue.orphan_file",
-                                List.of(file.toString()),
-                                "",
-                                false,
-                                true));
+            long[] counts = new long[2]; // visited library files, unreferenced library files
+            try {
+                Files.walkFileTree(root, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                        // A symlink or special filesystem entry is never followed and cannot be
+                        // mistaken for an ordinary library file.
+                        if (!attributes.isRegularFile() || !isPhysicalLibraryFile(file)) {
+                            return FileVisitResult.CONTINUE;
+                        }
+                        counts[0]++;
+                        String key = pathKey(file);
+                        if (!referenced.contains(key) && !excluded.contains(key)) {
+                            counts[1]++;
+                            issues.sample(MaintenanceIssueType.ORPHAN_FILE, new MaintenanceIssue(
+                                    issueId(MaintenanceIssueType.ORPHAN_FILE, key),
+                                    MaintenanceIssueType.ORPHAN_FILE,
+                                    file.toAbsolutePath().normalize().toString(),
+                                    "ui.collection.maintenance.issue.orphan_file",
+                                    List.of(file.toString()),
+                                    "",
+                                    false,
+                                    true));
+                        }
+                        return FileVisitResult.CONTINUE;
                     }
-                }
-            } catch (IOException e) {
-                log.warn("Cannot scan collection root {}: {}", root, e.getMessage());
+
+                    @Override
+                    public FileVisitResult visitFileFailed(Path file, IOException error) throws IOException {
+                        // A partial scan must never be presented as successful; in particular,
+                        // an inaccessible subtree can contain books missing from the report.
+                        throw error;
+                    }
+                });
+            } catch (IOException | SecurityException scanFailure) {
+                throw new IllegalStateException(
+                        "Collection file scan did not complete: " + root, scanFailure);
             }
-            return new OrphanScan(scanned, orphan);
+            return new OrphanScan(counts[0], counts[1]);
         }
 
         private boolean isPhysicalLibraryFile(Path path) {

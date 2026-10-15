@@ -1,7 +1,15 @@
 # MyHomeLib 8.0.0 — загальна історія розвитку проєкту
 
-Дата актуалізації: **2026-10-02**.
+Дата актуалізації: **2026-10-12**.
 Статус: канонічний огляд історії українською мовою. Детальні незмінені checkpoint/iteration-матеріали зберігаються у `docs/history/records/`; старий великий англомовний консолідований файл `docs/history/HISTORY.md` лишається архівним джерелом, а не поточною специфікацією.
+
+## Доповнення 2026-10-12: метадані EPUB і перевірка каталогу запуску
+
+Додано ліміти 8 MiB для OPF/container та 100 000 декларацій для кожного списку manifest/spine, враховано повтори й нерозв’язні посилання. Усунуто зайве копіювання цих колекцій і додано перевірки скасування до та під час розбору метаданих. Сім регресій спочатку дали 5 failures на попередньому коді, після виправлення — 7/7. Тест native launch directory став детермінованим; додано перевірки fallback за відсутності command metadata і заборони доступу. Цільовий Maven-прогін — 53/53, архітектурна й статична release-перевірки — PASS. Повний root-прогін цього патча ще не виконано. Деталі й походження доказів наведено в актуальному звіті extraction.
+
+## Доповнення 2026-10-11: обмеження пам’яті заголовків EPUB
+
+Після оптимізації extraction виявлено окремий шлях переповнення пам’яті: повтори XHTML у EPUB spine накопичували заголовки поза бюджетом основного тексту. Додано ліміти 65 536 одиниць UTF-16 на назву та 1 048 576 сумарно, ранню перевірку head title і перевірку всіх назв у builder. Чотири нові регресійні тести пройдено; точна допустима межа зберігає текст і зміщення. Стрес-проба зі старими та новими класами при heap 64 MiB дала відповідно `OutOfMemoryError` та контрольований `FAILED`. Схема індексу залишається 2. Повний root-прогін ще потребує середовища з доступними відомостями про процеси; деталі та походження результатів — у `docs/release/CONTENT-EXTRACTION-MEMORY-AUDIT-2026-10-11-UA.md`.
 
 ## 1. Базова платформа та модульна архітектура
 
@@ -333,3 +341,11 @@ Windows desktop acceptance тепер фіксує SHA-256 встановлен�
 ## 38. V34 External Test R12 — FB2 Book Details lazy-image performance — 2026-10-04
 
 На реальному `729586 Демон. Пожиратель душ #01-18.fb2.zip` підтверджено, що ZIP I/O не є bottleneck; основна зайва робота була в eager decode/temp-resource materialization усіх FB2 `<binary>` image payload під час пасивного Book Details. Для FB2/FBD inspection image payload тепер відкладається до explicit `openImage`, а повторні image opens використовують один lazy-loaded document. На 17 736 920-byte FB2 warm passive inspection скоротився приблизно з **~0.95 s** до **0.17–0.26 s** у same-environment Linux/JDK 21 probe. Exact-current root offline `clean verify`: **2088 tests / 0 failures / 0 errors / 23 skipped; 21/21 reactor SUCCESS; BUILD SUCCESS; 02:30**. Memory defaults не змінені. Деталі: `docs/release/POST-R11-R12-VALIDATION-2026-10-04-UA.md`.
+
+## 39. R18 archive-budget audit — 2026-10-10
+
+Після Iteration83 продовжено security-аудит архівів. Закрито обхід бюджету декомпресії через пропущені елементи TAR/CPIO та 7z, неявний `NullOutputStream` skip попередніх елементів у solid RAR через Junrar, а також запізнілу перевірку cumulative ZIP budget після запису тимчасового файлу. Спільний bounded-copy/discard механізм тепер перевіряє фактичні байти під час читання/запису; TAR/CPIO `countBooks()` також обмежений. Цільові архівні регресії **27/27 PASS**; повний офлайн `clean verify`: **2303 tests / 0 failures / 0 errors / 23 skipped; 21/21 reactor SUCCESS; BUILD SUCCESS; 04:04**. Додаткові реальні probes: **3/3 FB2** та **707 154 INPX records** PASS. Додатково static release gate виявив і допоміг виправити відсутні executable bits у 10 кореневих shell-скриптів; source ZIP зберігає ці права. Windows/live acceptance, real solid-RAR corpus і користувацька телеметрія пропущених елементів залишаються відкритими. Деталі: `docs/history/CHECKPOINT-STATUS-2026-10-10-ARCHIVE-BUDGET-UA.md`.
+
+## 2026-10-11 — extraction та пам’ять
+
+FB2/EPUB/TXT: усунення зайвих копій тексту, обмежена потокова нормалізація, раннє скасування TXT, виправлення меж UTF-8 і EPUB-блоків. Схему повнотекстового індексу підвищено до 2. Цільові регресії — 37/37; повний root-прогін не підтверджено. Деталі: `docs/release/CONTENT-EXTRACTION-MEMORY-AUDIT-2026-10-11-UA.md`.

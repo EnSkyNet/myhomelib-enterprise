@@ -1,0 +1,31 @@
+{
+  "baseline_zip_sha256": "1818a0b3e1b2a8877790920208d1119f10f22593e0a9a6a173be5a523c8378b9",
+  "unchanged_baseline_files": 3144,
+  "changed_production_files": [
+    "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/ContentDocumentBuilder.java",
+    "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/NormalizedTextBuffer.java",
+    "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/EpubContentExtractor.java"
+  ],
+  "added_test_file": "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/content/EpubTitleBudgetTest.java",
+  "source_sha256": {
+    "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/ContentDocumentBuilder.java": {
+      "before": "c2725420c9bcc346b03f8117286058570bed9b649d97e4ade07c7c910a2c18a0",
+      "after": "bd1ff442fe2789dfdb94ff1ace8c9941d21e3074d561667599ea505f27aa6d38"
+    },
+    "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/NormalizedTextBuffer.java": {
+      "before": "339272dab29629a6a25331a5f5bfb7da6f3583267ae364c739f9fc11c916d4b6",
+      "after": "a69ada08df6cfdfc9f96543bf6aa1ae4f1e3fe68a7842499cd3471605733bf22"
+    },
+    "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/content/EpubContentExtractor.java": {
+      "before": "9994107fb3756d55edac8e3d5b93ad99adb57b075f89b839e33203f373cc30ec",
+      "after": "e0367c7ed4ae52f5ea34b6975f366d325dd8cfa067599b9ac3785824e2b4718c"
+    },
+    "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/content/EpubTitleBudgetTest.java": {
+      "before": null,
+      "after": "3970294ddcf0d5999ff40c1ceb27a29621f064381d5128d7641a09558bda0d38"
+    }
+  },
+  "all_other_existing_src_files_identical_to_baseline": true,
+  "missing_baseline_files": [],
+  "scope": "Byte comparison against the canonical prior archive; final documentation/probe artifacts are additional files."
+}

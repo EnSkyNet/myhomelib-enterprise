@@ -267,7 +267,76 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
         UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });
     }
 
+    @Test
+    void failedApplyLeavesProgressPageAndShowsOperationId() throws Exception {
+        var fixture = UiActionTestSupport.constructWithMocks(LibraryOrganizerUiService.class);
+        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incomplete()).thenReturn(List.of());
+        when(fixture.dependency(DialogService.class).showConfirmation(anyString(), nullable(String.class), anyString())).thenReturn(true);
+        java.util.concurrent.CompletableFuture<ApplyResult> future = new java.util.concurrent.CompletableFuture<>();
+        when(fixture.dependency(UiBackgroundExecutor.class).submit(any(java.util.concurrent.Callable.class))).thenReturn((java.util.concurrent.CompletableFuture) future);
+        Object wizard = newWizard(fixture.instance());
+        Object row = newPreviewRow(wizard);
+        Method planItemMethod = row.getClass().getDeclaredMethod("planItem");
+        planItemMethod.setAccessible(true);
+        var item = (com.myhomelibcorp.organizer.plan.OrganizationPlanItem) planItemMethod.invoke(row);
+        var plan = mock(OrganizationPlan.class);
+        var id = java.util.UUID.randomUUID();
+        when(plan.operationId()).thenReturn(id);
+        when(plan.withActions(anyList())).thenReturn(plan);
+        when(plan.actions()).thenReturn(List.of(item));
+        when(plan.executable()).thenReturn(true);
+        UiActionTestSupport.setField(wizard, "plan", plan);
+        @SuppressWarnings("unchecked") javafx.collections.ObservableList<Object> rows =
+                (javafx.collections.ObservableList<Object>) UiActionTestSupport.getField(wizard, "previewRows");
+        UiActionTestSupport.fx(() -> { rows.add(row); UiActionTestSupport.invoke(wizard, "startApply"); return null; });
+        assertThat(UiActionTestSupport.getField(wizard, "pageIndex")).isEqualTo(4);
+        UiActionTestSupport.fx(() -> { future.completeExceptionally(new java.io.IOException("copy failed")); return null; });
+        UiActionTestSupport.fx(() -> null);
+        assertThat(UiActionTestSupport.getField(wizard, "pageIndex")).isEqualTo(5);
+        assertThat(UiActionTestSupport.getField(wizard, "busy")).isEqualTo(false);
+        var details = field(wizard, "resultDetails", javafx.scene.control.TextArea.class);
+        String detailText = UiActionTestSupport.fx(details::getText);
+        assertThat(detailText).contains(id.toString(), "myhomelib.log").doesNotContain("ui.organizer.result.failure_help");
+        assertThat(UiActionTestSupport.fx(field(wizard, "nextButton", Button.class)::isDisabled)).isFalse();
+        assertThat(UiActionTestSupport.fx(field(wizard, "backButton", Button.class)::isDisabled)).isTrue();
+        UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });
+    }
+
+    @Test
+    void recoveryScanIsScheduledAndDoesNotReadTheDiskOnFxThread() throws Exception {
+        var fixture = UiActionTestSupport.constructWithMocks(LibraryOrganizerUiService.class);
+        UiBackgroundExecutor background = fixture.dependency(UiBackgroundExecutor.class);
+        var pending = new java.util.concurrent.CompletableFuture<List<LibraryOrganizationStatus>>();
+        when(background.submitCollectionScopedOperation(
+                eq(com.myhomelibcorp.application.operation.LibraryOperationType.QUERY),
+                any(java.util.concurrent.Callable.class))).thenReturn(pending);
+        GetLibraryOrganizationStatusUseCase recovery = fixture.dependency(GetLibraryOrganizationStatusUseCase.class);
+        Object wizard = rawWizard(fixture.instance());
+        verify(background).submitCollectionScopedOperation(
+                eq(com.myhomelibcorp.application.operation.LibraryOperationType.QUERY), any(java.util.concurrent.Callable.class));
+        verifyNoInteractions(recovery);
+        assertThat(UiActionTestSupport.fx(field(wizard, "recoveryButton", Button.class)::isDisabled)).isTrue();
+        OrganizationJournalOperation op = mock(OrganizationJournalOperation.class);
+        LibraryOrganizationStatus status = new LibraryOrganizationStatus(
+                op, List.of(), false, false, RecoveryDisposition.NOTHING_TO_ROLLBACK, 0, 0, 0, false);
+        pending.complete(List.of(status));
+        assertThat(UiActionTestSupport.fx(field(wizard, "recoveryButton", Button.class)::isVisible)).isTrue();
+        UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });
+    }
+
     private static Object newWizard(LibraryOrganizerUiService service) throws Exception {
+        // Recoverability checks are asynchronous: the mock must complete its worker future.
+        UiBackgroundExecutor worker = (UiBackgroundExecutor) UiActionTestSupport.getField(service, "background");
+        when(worker.submitCollectionScopedOperation(eq(com.myhomelibcorp.application.operation.LibraryOperationType.QUERY),
+                any(java.util.concurrent.Callable.class))).thenAnswer(invocation -> {
+            java.util.concurrent.Callable<?> callable = invocation.getArgument(1);
+            try { return java.util.concurrent.CompletableFuture.completedFuture(callable.call()); }
+            catch (Exception exception) { return java.util.concurrent.CompletableFuture.failedFuture(exception); }
+        });
+        return rawWizard(service);
+    }
+
+    private static Object rawWizard(LibraryOrganizerUiService service) throws Exception {
         Class<?> wizardType = java.util.Arrays.stream(LibraryOrganizerUiService.class.getDeclaredClasses())
                 .filter(type -> type.getSimpleName().equals("Wizard"))
                 .findFirst().orElseThrow();

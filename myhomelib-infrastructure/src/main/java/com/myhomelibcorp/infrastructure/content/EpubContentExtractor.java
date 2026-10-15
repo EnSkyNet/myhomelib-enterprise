@@ -22,8 +22,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -33,9 +35,19 @@ import java.util.zip.ZipFile;
 /** EPUB content extractor that follows OPF spine order and rejects unsafe archive/XML input. */
 @Component
 public final class EpubContentExtractor implements ContentExtractor {
+    // OPF/container XML is metadata, not chapter content. Bound parser and collection memory separately.
+    static final long MAX_METADATA_BYTES = 8L * 1024 * 1024;
+    static final int MAX_PACKAGE_RECORDS = ArchiveSafetyLimits.MAX_ENTRY_COUNT;
     private static final java.util.Set<String> BLOCKS = java.util.Set.of(
             "p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "pre", "dt", "dd");
-    private final XMLInputFactory xmlFactory = SecureXmlInputFactory.create(false, false);
+    // These extractors are singleton beans and may be invoked concurrently by indexing workers.
+    // XMLInputFactory implementations are not guaranteed to be thread-safe.
+    private final ThreadLocal<XMLInputFactory> xmlFactory =
+            ThreadLocal.withInitial(() -> SecureXmlInputFactory.create(false, false));
+    private final int maxTextChars;
+
+    public EpubContentExtractor() { this(ContentDocumentBuilder.MAX_TEXT_CHARS); }
+    EpubContentExtractor(int maxTextChars) { this.maxTextChars = maxTextChars; }
 
     @Override public String id() { return "epub-content"; }
     @Override public boolean supports(String format) { return "epub".equals(normalizeFormat(format)); }
@@ -78,11 +90,12 @@ public final class EpubContentExtractor implements ContentExtractor {
 
     private ExtractedContent extractFromZip(ContentExtractionRequest request, Path temp, ContentExtractionContext context)
             throws IOException {
-        ContentDocumentBuilder document = new ContentDocumentBuilder(request.source().id(), "epub");
+        ContentDocumentBuilder document = new ContentDocumentBuilder(request.source().id(), "epub",
+                maxTextChars, ContentDocumentBuilder.MAX_PARAGRAPHS);
         try (ZipFile zip = new ZipFile(temp.toFile())) {
-            validateArchive(zip);
-            String opfPath = locatePackageDocument(zip);
-            EpubPackage pkg = readPackage(zip, opfPath);
+            EntryIndex entries = validateAndIndexArchive(zip, context);
+            String opfPath = locatePackageDocument(zip, entries, context);
+            EpubPackage pkg = readPackage(zip, entries, opfPath, context);
             int total = pkg.spineIds().size();
             int chapterNumber = 0;
             for (String idRef : pkg.spineIds()) {
@@ -90,17 +103,16 @@ public final class EpubContentExtractor implements ContentExtractor {
                 ManifestItem item = pkg.manifest().get(idRef);
                 if (item == null || !isTextual(item.mediaType())) continue;
                 String entryPath = resolveRelative(pkg.baseDirectory(), item.href());
-                ZipEntry entry = findEntry(zip, entryPath);
+                ZipEntry entry = entries.find(entryPath);
                 if (entry == null || entry.isDirectory()) continue;
                 checkEntry(entry, "EPUB chapter");
                 chapterNumber++;
-                ParsedChapter parsed;
+                String title;
                 try (InputStream raw = zip.getInputStream(entry);
                      InputStream bounded = new LimitedInputStream(raw, ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
-                    parsed = parseXhtml(bounded, context);
+                    title = parseXhtml(bounded, context, document, "epub-chapter-" + chapterNumber);
                 }
-                String title = parsed.title().isBlank() ? basenameWithoutExtension(entryPath) : parsed.title();
-                document.addChapter("epub-chapter-" + chapterNumber, title, parsed.blocks());
+                document.finishChapter(title.isBlank() ? basenameWithoutExtension(entryPath) : title);
                 context.report("epub-spine", Math.min(total, chapterNumber), total);
             }
         } catch (XMLStreamException malformed) {
@@ -109,15 +121,18 @@ public final class EpubContentExtractor implements ContentExtractor {
         return document.build();
     }
 
-    private String locatePackageDocument(ZipFile zip) throws IOException, XMLStreamException {
-        ZipEntry container = findEntry(zip, "META-INF/container.xml");
+    private String locatePackageDocument(ZipFile zip, EntryIndex entries, ContentExtractionContext context)
+            throws IOException, XMLStreamException {
+        context.throwIfCancelled();
+        ZipEntry container = entries.find("META-INF/container.xml");
         if (container == null) throw new IOException("EPUB container.xml not found");
-        checkEntry(container, "EPUB container.xml");
+        checkMetadataEntry(container, "EPUB container.xml");
         try (InputStream raw = zip.getInputStream(container);
-             InputStream bounded = new LimitedInputStream(raw, ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
-            XMLStreamReader reader = xmlFactory.createXMLStreamReader(bounded);
+             InputStream bounded = new LimitedInputStream(raw, MAX_METADATA_BYTES)) {
+            XMLStreamReader reader = xmlFactory.get().createXMLStreamReader(bounded);
             try {
                 while (reader.hasNext()) {
+                    context.throwIfCancelled();
                     if (reader.next() == XMLStreamConstants.START_ELEMENT
                             && "rootfile".equalsIgnoreCase(reader.getLocalName())) {
                         String value = attribute(reader, "full-path");
@@ -131,20 +146,28 @@ public final class EpubContentExtractor implements ContentExtractor {
         throw new IOException("EPUB package document is not declared");
     }
 
-    private EpubPackage readPackage(ZipFile zip, String opfPath) throws IOException, XMLStreamException {
-        ZipEntry opf = findEntry(zip, opfPath);
+    private EpubPackage readPackage(ZipFile zip, EntryIndex entries, String opfPath, ContentExtractionContext context)
+            throws IOException, XMLStreamException {
+        context.throwIfCancelled();
+        ZipEntry opf = entries.find(opfPath);
         if (opf == null) throw new IOException("EPUB package document not found: " + opfPath);
-        checkEntry(opf, "EPUB package document");
+        checkMetadataEntry(opf, "EPUB package document");
         Map<String, ManifestItem> manifest = new LinkedHashMap<>();
         List<String> spine = new ArrayList<>();
+        int manifestRecords = 0;
+        int spineRecords = 0;
         try (InputStream raw = zip.getInputStream(opf);
-             InputStream bounded = new LimitedInputStream(raw, ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
-            XMLStreamReader reader = xmlFactory.createXMLStreamReader(bounded);
+             InputStream bounded = new LimitedInputStream(raw, MAX_METADATA_BYTES)) {
+            XMLStreamReader reader = xmlFactory.get().createXMLStreamReader(bounded);
             try {
                 while (reader.hasNext()) {
+                    context.throwIfCancelled();
                     if (reader.next() != XMLStreamConstants.START_ELEMENT) continue;
                     String local = reader.getLocalName().toLowerCase(Locale.ROOT);
                     if ("item".equals(local)) {
+                        if (++manifestRecords > MAX_PACKAGE_RECORDS) {
+                            throw new IOException("EPUB manifest record count exceeds safety limit of " + MAX_PACKAGE_RECORDS);
+                        }
                         String id = attribute(reader, "id");
                         String href = attribute(reader, "href");
                         String mediaType = attribute(reader, "media-type");
@@ -152,6 +175,9 @@ public final class EpubContentExtractor implements ContentExtractor {
                             manifest.put(id.trim(), new ManifestItem(href.trim(), mediaType == null ? "" : mediaType.trim()));
                         }
                     } else if ("itemref".equals(local)) {
+                        if (++spineRecords > MAX_PACKAGE_RECORDS) {
+                            throw new IOException("EPUB spine record count exceeds safety limit of " + MAX_PACKAGE_RECORDS);
+                        }
                         String idRef = attribute(reader, "idref");
                         if (idRef != null && !idRef.isBlank()) spine.add(idRef.trim());
                     }
@@ -163,22 +189,23 @@ public final class EpubContentExtractor implements ContentExtractor {
         if (spine.isEmpty()) throw new IOException("EPUB spine is empty");
         int slash = opfPath.lastIndexOf('/');
         String base = slash < 0 ? "" : opfPath.substring(0, slash + 1);
-        return new EpubPackage(base, Map.copyOf(manifest), List.copyOf(spine));
+        // The private package owns these collections; wrappers avoid copying both large tables at once.
+        return new EpubPackage(base, Collections.unmodifiableMap(manifest), Collections.unmodifiableList(spine));
     }
 
-    private ParsedChapter parseXhtml(InputStream input, ContentExtractionContext context) throws XMLStreamException {
-        XMLStreamReader reader = xmlFactory.createXMLStreamReader(input);
-        List<ContentDocumentBuilder.ParagraphBlock> blocks = new ArrayList<>();
+    private String parseXhtml(InputStream input, ContentExtractionContext context,
+                              ContentDocumentBuilder document, String chapterId) throws XMLStreamException, IOException {
+        XMLStreamReader reader = xmlFactory.get().createXMLStreamReader(input);
         String title = "";
         String documentTitle = "";
         boolean inBody = false;
         int ignoredDepth = 0;
         int blockDepth = 0;
         String rootBlock = null;
-        StringBuilder blockText = null;
+        NormalizedTextBuffer blockText = null;
         int paragraph = 0;
         boolean inHeadTitle = false;
-        StringBuilder headTitle = null;
+        NormalizedTextBuffer headTitle = null;
         try {
             while (reader.hasNext()) {
                 context.throwIfCancelled();
@@ -199,20 +226,28 @@ public final class EpubContentExtractor implements ContentExtractor {
                     }
                     if (!inBody && "title".equals(local)) {
                         inHeadTitle = true;
-                        headTitle = new StringBuilder();
+                        headTitle = document.titleBuffer();
                         continue;
                     }
                     if (inBody && BLOCKS.contains(local)) {
                         if (blockDepth == 0) {
                             rootBlock = local;
-                            blockText = new StringBuilder();
+                            blockText = document.paragraphBuffer();
+                        } else {
+                            blockText.separate();
                         }
                         blockDepth++;
+                    } else if (inBody && "br".equals(local) && blockText != null) {
+                        blockText.separate();
                     }
                 } else if (event == XMLStreamConstants.CHARACTERS || event == XMLStreamConstants.CDATA) {
                     if (ignoredDepth > 0) continue;
-                    if (inHeadTitle && headTitle != null) headTitle.append(reader.getText());
-                    if (inBody && blockDepth > 0 && blockText != null) blockText.append(reader.getText());
+                    if (inHeadTitle && headTitle != null) {
+                        headTitle.append(reader.getTextCharacters(), reader.getTextStart(), reader.getTextLength());
+                    }
+                    if (inBody && blockDepth > 0 && blockText != null) {
+                        blockText.append(reader.getTextCharacters(), reader.getTextStart(), reader.getTextLength());
+                    }
                 } else if (event == XMLStreamConstants.END_ELEMENT) {
                     String local = reader.getLocalName().toLowerCase(Locale.ROOT);
                     if (ignoredDepth > 0) {
@@ -220,7 +255,7 @@ public final class EpubContentExtractor implements ContentExtractor {
                         continue;
                     }
                     if (!inBody && "title".equals(local) && inHeadTitle) {
-                        documentTitle = ContentDocumentBuilder.normalize(headTitle == null ? "" : headTitle.toString());
+                        documentTitle = headTitle == null ? "" : headTitle.text();
                         inHeadTitle = false;
                         headTitle = null;
                         continue;
@@ -228,13 +263,15 @@ public final class EpubContentExtractor implements ContentExtractor {
                     if (inBody && blockDepth > 0 && BLOCKS.contains(local)) {
                         blockDepth--;
                         if (blockDepth == 0 && blockText != null) {
-                            String text = ContentDocumentBuilder.normalize(blockText.toString());
+                            String text = blockText.text();
                             if (!text.isBlank()) {
-                                blocks.add(new ContentDocumentBuilder.ParagraphBlock("p" + (++paragraph), text));
+                                document.addParagraph(chapterId, "p" + (++paragraph), text);
                                 if (title.isBlank() && rootBlock != null && rootBlock.matches("h[1-6]")) title = text;
                             }
                             blockText = null;
                             rootBlock = null;
+                        } else if (blockText != null) {
+                            blockText.separate();
                         }
                     }
                     if ("body".equals(local)) inBody = false;
@@ -244,20 +281,27 @@ public final class EpubContentExtractor implements ContentExtractor {
             reader.close();
         }
         if (title.isBlank()) title = documentTitle;
-        return new ParsedChapter(title, List.copyOf(blocks));
+        return title;
     }
 
-    private void validateArchive(ZipFile zip) throws IOException {
-        int entries = 0;
+    /** Validate and index the ZIP once. Repeated case-insensitive fallback scans cost O(chapters * entries). */
+    private EntryIndex validateAndIndexArchive(ZipFile zip, ContentExtractionContext context) throws IOException {
+        context.throwIfCancelled();
+        int count = 0;
         long totalDeclared = 0L;
+        Map<String, ZipEntry> exact = new HashMap<>();
+        Map<String, ZipEntry> insensitive = new HashMap<>();
         Enumeration<? extends ZipEntry> iterator = zip.entries();
         while (iterator.hasMoreElements()) {
+            context.throwIfCancelled();
             ZipEntry entry = iterator.nextElement();
-            if (++entries > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("EPUB contains too many entries");
+            if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("EPUB contains too many entries");
             if (!ArchiveImportSupport.isSafeEntryName(entry.getName())) {
                 throw new IOException("Unsafe EPUB entry name: " + entry.getName());
             }
             checkEntry(entry, "EPUB entry");
+            exact.putIfAbsent(entry.getName(), entry);
+            insensitive.putIfAbsent(normalizeEntry(entry.getName()).toLowerCase(Locale.ROOT), entry);
             if (!entry.isDirectory() && entry.getSize() > 0L) {
                 totalDeclared += entry.getSize();
                 if (totalDeclared > ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES) {
@@ -265,6 +309,7 @@ public final class EpubContentExtractor implements ContentExtractor {
                 }
             }
         }
+        return new EntryIndex(exact, insensitive);
     }
 
     private static void checkEntry(ZipEntry entry, String role) throws IOException {
@@ -272,17 +317,21 @@ public final class EpubContentExtractor implements ContentExtractor {
         ArchiveEntrySafety.check(entry.getName(), entry.isDirectory(), entry.getSize(), entry.getCompressedSize(), role);
     }
 
-    private static ZipEntry findEntry(ZipFile zip, String wanted) {
-        if (wanted == null || wanted.isBlank()) return null;
-        String normalized = normalizeEntry(wanted);
-        ZipEntry direct = zip.getEntry(normalized);
-        if (direct != null) return direct;
-        Enumeration<? extends ZipEntry> iterator = zip.entries();
-        while (iterator.hasMoreElements()) {
-            ZipEntry entry = iterator.nextElement();
-            if (normalizeEntry(entry.getName()).equalsIgnoreCase(normalized)) return entry;
+    private static void checkMetadataEntry(ZipEntry entry, String role) throws IOException {
+        checkEntry(entry, role);
+        if (entry.getSize() > MAX_METADATA_BYTES) {
+            throw new IOException(role + " metadata exceeds safety limit of " + MAX_METADATA_BYTES + " bytes");
         }
-        return null;
+    }
+
+    /** Preserve exact-name precedence and the first case-insensitive match, without rescanning ZIP. */
+    private record EntryIndex(Map<String, ZipEntry> exact, Map<String, ZipEntry> insensitive) {
+        private ZipEntry find(String wanted) {
+            if (wanted == null || wanted.isBlank()) return null;
+            String normalized = normalizeEntry(wanted);
+            ZipEntry direct = exact.get(normalized);
+            return direct != null ? direct : insensitive.get(normalized.toLowerCase(Locale.ROOT));
+        }
     }
 
     private static String resolveRelative(String baseDirectory, String href) throws IOException {
@@ -349,5 +398,4 @@ public final class EpubContentExtractor implements ContentExtractor {
 
     private record ManifestItem(String href, String mediaType) { }
     private record EpubPackage(String baseDirectory, Map<String, ManifestItem> manifest, List<String> spineIds) { }
-    private record ParsedChapter(String title, List<ContentDocumentBuilder.ParagraphBlock> blocks) { }
 }

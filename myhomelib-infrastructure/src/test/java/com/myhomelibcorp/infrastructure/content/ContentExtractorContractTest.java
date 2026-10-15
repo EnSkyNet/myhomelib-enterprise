@@ -14,6 +14,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
 import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.ZipEntry;
@@ -27,6 +31,36 @@ class ContentExtractorContractTest {
 
     private final ContentExtractionService service = new ContentExtractionService(List.of(
             new EpubContentExtractor(), new Fb2ContentExtractor(), new TxtContentExtractor()));
+
+    @Test
+    void separatesNestedEpubParagraphsAndExplicitLineBreaks() throws IOException {
+        byte[] epub = epub("content.opf", """
+                <package><manifest><item id="c" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                </manifest><spine><itemref idref="c"/></spine></package>
+                """, List.of(entry("chapter.xhtml", """
+                <html><body><blockquote><p>Перше</p><p>Друге<br/>Третє</p></blockquote></body></html>
+                """)));
+        var result = service.extract(ContentExtractionRequest.of(source("nested.epub", epub)), ContentExtractionContext.none());
+        assertEquals(ContentExtractionStatus.SUCCESS, result.status(), result.message());
+        assertEquals("Перше Друге Третє", result.content().text());
+    }
+
+    @Test
+    void enforcesCumulativeEpubBudgetAcrossSpineDocuments() throws IOException {
+        byte[] epub = epub("content.opf", """
+                <package><manifest><item id="a" href="a.xhtml"/><item id="b" href="b.xhtml"/></manifest>
+                <spine><itemref idref="a"/><itemref idref="b"/></spine></package>
+                """, List.of(entry("a.xhtml", "<html><body><p>abc</p></body></html>"),
+                entry("b.xhtml", "<html><body><p>def</p></body></html>")));
+        var bounded = new ContentExtractionService(List.of(new EpubContentExtractor(6)));
+        var result = bounded.extract(ContentExtractionRequest.of(source("budget.epub", epub)), ContentExtractionContext.none());
+        assertEquals(ContentExtractionStatus.FAILED, result.status());
+        assertTrue(result.message().contains("safety limit"), result.message());
+        var exact = new ContentExtractionService(List.of(new EpubContentExtractor(7)));
+        result = exact.extract(ContentExtractionRequest.of(source("budget.epub", epub)), ContentExtractionContext.none());
+        assertEquals(ContentExtractionStatus.SUCCESS, result.status(), result.message());
+        assertEquals("abc\ndef", result.content().text());
+    }
 
     @Test
     void extractsFb2ChaptersTextAndAnchorsInDocumentOrder() {
@@ -105,6 +139,50 @@ class ContentExtractorContractTest {
     }
 
     @Test
+    void extractsManyMixedCaseEpubChaptersInSpineOrder() throws IOException {
+        // A ZIP may use a different letter case from the OPF paths. Previously, for
+        // every chapter we rescanned the full archive to find that fallback match.
+        int chapters = 240;
+        StringBuilder manifest = new StringBuilder();
+        StringBuilder spine = new StringBuilder();
+        List<NamedEntry> entries = new ArrayList<>();
+        for (int i = 0; i < chapters; i++) {
+            manifest.append("<item id=\"b").append(i).append("\" href=\"chapter")
+                    .append(i).append(".xhtml\" media-type=\"application/xhtml+xml\"/>");
+            spine.append("<itemref idref=\"b").append(i).append("\"/>");
+            entries.add(entry("OEBPS/CHAPTER" + i + ".XHTML",
+                    "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>Текст розділу "
+                            + i + "</p></body></html>"));
+        }
+        byte[] epub = epub("OEBPS/content.opf", "<package><manifest>" + manifest
+                + "</manifest><spine>" + spine + "</spine></package>", entries);
+
+        ContentExtractionResult result = service.extract(
+                new ContentExtractionRequest(source("long.epub", epub), "epub"), ContentExtractionContext.none());
+
+        assertEquals(ContentExtractionStatus.SUCCESS, result.status(), result.message());
+        assertEquals(chapters, result.content().chapters().size());
+        assertTrue(result.content().chapters().get(0).text().contains("розділу 0"));
+        assertTrue(result.content().chapters().get(chapters - 1).text().contains("розділу 239"));
+    }
+
+    @Test
+    void exactEpubZipEntryWinsOverCaseInsensitiveFallback() throws IOException {
+        byte[] epub = epub("content.opf", """
+                <package><manifest>
+                  <item id="a" href="Text.xhtml" media-type="application/xhtml+xml"/>
+                </manifest><spine><itemref idref="a"/></spine></package>
+                """, List.of(
+                entry("text.xhtml", "<html><body><p>Other case content</p></body></html>"),
+                entry("Text.xhtml", "<html><body><p>Correct case content</p></body></html>")));
+        ContentExtractionResult result = service.extract(
+                new ContentExtractionRequest(source("twocase.epub", epub), "epub"), ContentExtractionContext.none());
+        assertEquals(ContentExtractionStatus.SUCCESS, result.status(), result.message());
+        assertTrue(result.content().text().contains("Correct case content"));
+        assertFalse(result.content().text().contains("Other case content"));
+    }
+
+    @Test
     void rejectsUnsafeEpubHrefInsteadOfEscapingArchiveRoot() throws IOException {
         byte[] epub = epub(
                 "content.opf", """
@@ -135,6 +213,30 @@ class ContentExtractorContractTest {
 
         assertTrue(result.status() == ContentExtractionStatus.FAILED
                 || !result.content().text().contains("root:"));
+    }
+
+    @Test
+    void singletonExtractorsRemainSafeWhenSearchWorkersExtractConcurrently() throws Exception {
+        String fb2 = "<FictionBook><body><section><p>Parallel FB2 payload</p></section></body></FictionBook>";
+        byte[] fb2Bytes = fb2.getBytes(StandardCharsets.UTF_8);
+        byte[] epubBytes = epub("content.opf", """
+                <package><manifest><item id="c" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                </manifest><spine><itemref idref="c"/></spine></package>
+                """, List.of(entry("chapter.xhtml", "<html><body><p>Parallel EPUB payload</p></body></html>")));
+        var tasks = new ArrayList<Callable<ContentExtractionResult>>();
+        for (int i = 0; i < 80; i++) {
+            boolean epubTask = (i & 1) == 0;
+            tasks.add(() -> service.extract(new ContentExtractionRequest(
+                            source(epubTask ? "parallel.epub" : "parallel.fb2", epubTask ? epubBytes : fb2Bytes),
+                            epubTask ? "epub" : "fb2"), ContentExtractionContext.none()));
+        }
+        try (var pool = Executors.newFixedThreadPool(8)) {
+            for (var future : pool.invokeAll(tasks, 15, TimeUnit.SECONDS)) {
+                ContentExtractionResult result = future.get(2, TimeUnit.SECONDS);
+                assertEquals(ContentExtractionStatus.SUCCESS, result.status(), result.message());
+                assertTrue(result.content().text().contains("Parallel "));
+            }
+        }
     }
 
     @Test

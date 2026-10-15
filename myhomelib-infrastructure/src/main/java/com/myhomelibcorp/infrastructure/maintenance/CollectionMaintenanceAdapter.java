@@ -63,6 +63,12 @@ public class CollectionMaintenanceAdapter implements CollectionMaintenancePort {
     public MaintenanceApplyResult apply(String collectionId, Set<String> issueIds, boolean dryRun) {
         analyzer.validateCollectionId(collectionId);
         CollectionMaintenanceReport before = analyze(collectionId);
+        if (!before.databaseIntegrityOk()) {
+            // Do not modify a database whose integrity check failed (even with a backup).
+            // The user must first recover or repair the database outside this routine.
+            throw new IllegalStateException("Collection maintenance refused: SQLite integrity check failed: "
+                    + before.databaseIntegrityMessage());
+        }
 
         Map<String, MaintenanceIssue> repairable = new LinkedHashMap<>();
         before.issues().stream()
@@ -88,11 +94,18 @@ public class CollectionMaintenanceAdapter implements CollectionMaintenancePort {
                     requestedIds.size(), before, before);
         }
 
-        Path backup = createBackup(analyzer.requireActive(collectionId));
+        Collection activeAtStart = analyzer.requireActive(collectionId);
         DataSource dataSource = collectionManager.getCurrentDataSource();
         if (dataSource == null) {
             throw new IllegalStateException("Active collection data source is unavailable");
         }
+
+        JdbcTemplate activeJdbc = collectionManager.getCurrentJdbcTemplate();
+        // Bind backup, transaction, and post-check to the same open collection.
+        // A concurrent switch must never redirect the correction to another SQLite file.
+        ensureUnchanged(collectionId, activeAtStart, dataSource, activeJdbc);
+        Path backup = createBackup(activeAtStart);
+        ensureUnchanged(collectionId, activeAtStart, dataSource, activeJdbc);
 
         long applied = 0;
         long skipped = requestedIds.size() - selected.size();
@@ -109,10 +122,18 @@ public class CollectionMaintenanceAdapter implements CollectionMaintenancePort {
                 connection.setAutoCommit(false);
 
                 for (MaintenanceIssue issue : selected) {
+                    ensureUnchanged(collectionId, activeAtStart, dataSource, activeJdbc);
+                    // UI diagnostics can become stale while the mandatory backup is created.
+                    // Recheck each physical resource using this transaction's current row.
+                    if (!analyzer.isPhysicalIssueStillRepairable(activeAtStart, connection, issue)) {
+                        skipped++;
+                        continue;
+                    }
                     int changed = applyIssue(connection, issue);
                     if (changed > 0) applied++;
                     else skipped++;
                 }
+                ensureUnchanged(collectionId, activeAtStart, dataSource, activeJdbc);
                 connection.commit();
             } catch (Exception e) {
                 failure = e;
@@ -129,10 +150,26 @@ public class CollectionMaintenanceAdapter implements CollectionMaintenancePort {
             throw new IllegalStateException("Maintenance apply failed; backup is at " + backup, e);
         }
 
-        optimizeAfterApply();
+        // SQLite maintains ordinary indexes incrementally during DELETE/UPDATE. Running REINDEX
+        // and a full ANALYZE after every maintenance operation can block a large collection for
+        // minutes. Let SQLite decide whether statistics need refreshing, and skip the request
+        // entirely when no repair changed any row.
+        ensureUnchanged(collectionId, activeAtStart, dataSource, activeJdbc);
+        if (applied > 0) optimizeAfterApply();
+        ensureUnchanged(collectionId, activeAtStart, dataSource, activeJdbc);
 
         CollectionMaintenanceReport after = analyze(collectionId);
         return new MaintenanceApplyResult(false, backup, requestedIds.size(), applied, skipped, before, after);
+    }
+
+    private void ensureUnchanged(String id, Collection expectedCollection,
+                                 DataSource expectedDataSource, JdbcTemplate expectedJdbc) {
+        if (collectionManager.getCurrentCollection() != expectedCollection
+                || !id.equals(expectedCollection.getId())
+                || collectionManager.getCurrentDataSource() != expectedDataSource
+                || collectionManager.getCurrentJdbcTemplate() != expectedJdbc) {
+            throw new IllegalStateException("Active collection changed during maintenance; refusing to write");
+        }
     }
 
     private void restoreConnectionState(Connection connection, boolean oldAutoCommit,
@@ -159,8 +196,6 @@ public class CollectionMaintenanceAdapter implements CollectionMaintenancePort {
     private void optimizeAfterApply() {
         try {
             JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
-            jdbc.execute("REINDEX");
-            jdbc.execute("ANALYZE");
             jdbc.execute("PRAGMA optimize");
         } catch (DataAccessException e) {
             log.warn("Index optimization failed after maintenance: {}", e.getMessage());
@@ -180,7 +215,7 @@ public class CollectionMaintenanceAdapter implements CollectionMaintenancePort {
         }
     }
 
-    private static int applyIssue(Connection connection, MaintenanceIssue issue) throws SQLException {
+    static int applyIssue(Connection connection, MaintenanceIssue issue) throws SQLException {
         return switch (issue.type()) {
             case MISSING_FILE, INVALID_ARCHIVE_REFERENCE -> executeUpdate(connection,
                     "UPDATE books SET local=0 WHERE id=? AND COALESCE(local,0)=1",
@@ -191,7 +226,19 @@ public class CollectionMaintenanceAdapter implements CollectionMaintenancePort {
             case ORPHANED_GENRE -> executeUpdate(connection,
                     "DELETE FROM genres WHERE code=? AND NOT EXISTS (SELECT 1 FROM book_genres WHERE genre_code=?)",
                     issue.target(), issue.target());
-            case DUPLICATE_BOOK -> executeUpdate(connection, "DELETE FROM books WHERE id=?", issue.target());
+            case DUPLICATE_BOOK -> executeUpdate(connection, """
+                    DELETE FROM books
+                     WHERE id=? AND TRIM(COALESCE(lib_id,'')) <> ''
+                       AND EXISTS (
+                           SELECT 1 FROM books retained
+                            WHERE retained.id < books.id
+                              AND retained.lib_id=books.lib_id
+                              AND COALESCE(retained.collection_root,'')=COALESCE(books.collection_root,'')
+                              AND COALESCE(retained.folder,'')=COALESCE(books.folder,'')
+                              AND COALESCE(retained.file_name,'')=COALESCE(books.file_name,'')
+                              AND COALESCE(retained.archive_entry,'')=COALESCE(books.archive_entry,'')
+                       )
+                    """, issue.target());
             case DATABASE_INTEGRITY, ORPHAN_FILE -> 0;
         };
     }

@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "kind": "content-index-search-ab",
+  "generatedAt": "2026-10-10T10:18:11.345847492Z",
+  "environment": {
+    "java": "21",
+    "os": "Linux x86_64",
+    "storage": "local filesystem",
+    "processesPerVariant": 1,
+    "corpus": "synthetic deterministic content chapters",
+    "warmupRuns": 3,
+    "measuredRuns": 31,
+    "query": "commonterm",
+    "matchingDocuments": 50000,
+    "pageSize": 100
+  },
+  "before": {
+    "rebuildUs": 2595929,
+    "documentsPerSecond": 19260.927398245483,
+    "searchUs": {
+      "min": 7040,
+      "median": 9494,
+      "max": 21004
+    },
+    "healthUs": {
+      "min": 2041,
+      "median": 3020,
+      "max": 4200
+    },
+    "totalHits": 50000,
+    "indexSizeBytes": 2886614
+  },
+  "after": {
+    "rebuildUs": 2193552,
+    "documentsPerSecond": 22794.080103868066,
+    "searchUs": {
+      "min": 3524,
+      "median": 6710,
+      "max": 17795
+    },
+    "healthUs": {
+      "min": 1980,
+      "median": 2845,
+      "max": 7628
+    },
+    "totalHits": 50000,
+    "indexSizeBytes": 2886614
+  },
+  "derived": {
+    "searchMedianReductionPercent": 29.323783442174,
+    "healthMedianReductionPercent": 5.794701986755,
+    "indexSizeChangeBytes": 0
+  },
+  "caveats": [
+    "Single A/B run on a synthetic corpus; results are indicative, not a latency SLA.",
+    "Rebuild throughput is recorded for completeness only and is not claimed as an optimization result.",
+    "Windows and real-library acceptance remain outstanding."
+  ]
+}

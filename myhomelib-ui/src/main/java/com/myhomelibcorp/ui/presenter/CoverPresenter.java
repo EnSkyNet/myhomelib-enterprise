@@ -15,6 +15,10 @@ import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Component
@@ -29,7 +33,9 @@ public class CoverPresenter {
 
     private ImageView coverImageView;
     private final AtomicReference<CoverRequestKey> currentLoadingRequest = new AtomicReference<>();
-    private volatile UiBackgroundExecutor.CancellableSubmission<byte[]> coverTask;
+    private volatile UiBackgroundExecutor.CancellableSubmission<CoverPayload> coverTask;
+    private byte[] displayedCoverDigest;
+    private CoverRequestKey displayedCoverRequest;
     private CoverRequestKey lastLoadedRequest = null;
     private boolean lastCoverAbsent;
 
@@ -78,53 +84,83 @@ public class CoverPresenter {
                 && (coverImageView.getImage() != null || lastCoverAbsent)) return;
         if (requestKey.equals(currentLoadingRequest.get())) return;
 
+        // The details pane first supplies its catalogue DTO and shortly afterwards an enriched
+        // DTO for the same book. The second identity can differ without changing cover pixels.
+        // Do not blank an already displayed cover while revalidating that same logical book.
+        boolean sameDisplayedBook = sameLogicalBook(displayedCoverRequest, requestKey);
+        if (!sameDisplayedBook) {
+            coverImageView.setImage(null);
+            displayedCoverDigest = null;
+            displayedCoverRequest = null;
+        }
         cancelCurrentTask();
         lastLoadedRequest = null;
         lastCoverAbsent = false;
-        coverImageView.setImage(null);
 
         currentLoadingRequest.set(requestKey);
         long startedNanos = System.nanoTime();
         log.info("COVER_START title='{}' id={} file='{}' archiveEntry='{}'",
                 book.getTitle(), bookId, book.getFileName(), book.getArchiveEntry());
 
-        UiBackgroundExecutor.CancellableSubmission<byte[]> submission =
+        UiBackgroundExecutor.CancellableSubmission<CoverPayload> submission =
                 backgroundExecutor.submitInteractiveCancellable(() -> {
                     log.debug("Виклик coverExtractor.extractCover для bookId={}", bookId);
-                    return coverExtractor.extractCover(book);
+                    byte[] bytes = coverExtractor.extractCover(book);
+                    return CoverPayload.from(bytes);
                 });
         coverTask = submission;
-        submission.completion().thenAccept(imageData -> UiExecutor.runOnUiThread(() -> {
+        submission.completion().thenAccept(payload -> UiExecutor.runOnUiThread(() -> {
             boolean sameRequest = requestKey.equals(currentLoadingRequest.get());
-            boolean sameCollection = java.util.Objects.equals(
+            boolean sameCollection = Objects.equals(
                     requestKey.collectionId(), applicationState.getCurrentLibraryCollectionId());
             if (coverImageView != null && sameRequest && sameCollection && coverTask == submission) {
+                byte[] imageData = payload == null ? null : payload.bytes();
                 if (imageData != null && imageData.length > 0) {
-                    Image fxImage = new Image(new ByteArrayInputStream(imageData),
-                            800, 1200, true, true); // bounded decode for thumbnail and high-DPI UI
-                    if (fxImage.isError() || fxImage.getWidth() <= 0 || fxImage.getHeight() <= 0) {
-                        Throwable decodeFailure = fxImage.getException();
-                        coverExtractor.invalidateCover(book);
-                        coverImageView.setImage(null);
-                        if (targetViewModel != null) targetViewModel.setCover(null);
-                        lastLoadedRequest = null;
-                        long durationMs = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
-                        log.warn("COVER_FAIL title='{}' id={} bytes={} durationMs={} stage=decode error={}",
-                                book.getTitle(), bookId, imageData.length, durationMs,
-                                decodeFailure == null ? "unsupported-or-corrupt-image"
-                                        : UiExceptionSupport.technicalMessage(decodeFailure));
-                    } else {
-                        coverImageView.setImage(fxImage);
-                        if (targetViewModel != null) targetViewModel.setCover(fxImage);
+                    // Never replace the JavaFX texture for the exact same pixels. Avoids both a
+                    // visible blink and an unnecessary second decode after rich-details enrichment.
+                    if (coverImageView.getImage() != null && displayedCoverDigest != null
+                            && Arrays.equals(displayedCoverDigest, payload.digest())) {
                         lastLoadedRequest = requestKey;
+                        displayedCoverRequest = requestKey;
                         lastCoverAbsent = false;
+                        if (targetViewModel != null) targetViewModel.setCover(coverImageView.getImage());
                         long durationMs = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
-                        log.info("COVER_DONE title='{}' id={} bytes={} width={} height={} durationMs={}",
-                                book.getTitle(), bookId, imageData.length, fxImage.getWidth(), fxImage.getHeight(), durationMs);
+                        log.info("COVER_DONE title='{}' id={} bytes={} durationMs={} reused=true",
+                                book.getTitle(), bookId, imageData.length, durationMs);
+                    } else {
+                        Image fxImage = new Image(new ByteArrayInputStream(imageData),
+                                800, 1200, true, true); // bounded decode for thumbnail and high-DPI UI
+                        if (fxImage.isError() || fxImage.getWidth() <= 0 || fxImage.getHeight() <= 0) {
+                            Throwable decodeFailure = fxImage.getException();
+                            coverExtractor.invalidateCover(book);
+                            coverImageView.setImage(null);
+                            displayedCoverDigest = null;
+                            displayedCoverRequest = null;
+                            if (targetViewModel != null) targetViewModel.setCover(null);
+                            lastLoadedRequest = null;
+                            long durationMs = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+                            log.warn("COVER_FAIL title='{}' id={} bytes={} durationMs={} stage=decode error={}",
+                                    book.getTitle(), bookId, imageData.length, durationMs,
+                                    decodeFailure == null ? "unsupported-or-corrupt-image"
+                                            : UiExceptionSupport.technicalMessage(decodeFailure));
+                        } else {
+                            coverImageView.setImage(fxImage);
+                            if (targetViewModel != null) targetViewModel.setCover(fxImage);
+                            displayedCoverDigest = payload.digest();
+                            displayedCoverRequest = requestKey;
+                            lastLoadedRequest = requestKey;
+                            lastCoverAbsent = false;
+                            long durationMs = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+                            log.info("COVER_DONE title='{}' id={} bytes={} width={} height={} durationMs={}",
+                                    book.getTitle(), bookId, imageData.length, fxImage.getWidth(), fxImage.getHeight(), durationMs);
+                        }
                     }
                 } else {
                     log.debug("Обкладинка відсутня для {}", book.getTitle());
                     coverImageView.setImage(null);
+                    displayedCoverDigest = null;
+                    displayedCoverRequest = null;
+                    if (targetViewModel != null) targetViewModel.setCover(null);
                     lastLoadedRequest = requestKey;
                     lastCoverAbsent = true;
                     long durationMs = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
@@ -161,17 +197,34 @@ public class CoverPresenter {
         currentLoadingRequest.set(null);
         lastLoadedRequest = null;
         lastCoverAbsent = false;
+        displayedCoverDigest = null;
+        displayedCoverRequest = null;
+        // A queued clear must not erase an image loaded after the clear was requested.
         UiExecutor.runOnUiThread(() -> {
-            if (coverImageView != null) {
+            if (coverImageView != null && currentLoadingRequest.get() == null
+                    && lastLoadedRequest == null) {
                 coverImageView.setImage(null);
             }
         });
     }
 
     private void cancelCurrentTask() {
-        UiBackgroundExecutor.CancellableSubmission<byte[]> current = coverTask;
+        UiBackgroundExecutor.CancellableSubmission<CoverPayload> current = coverTask;
         coverTask = null;
         if (current != null) current.cancel();
+    }
+
+    private static boolean sameLogicalBook(CoverRequestKey earlier, CoverRequestKey next) {
+        return earlier != null && next != null
+                && Objects.equals(earlier.collectionId(), next.collectionId())
+                && Objects.equals(earlier.bookId(), next.bookId());
+    }
+
+    private record CoverPayload(byte[] bytes, byte[] digest) {
+        static CoverPayload from(byte[] data) throws NoSuchAlgorithmException {
+            return data == null || data.length == 0 ? new CoverPayload(null, null)
+                    : new CoverPayload(data, MessageDigest.getInstance("SHA-256").digest(data));
+        }
     }
 
     private static String safe(String value) {

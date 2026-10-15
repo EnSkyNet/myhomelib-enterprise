@@ -4,7 +4,6 @@ import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -77,9 +76,10 @@ public class CollectionTransactionConfig {
     }
 
     @Bean(name = "collectionTransactionManager")
-    public PlatformTransactionManager collectionTransactionManager(
-            @Qualifier("collectionDataSource") DataSource collectionDataSource) {
-        return new DataSourceTransactionManager(collectionDataSource);
+    public PlatformTransactionManager collectionTransactionManager(CollectionManager collectionManager) {
+        // SqliteBookCommandRepository and its helpers use CollectionManager's physical
+        // JdbcTemplate/DataSource. Transactional writes must bind that same DataSource.
+        return new CurrentCollectionTransactionManager(collectionManager);
     }
 
     @Bean(name = "collectionTransactionTemplate")

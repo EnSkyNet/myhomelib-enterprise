@@ -448,6 +448,14 @@
                                 </goals>
                                 <configuration>
                                     <failBuildOnCVSS>7.0</failBuildOnCVSS>
+                                    <failOnError>true</failOnError>
+                                    <scanSet>
+                                        <fileSet><directory>src/main/resources</directory></fileSet>
+                                        <fileSet><directory>src/main/filters</directory></fileSet>
+                                        <fileSet><directory>src/main/webapp</directory></fileSet>
+                                        <fileSet><directory>tools</directory></fileSet>
+                                        <fileSet><directory>dist</directory></fileSet>
+                                    </scanSet>
                                     <formats>
                                         <format>HTML</format>
                                         <format>JSON</format>

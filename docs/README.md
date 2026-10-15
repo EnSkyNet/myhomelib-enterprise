@@ -25,6 +25,8 @@
 
 ## Release evidence
 
+Актуальний extraction follow-up: `release/CONTENT-EXTRACTION-MEMORY-AUDIT-2026-10-11-UA.md` — виправлення, ліміти пам’яті та явна межа тестування.
+
 `docs/release/` містить лише матеріали, прив'язані до release/acceptance: `CURRENT-VALIDATION.md`, фінальний deep-audit report, external runbook/test plan, source-package policy, performance evidence та список реально відкритих live tasks.
 
 ## Історія

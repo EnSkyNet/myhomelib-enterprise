@@ -1,0 +1,115 @@
+{
+  "execution_date": "2026-10-11",
+  "packaging_date": "2026-10-12",
+  "provenance": "Values transcribed from the actual Maven/Surefire inspection tool output in this task. Original XML, Maven logs and runtime were lost when the workspace reset; this is a recorded result summary, not recreated raw output. The tested source changes were reapplied to the exact saved v3 source before packaging. Maven was not rerun during final packaging.",
+  "baseline_source_archive_sha256": "a46697c22ffb3955ec8d2ae5bbe0cfd36f9811a87fcd71c4b9ce57976429c44f",
+  "baseline": {
+    "suite": "EpubPackageBudgetTest",
+    "tests": 7,
+    "failures": 5,
+    "errors": 0,
+    "skipped": 0,
+    "failed_cases": [
+      "rejectsOversizedPackageBeforeParsingIt",
+      "countsRepeatedManifestDeclarationsAgainstBudget",
+      "rejectsOversizedContainerEvenWhenRootfileAppearsFirst",
+      "boundsSpineReferencesEvenWhenTheyDoNotResolveToChapters",
+      "cancellationAfterMaterializationPrecedesInvalidPackageParsing"
+    ],
+    "passed_cases": [
+      "acceptsMetadataAtExactByteBoundary",
+      "acceptsManifestAndSpineAtExactRecordBoundaries"
+    ]
+  },
+  "after": {
+    "maven_exit_code": 0,
+    "tests": 53,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "suites": [
+      {
+        "name": "com.myhomelibcorp.application.content.ExtractedContentTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": "0.065"
+      },
+      {
+        "name": "com.myhomelibcorp.AppPathsLaunchDirTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": "0.515"
+      },
+      {
+        "name": "com.myhomelibcorp.infrastructure.content.ContentDocumentBuilderTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": "0.009"
+      },
+      {
+        "name": "com.myhomelibcorp.infrastructure.content.ContentExtractionResourceRegressionTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": "0.019"
+      },
+      {
+        "name": "com.myhomelibcorp.infrastructure.content.ContentExtractorContractTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": "0.096"
+      },
+      {
+        "name": "com.myhomelibcorp.infrastructure.content.EpubPackageBudgetTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": "0.427"
+      },
+      {
+        "name": "com.myhomelibcorp.infrastructure.content.EpubTitleBudgetTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": "0.101"
+      },
+      {
+        "name": "com.myhomelibcorp.infrastructure.contentindex.LuceneContentIndexServiceIntegrationTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": "0.911"
+      },
+      {
+        "name": "com.myhomelibcorp.shared.text.TextStreamDecoderTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": "0.099"
+      }
+    ]
+  },
+  "runtime": {
+    "java": "OpenJDK 21.0.12.1+1-1~24.04.4",
+    "maven": "3.9.16",
+    "javafx": "21.0.12",
+    "test_heap": "512m",
+    "display": "Xvfb",
+    "mockito_agent": "5.23.0",
+    "maven_mode": "offline, production profile, bootstrap module with dependencies"
+  },
+  "full_root_clean_verify": "Not executed for this patch. The earlier process-descendant visibility limitation remains unverified; its test was not changed or disabled."
+}

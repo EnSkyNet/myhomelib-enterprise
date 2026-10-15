@@ -41,7 +41,8 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
 
     private final JdbcTemplate jdbc;
     private final DomainEventPublisher events;
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, runnable -> {
+    // Cancelled debounce tasks must not sit in the delay queue for up to an hour.
+    private final ScheduledThreadPoolExecutor scheduler = new ScheduledThreadPoolExecutor(2, runnable -> {
         Thread thread = new Thread(runnable, "incoming-folder-watch-scheduler");
         thread.setDaemon(true);
         return thread;
@@ -55,6 +56,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         this.jdbc = jdbc;
         java.util.Objects.requireNonNull(flywayMetadata, "flywayMetadata");
         this.events = events;
+        scheduler.setRemoveOnCancelPolicy(true);
     }
 
     @PostConstruct
@@ -143,10 +145,15 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
             return findState(collectionId).orElseThrow();
         }
         int scheduled = 0;
+        WatchSettings scanSettings = new WatchSettings(state.folder(), state.enabled(),
+                state.debounceSeconds(), state.stabilitySeconds());
         try (var stream = Files.list(folder)) {
-            for (Path file : stream.filter(IncomingFolderWatchAdapter::isSafeIncomingRegularFile)
-                    .filter(IncomingFolderWatchAdapter::isIncomingSupported).toList()) {
-                scheduleCandidate(collectionId, file, 0);
+            // Do not materialize every path: incoming directories may contain hundreds of
+            // thousands of books. Process each directory entry as the stream yields it.
+            var iterator = stream.filter(IncomingFolderWatchAdapter::isSafeIncomingRegularFile)
+                    .filter(IncomingFolderWatchAdapter::isIncomingSupported).iterator();
+            while (iterator.hasNext()) {
+                scheduleCandidate(collectionId, iterator.next(), 0, scanSettings);
                 scheduled++;
             }
         } catch (IOException failure) {
@@ -280,8 +287,24 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         }
     }
 
+    /** Read only watcher configuration on the per-file path. findState() aggregates all
+     * observed files for UI counters, which is quadratic when invoked per candidate. */
+    private Optional<WatchSettings> loadWatchSettings(String collectionId) {
+        List<WatchSettings> rows = jdbc.query("""
+                SELECT folder_path, enabled, debounce_seconds, stability_seconds
+                  FROM incoming_folder_watch WHERE collection_id=?
+                """, (rs, row) -> new WatchSettings(Path.of(rs.getString(1)),
+                rs.getInt(2) != 0, rs.getInt(3), rs.getInt(4)), collectionId);
+        return rows.stream().findFirst();
+    }
+
     private void scheduleCandidate(String collectionId, Path file, int explicitDelaySeconds) {
-        IncomingFolderWatchState state = findState(collectionId).orElse(null);
+        scheduleCandidate(collectionId, file, explicitDelaySeconds,
+                loadWatchSettings(collectionId).orElse(null));
+    }
+
+    private void scheduleCandidate(String collectionId, Path file, int explicitDelaySeconds,
+                                   WatchSettings state) {
         if (state == null || !state.enabled() && explicitDelaySeconds < 0) return;
         int delay = explicitDelaySeconds >= 0 ? explicitDelaySeconds : state.debounceSeconds();
         String key = key(collectionId, file);
@@ -306,7 +329,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
     }
 
     private void observeCandidate(String collectionId, Path file) {
-        IncomingFolderWatchState state = findState(collectionId).orElse(null);
+        WatchSettings state = loadWatchSettings(collectionId).orElse(null);
         if (state == null || file == null) return;
         Path normalized = file.toAbsolutePath().normalize();
         Path configuredFolder = state.folder() == null ? null : state.folder().toAbsolutePath().normalize();
@@ -500,6 +523,8 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         watchers.keySet().stream().toList().forEach(this::stopMonitoring);
         scheduler.shutdownNow();
     }
+
+    private record WatchSettings(Path folder, boolean enabled, int debounceSeconds, int stabilitySeconds) { }
 
     private record CandidateObservation(long size, long mtime, String signatureSeenAt,
                                         String fingerprint, IncomingFolderCandidateStatus status) { }

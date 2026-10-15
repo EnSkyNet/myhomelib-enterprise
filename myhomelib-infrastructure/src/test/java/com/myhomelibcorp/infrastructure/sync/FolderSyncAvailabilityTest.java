@@ -20,6 +20,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -58,7 +59,7 @@ class FolderSyncAvailabilityTest {
     }
 
     @Test
-    void resourceBehindSymlinkedParentIsMarkedUnavailableWhenSupported() throws Exception {
+    void resourceBehindSymlinkedParentIsNotMarkedMissingWhenSupported() throws Exception {
         Fixture f = new Fixture();
         Path root = Files.createDirectories(temp.resolve("sync-root"));
         Path real = Files.createDirectories(root.resolve("real"));
@@ -82,7 +83,85 @@ class FolderSyncAvailabilityTest {
 
         f.service.syncFolder(root, SyncOptions.builder().deleteOrphans(true).build());
 
-        verify(f.mutations).updateAvailability(local, false);
+        verify(f.mutations, never()).updateAvailability(local, false);
+    }
+
+    @Test
+    void disappearingSyncRootDoesNotMarkEveryBookNonLocal() throws Exception {
+        Fixture f = new Fixture();
+        Path root = Files.createDirectories(temp.resolve("disappearing-root"));
+        Book local = Book.builder().id(BookId.generate()).title("Book")
+                .metadata(BookMetadata.empty())
+                .file(new BookFile("book.fb2", "", "", 1, root.toString()))
+                .local(true).build();
+        when(f.scanner.streamSupportedFiles(any(), anyBoolean(), anyInt(), anyLong()))
+                .thenReturn(Stream.empty());
+        // Simulate a drive that becomes unavailable between initial enumeration and reconciliation.
+        when(f.books.streamAll()).thenAnswer(invocation -> {
+            Files.delete(root);
+            return Stream.of(local);
+        });
+        var result = f.service.syncFolder(root, SyncOptions.builder().deleteOrphans(true).build());
+        verify(f.mutations, never()).updateAvailability(any(), anyBoolean());
+        assertEquals(1, result.getErrors());
+    }
+
+    @Test
+    void directoryInPlaceOfBookIsNotTreatedAsMissingFile() throws Exception {
+        Fixture f = new Fixture();
+        Path fake = Files.createDirectories(temp.resolve("actually-a-directory.fb2"));
+        Book local = book(true, fake);
+        when(f.scanner.streamSupportedFiles(any(), anyBoolean(), anyInt(), anyLong()))
+                .thenReturn(Stream.empty());
+        when(f.books.streamAll()).thenReturn(Stream.of(local));
+        var result = f.service.syncFolder(temp, SyncOptions.builder().deleteOrphans(true).build());
+        verify(f.mutations, never()).updateAvailability(any(), anyBoolean());
+        assertEquals(1, result.getErrors());
+    }
+
+    @Test
+    void restoredFileBetweenChecksNeverBecomesNonLocal() throws Exception {
+        Path root = Files.createDirectories(temp.resolve("rechecked-root"));
+        Path file = root.resolve("returns.fb2");
+        Book local = Book.builder().id(BookId.generate()).title("Returned")
+                .metadata(BookMetadata.empty())
+                .file(new BookFile("returns.fb2", "", "", 1, root.toString()))
+                .local(true).build();
+        BookQueryRepository queries = mock(BookQueryRepository.class);
+        CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
+        when(queries.streamAll()).thenReturn(Stream.of(local));
+        FolderSyncAvailabilitySupport support = spy(new FolderSyncAvailabilitySupport());
+        // Deterministically reproduce a restored file at the precise interleaving point.
+        doReturn(FolderSyncAvailabilitySupport.Availability.MISSING,
+                FolderSyncAvailabilitySupport.Availability.PRESENT)
+                .when(support).availabilityOf(file, root);
+        var result = support.markMissingPhysicalFiles(root, new java.util.concurrent.atomic.AtomicBoolean(),
+                queries, mutations, new FolderSyncBookSupport());
+        assertEquals(0, result.updated());
+        assertEquals(0, result.errors());
+        verify(mutations, never()).updateAvailability(any(), anyBoolean());
+    }
+
+    @Test
+    void indeterminateSecondCheckCannotClearLocalStatus() throws Exception {
+        Path root = Files.createDirectories(temp.resolve("uncertain-root"));
+        Path file = root.resolve("uncertain.fb2");
+        Book local = Book.builder().id(BookId.generate()).title("Uncertain")
+                .metadata(BookMetadata.empty())
+                .file(new BookFile("uncertain.fb2", "", "", 1, root.toString()))
+                .local(true).build();
+        BookQueryRepository queries = mock(BookQueryRepository.class);
+        CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
+        when(queries.streamAll()).thenReturn(Stream.of(local));
+        FolderSyncAvailabilitySupport support = spy(new FolderSyncAvailabilitySupport());
+        doReturn(FolderSyncAvailabilitySupport.Availability.MISSING,
+                FolderSyncAvailabilitySupport.Availability.UNKNOWN)
+                .when(support).availabilityOf(file, root);
+        var result = support.markMissingPhysicalFiles(root, new java.util.concurrent.atomic.AtomicBoolean(),
+                queries, mutations, new FolderSyncBookSupport());
+        assertEquals(0, result.updated());
+        assertEquals(1, result.errors());
+        verify(mutations, never()).updateAvailability(any(), anyBoolean());
     }
 
     private Book book(boolean local, Path file) {

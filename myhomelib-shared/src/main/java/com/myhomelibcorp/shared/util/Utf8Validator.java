@@ -21,4 +21,13 @@ public final class Utf8Validator {
             return false;
         }
     }
+    /** Validate a sampled prefix while permitting only an incomplete final UTF-8 sequence. */
+    public static boolean isValidPrefix(byte[] sample) {
+        if (sample == null) return false;
+        return !StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(sample), java.nio.CharBuffer.allocate(sample.length), false)
+                .isError();
+    }
 }

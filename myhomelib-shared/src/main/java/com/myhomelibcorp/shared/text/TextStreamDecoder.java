@@ -22,15 +22,17 @@ public final class TextStreamDecoder {
 
     public static BufferedReader open(InputStream input, String preferredEncoding) throws IOException {
         if (input == null) throw new IOException("Text input is null");
-        PushbackInputStream in = new PushbackInputStream(new BufferedInputStream(input, 64 * 1024), SAMPLE_LIMIT);
+        PushbackInputStream in = new PushbackInputStream(new BufferedInputStream(input, 64 * 1024), SAMPLE_LIMIT + 1);
         byte[] sample = in.readNBytes(SAMPLE_LIMIT);
-        Detected detected = preferred(preferredEncoding, sample);
+        int next = sample.length == SAMPLE_LIMIT ? in.read() : -1;
+        if (next >= 0) in.unread(next);
+        Detected detected = preferred(preferredEncoding, sample, next < 0);
         int skip = Math.min(detected.bomBytes(), sample.length);
         if (sample.length > skip) in.unread(sample, skip, sample.length - skip);
         return new BufferedReader(new InputStreamReader(in, detected.charset()), 64 * 1024);
     }
 
-    private static Detected preferred(String preferredEncoding, byte[] sample) {
+    private static Detected preferred(String preferredEncoding, byte[] sample, boolean completeInput) {
         Detected bom = detectBom(sample);
         if (bom != null) return bom;
         if (preferredEncoding != null && !preferredEncoding.isBlank()) {
@@ -40,7 +42,10 @@ public final class TextStreamDecoder {
                 // Fall through to content-based detection.
             }
         }
-        if (Utf8Validator.isValid(sample)) return new Detected(StandardCharsets.UTF_8, 0);
+        // A fixed-size probe may end inside a multibyte character. Complete files stay strict.
+        if (completeInput ? Utf8Validator.isValid(sample) : Utf8Validator.isValidPrefix(sample)) {
+            return new Detected(StandardCharsets.UTF_8, 0);
+        }
 
         List<Charset> legacy = List.of(Charset.forName("windows-1251"), Charset.forName("CP866"));
         Charset best = legacy.getFirst();

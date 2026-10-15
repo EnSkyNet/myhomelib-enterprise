@@ -27,6 +27,28 @@ class LuceneContentIndexServiceIntegrationTest {
     Path temp;
 
     @Test
+    void previousExtractionSchemaBlocksSearchUntilRebuilt() throws Exception {
+        LuceneContentIndexService service = service();
+        service.rebuild("c1", List.of(entry("book-1", "artifact-1", "Old", "old needle")));
+        Path index = temp.resolve("content-index").resolve("c1");
+        try (FSDirectory directory = FSDirectory.open(index);
+             StandardAnalyzer analyzer = new StandardAnalyzer();
+             IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig(analyzer))) {
+            writer.setLiveCommitData(Map.of(LuceneContentIndexService.SCHEMA_KEY, "1").entrySet());
+            writer.commit();
+        }
+        assertThat(service.health("c1").state()).isEqualTo(
+                com.myhomelibcorp.application.content.index.ContentIndexHealth.State.SCHEMA_MISMATCH);
+        assertThatThrownBy(() -> service.search(ContentIndexQuery.allBooks("c1", "needle", 10)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("rebuild required");
+        assertThatThrownBy(() -> service.replaceArtifact("c1", entry("book-2", "artifact-2", "New", "new needle")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("incompatible");
+        service.rebuild("c1", List.of(entry("book-2", "artifact-2", "New", "new needle")));
+        assertThat(service.search(ContentIndexQuery.allBooks("c1", "needle", 10)).hits())
+                .singleElement().satisfies(hit -> assertThat(hit.bookId()).isEqualTo("book-2"));
+    }
+
+    @Test
     void indexesSearchesAndFiltersByBookWithStableChapterOffsets() throws Exception {
         LuceneContentIndexService service = service();
         service.replaceArtifact("c1", entry("book-1", "artifact-1", "Alpha chapter", "Unique needle in first book"));
@@ -57,6 +79,29 @@ class LuceneContentIndexServiceIntegrationTest {
         assertThat(health.schemaVersion()).isEqualTo(LuceneContentIndexService.SCHEMA_VERSION);
         assertThat(health.documentCount()).isEqualTo(2);
         assertThat(health.sizeBytes()).isPositive();
+    }
+
+    @Test
+    void exactTotalCountIsPreservedWhenTopDocsUsesItsBoundedHitThreshold() {
+        LuceneContentIndexService service = service();
+        service.rebuild("c1", corpus(1_500, "largecorpus"));
+
+        var page = service.search(ContentIndexQuery.allBooks("c1", "largecorpus", 10));
+
+        assertThat(page.hits()).hasSize(10);
+        assertThat(page.total()).isEqualTo(1_500);
+    }
+
+    @Test
+    void largeOffsetDoesNotOverflowTopNArithmetic() {
+        LuceneContentIndexService service = service();
+        service.rebuild("c1", corpus(20, "offsetterm"));
+
+        var page = service.search(new ContentIndexQuery("c1", "offsetterm", null, Integer.MAX_VALUE, 10));
+
+        assertThat(page.total()).isEqualTo(20);
+        assertThat(page.hits()).isEmpty();
+        assertThat(page.offset()).isEqualTo(Integer.MAX_VALUE);
     }
 
     @Test

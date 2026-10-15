@@ -29,6 +29,31 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    void bulkManualScanSchedulesAllSupportedFilesWithoutRetainingDirectorySnapshot() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("bulk-import"));
+        adapter.configure("c1", incoming, false, 1, 1);
+        for (int i = 0; i < 64; i++) {
+            Files.writeString(incoming.resolve("book-" + i + ".txt"), "content-" + i);
+        }
+        Files.writeString(incoming.resolve("not-a-book.unknown"), "not a supported format");
+        assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:64");
+        await(() -> jdbc.queryForObject("SELECT COUNT(*) FROM incoming_folder_file", Integer.class) == 64,
+                Duration.ofSeconds(8));
+    }
+
+    @Test
+    void cancelledDebounceTimersAreRemovedFromSchedulerQueue() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        var field = IncomingFolderWatchAdapter.class.getDeclaredField("scheduler");
+        field.setAccessible(true);
+        var scheduler = (java.util.concurrent.ScheduledThreadPoolExecutor) field.get(adapter);
+        assertThat(scheduler.getRemoveOnCancelPolicy()).isTrue();
+    }
+
+    @Test
     void stabilityGateThenContentFingerprintPreventsSecondImportCandidate() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         DomainEventPublisher events = mock(DomainEventPublisher.class);

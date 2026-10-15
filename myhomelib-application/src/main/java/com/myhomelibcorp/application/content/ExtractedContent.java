@@ -15,16 +15,23 @@ public record ExtractedContent(
         text = text == null ? "" : text;
         chapters = chapters == null ? List.of() : List.copyOf(chapters);
         long cursor = 0L;
-        StringBuilder rebuilt = new StringBuilder(text.length());
         for (int i = 0; i < chapters.size(); i++) {
             ExtractedChapter chapter = chapters.get(i);
+            if (i > 0) {
+                if (cursor >= text.length() || text.charAt((int) cursor) != '\n') {
+                    throw new IllegalArgumentException("text must equal chapters joined by newline");
+                }
+                cursor++;
+            }
             if (chapter.startOffset() != cursor) throw new IllegalArgumentException("chapter offsets must be contiguous");
-            if (i > 0) rebuilt.append('\n');
-            rebuilt.append(chapter.text());
+            // Validate the existing text without rebuilding another complete copy of the book.
+            if (chapter.endOffset() > text.length()
+                    || !text.regionMatches((int) cursor, chapter.text(), 0, chapter.text().length())) {
+                throw new IllegalArgumentException("text must equal chapters joined by newline");
+            }
             cursor = chapter.endOffset();
-            if (i + 1 < chapters.size()) cursor += 1L;
         }
-        if (!chapters.isEmpty() && !rebuilt.toString().equals(text)) {
+        if (!chapters.isEmpty() && cursor != text.length()) {
             throw new IllegalArgumentException("text must equal chapters joined by newline");
         }
     }

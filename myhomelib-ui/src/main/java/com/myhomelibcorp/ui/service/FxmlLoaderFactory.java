@@ -54,8 +54,10 @@ public class FxmlLoaderFactory {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/author-workspace.fxml"));
             configureControllerFactory(loader);
+            long loadedAt = System.nanoTime();
             Pane pane = loader.load();
-            localizationService.apply(pane);
+            // WorkspaceManager.setWorkspace localizes the pane. Running the full tree
+            // translation here as well doubles synchronous work on the FX thread.
 
             AuthorWorkspaceController controller = loader.getController();
             if (authorId == null) {
@@ -63,6 +65,9 @@ public class FxmlLoaderFactory {
             }
             controller.setDownloadedOnly(downloadedOnly);
             controller.setAuthorId(authorId);
+            long prepareMs = (System.nanoTime() - loadedAt) / 1_000_000;
+            if (prepareMs >= 750) log.warn("AUTHOR_WORKSPACE_FXML_SLOW durationMs={} author={}", prepareMs, authorId);
+            else log.debug("AUTHOR_WORKSPACE_FXML_READY durationMs={}", prepareMs);
 
             pane.setUserData(controller);
             return pane;

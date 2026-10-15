@@ -16,6 +16,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.channels.FileChannel;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -63,9 +64,10 @@ public class SevenZImporter implements BookImporterPort {
             Path safeFile = SafeFilePublication.requireSafeRegularFile(file, "7Z import source");
             try (SevenZHandle handle = openSevenZNoFollow(safeFile)) {
             SevenZFile archive = handle.archive();
-            SevenZArchiveEntry entry;
             int entries = 0;
-            while ((entry = archive.getNextEntry()) != null) {
+            // getEntries() exposes archive metadata without advancing the decoder.
+            // getNextEntry() may skip unread solid-stream data and trigger unbounded work.
+            for (SevenZArchiveEntry entry : archive.getEntries()) {
                 if (++entries > ArchiveSafetyLimits.MAX_ENTRY_COUNT) return -1;
                 if (!entry.isDirectory() && ArchiveImportSupport.isSupportedBookEntry(entry.getName(), importerRegistry)) count++;
             }
@@ -106,12 +108,22 @@ public class SevenZImporter implements BookImporterPort {
                     if (entry == null) { close(); return; }
                     if (++entryCount > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("Забагато записів у 7z");
                     String name = entry.getName();
-                    if (entry.isDirectory() || !ArchiveImportSupport.isSafeEntryName(name) || ArchiveImportSupport.isNestedArchive(name)) continue;
-                    if (entry.getSize() > ArchiveSafetyLimits.MAX_ENTRY_BYTES) { log.warn("Пропущено великий 7z entry: {}", name); continue; }
+                    if (entry.isDirectory() || !ArchiveImportSupport.isSafeEntryName(name) || ArchiveImportSupport.isNestedArchive(name)) {
+                        totalDecompressedBytes = discardCurrentEntry();
+                        continue;
+                    }
+                    if (entry.getSize() > ArchiveSafetyLimits.MAX_ENTRY_BYTES) {
+                        log.warn("Пропущено великий 7z entry: {}", name);
+                        totalDecompressedBytes = discardCurrentEntry();
+                        continue;
+                    }
 
                     BookImporterPort importer;
                     try { importer = importerRegistry.findImporter(ArchiveImportSupport.importerProbePath(name)); }
-                    catch (Exception unsupported) { continue; }
+                    catch (Exception unsupported) {
+                        totalDecompressedBytes = discardCurrentEntry();
+                        continue;
+                    }
 
                     totalDecompressedBytes = ArchiveEntryImportSupport.materializeAndImport(
                             archivePath,
@@ -120,11 +132,20 @@ public class SevenZImporter implements BookImporterPort {
                             buffer -> archive.read(buffer, 0, buffer.length),
                             totalDecompressedBytes,
                             queue);
-                } catch (Exception e) {
-                    log.warn("Помилка запису 7z у {}: {}", archivePath, e.getMessage());
+                } catch (IOException unreadable) {
+                    // Never represent a corrupt tail as a successfully completed archive.
                     close();
+                    throw new UncheckedIOException("Не вдалося дочитати 7z " + archivePath, unreadable);
+                } catch (RuntimeException failure) {
+                    close();
+                    throw failure;
                 }
             }
+        }
+
+        private long discardCurrentEntry() throws IOException {
+            return ArchiveEntryImportSupport.discardEntry(
+                    buffer -> archive.read(buffer, 0, buffer.length), totalDecompressedBytes);
         }
 
         @Override public void close() {

@@ -11,14 +11,17 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 /** Strict parser for Organizer crash manifests. Invalid or unknown schemas are never used for automatic recovery. */
 @Component
 public final class LibraryOperationCrashManifestReader {
     private static final int MIN_SUPPORTED_SCHEMA = 1;
-    private static final int MAX_SUPPORTED_SCHEMA = 2;
-    private static final int MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
+    private static final int MAX_SUPPORTED_SCHEMA = 3;
+    private static final int MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
+    private static final int MAX_LEGACY_MANIFEST_BYTES = 4 * 1024 * 1024;
     private final ObjectMapper json = new ObjectMapper();
 
     public LibraryOperationCrashSnapshot read(Path manifest) throws Exception {
@@ -28,10 +31,19 @@ public final class LibraryOperationCrashManifestReader {
         String expectedHash = SafeFilePublication.sha256(file, "Organizer crash manifest snapshot");
         byte[] bytes = SafeFilePublication.readOwnedBytes(
                 file, expectedHash, MAX_MANIFEST_BYTES, "Organizer crash manifest");
+        // Reject legacy/malformed oversized snapshots before expensive JSON parsing.
+        // Schema 3 is the only format permitted to grow beyond the old 4-MiB cap.
+        if (bytes.length > MAX_LEGACY_MANIFEST_BYTES) {
+            String header = new String(bytes, 0, Math.min(256, bytes.length), java.nio.charset.StandardCharsets.UTF_8);
+            if (!header.contains("\"schemaVersion\": 3"))
+                throw new IllegalArgumentException("Crash manifest exceeds safety limit for legacy schema");
+        }
         JsonNode root = json.readTree(bytes);
         int schema = requiredInt(root, "schemaVersion");
         if (schema < MIN_SUPPORTED_SCHEMA || schema > MAX_SUPPORTED_SCHEMA)
             throw new IllegalArgumentException("Unsupported crash manifest schema: " + schema);
+        if (schema < 3 && bytes.length > MAX_LEGACY_MANIFEST_BYTES)
+            throw new IllegalArgumentException("Legacy crash manifest exceeds safety limit");
         UUID operationId = UUID.fromString(requiredText(root, "operationId"));
         OrganizationOperationState state = OrganizationOperationState.valueOf(requiredText(root, "state"));
         List<LibraryOperationCrashSnapshot.Item> items = new ArrayList<>();
@@ -51,9 +63,38 @@ public final class LibraryOperationCrashManifestReader {
                     optionalText(node, "message")));
         }
         Instant updatedAt = Instant.parse(requiredText(root, "updatedAt"));
+        String message = optionalText(root, "message");
+        if (schema == 3) {
+            Map<UUID, LibraryOperationCrashSnapshot.Item> current = new LinkedHashMap<>();
+            for (LibraryOperationCrashSnapshot.Item item : items) {
+                if (current.put(item.itemId(), item) != null)
+                    throw new IllegalArgumentException("Duplicate item id in crash manifest");
+            }
+            for (String eventJson : ManifestEventLog.read(file)) {
+                JsonNode event = json.readTree(eventJson);
+                String type = requiredText(event, "type");
+                if ("operation".equals(type)) {
+                    state = OrganizationOperationState.valueOf(requiredText(event, "state"));
+                    message = optionalText(event, "message");
+                    updatedAt = Instant.parse(requiredText(event, "updatedAt"));
+                } else if ("item".equals(type)) {
+                    UUID itemId = UUID.fromString(requiredText(event, "itemId"));
+                    LibraryOperationCrashSnapshot.Item previous = current.get(itemId);
+                    if (previous == null) throw new IllegalArgumentException("Unknown item in crash manifest event");
+                    current.put(itemId, new LibraryOperationCrashSnapshot.Item(itemId, previous.action(),
+                            previous.sourcePath(), previous.sourceEntry(), previous.targetPath(),
+                            OrganizationItemState.valueOf(requiredText(event, "state")),
+                            optionalText(event, "sourceSha256"), optionalText(event, "targetSha256"),
+                            optionalPath(event, "backupPath"), optionalText(event, "message")));
+                } else {
+                    throw new IllegalArgumentException("Unknown crash manifest event: " + type);
+                }
+            }
+            items = new ArrayList<>(current.values());
+        }
         return new LibraryOperationCrashSnapshot(schema, operationId, optionalText(root, "profileId"),
                 requiredPath(root, "sourceRoot"), requiredPath(root, "destinationRoot"), state,
-                optionalText(root, "message"), updatedAt, items);
+                message, updatedAt, items);
     }
 
     private String requiredText(JsonNode node, String field) {

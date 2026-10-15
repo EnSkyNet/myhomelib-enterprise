@@ -3,6 +3,8 @@ package com.myhomelibcorp.ui.imports;
 import com.myhomelibcorp.ui.service.DialogLocalization;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.imports.context.ImportContext;
+import com.myhomelibcorp.application.imports.diagnostics.ImportIssue;
+import com.myhomelibcorp.application.imports.statistics.ImportStatus;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.application.progress.OperationProgress;
 import com.myhomelibcorp.application.usecase.imports.ImportDirectoryUseCase;
@@ -27,6 +29,7 @@ import org.springframework.stereotype.Component;
 import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -205,29 +208,34 @@ public class ImportWorkspaceController {
                     }
                     appState.getStatusBar().setProgressVisible(false);
 
+                    boolean cancelled = result.status() == ImportStatus.CANCELLED;
+                    long total = result.imported() + result.skipped() + result.duplicates() + result.errors();
                     if (progressDialog != null) {
-                        if (cancelFlag.get()) {
+                        if (cancelled) {
+                            // Keep the last authoritative progress value; result counters are not a
+                            // reliable processed/total pair for a partially cancelled directory import.
                             progressDialog.updateStatus(i18n.text("ui.import.status.cancelled"));
-                            progressDialog.updateProgress(result.imported(), result.imported() + result.skipped() + result.duplicates() + result.errors(), i18n.text("ui.import.status.cancelled_short"));
                         } else {
-                            progressDialog.updateProgress(result.imported(), result.imported() + result.skipped() + result.duplicates() + result.errors(), i18n.text("ui.import.status.completed"));
+                            progressDialog.updateProgress(total, total, i18n.text("ui.import.status.completed"));
                         }
-
                         closeProgressDialogAfter(Duration.seconds(1));
                     }
 
-                    if (cancelFlag.get()) {
-                        setStatus(i18n.text("ui.import.status.cancelled_rollback"));
-                        setProgress(0);
+                    updateFinalStats(result.imported(), result.errors());
+                    String summary = formatImportSummary(result, total);
+                    if (cancelled) {
+                        setStatus(summary + "\n\n" + i18n.text("ui.import.status.cancelled"));
+                        appState.getStatusBar().setStatusText(i18n.text("ui.import.status.cancelled"));
                     } else {
-                        long total = result.imported() + result.skipped() + result.duplicates() + result.errors();
-                        updateStats(result.imported(), result.errors(), total);
                         setProgress(1.0);
-                        String summary = formatImportSummary(result, total);
                         setStatus(summary);
                         appState.getStatusBar().setStatusText(
                                 i18n.format("ui.import.status.completed_summary",
                                         result.imported(), result.errors()));
+                    }
+                    if (!result.issues().isEmpty()) {
+                        dialogService.showWarning(i18n.text("common.warning"),
+                                i18n.text("ui.import.diagnostics.header"), formatImportIssues(result.issues()));
                     }
                 }))
                 .exceptionally(ex -> {
@@ -370,6 +378,74 @@ public class ImportWorkspaceController {
                 result.duplicates(),
                 result.errors(),
                 formatDuration(result.durationMs()));
+    }
+
+    private String formatImportIssues(List<ImportIssue> issues) {
+        final int displayLimit = 20;
+        StringBuilder out = new StringBuilder();
+        int displayed = 0;
+        for (ImportIssue issue : issues) {
+            if (issue == null) continue;
+            if (displayed >= displayLimit) break;
+            if (displayed > 0) out.append("\n\n");
+            out.append(safeDiagnosticText(issue.code(), 96)).append(" — ")
+                    .append(issueMessage(issue));
+            if (!issue.sourceRecord().isBlank()
+                    && !"FILE_IMPORT_FAILED".equals(issue.code())
+                    && !"IMPORT_ERRORS_REPORTED".equals(issue.code())) {
+                out.append(" ( ").append(safeDiagnosticText(issue.sourceRecord(), 160)).append(" )");
+            }
+            displayed++;
+        }
+        if (issues.stream().anyMatch(issue -> issue != null && "ISSUES_TRUNCATED".equals(issue.code()))
+                && issues.stream().limit(displayLimit).noneMatch(issue -> issue != null && "ISSUES_TRUNCATED".equals(issue.code()))) {
+            ImportIssue truncated = issues.stream().filter(issue -> issue != null && "ISSUES_TRUNCATED".equals(issue.code())
+                    ).findFirst().orElse(null);
+            if (truncated != null) {
+                if (out.length() > 0) out.append("\n\n");
+                out.append(safeDiagnosticText(truncated.code(), 96)).append(" — ").append(issueMessage(truncated));
+            }
+        }
+        if (issues.size() > displayLimit) {
+            if (out.length() > 0) out.append("\n\n");
+            out.append(i18n.format("ui.import.diagnostics.more", displayLimit, issues.size()));
+        }
+        return out.toString();
+    }
+
+    private String issueMessage(ImportIssue issue) {
+        return switch (issue.code()) {
+            case "FILE_IMPORT_FAILED" -> i18n.format("ui.import.diagnostics.file_failed",
+                    safeDiagnosticText(issue.sourceRecord(), 160),
+                    safeDiagnosticText(issue.context().getOrDefault("exceptionType", "Exception"), 80));
+            case "IMPORT_ERRORS_REPORTED" -> i18n.format("ui.import.diagnostics.reported_errors",
+                    safeDiagnosticText(issue.sourceRecord(), 160),
+                    safeDiagnosticText(issue.context().getOrDefault("errorCount", "unknown"), 32));
+            case "ISSUES_TRUNCATED" -> i18n.format("ui.import.diagnostics.truncated",
+                    safeDiagnosticText(issue.context().getOrDefault("omittedCount", "unknown"), 32));
+            default -> {
+                String message = safeDiagnosticText(issue.message(), 400);
+                yield message.isBlank() ? safeDiagnosticText(issue.code(), 96) : message;
+            }
+        };
+    }
+
+    private static String safeDiagnosticText(String value, int maxLength) {
+        if (value == null) return "";
+        String normalized = value.replaceAll("[\\p{Cc}]", " ").trim();
+        // Diagnostic text may originate in imported catalogues; do not echo absolute local paths in dialogs.
+        normalized = normalized.replaceAll("(?i)\\b[A-Z]:\\\\[^\\s<>\"|?*]+", "[path]");
+        normalized = normalized.replaceAll("(?<![A-Za-z0-9:/])/(?:[^\\s<>\"']+)", "[path]");
+        if (normalized.length() <= maxLength) return normalized;
+        return maxLength <= 1 ? normalized.substring(0, maxLength)
+                : normalized.substring(0, maxLength - 1) + "…";
+    }
+
+    private void updateFinalStats(long imported, long errors) {
+        UiExecutor.runOnUiThread(() -> {
+            importedBooksLabel.setText(String.valueOf(imported));
+            errorsLabel.setText(String.valueOf(errors));
+        });
     }
 
     private String formatDuration(long durationMs) {

@@ -140,7 +140,14 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
 
         long books = aggregate.books();
         long authors = queryExecutor.queryForLong("SELECT COUNT(*) FROM authors");
-        long series = queryExecutor.queryForLong("SELECT COUNT(*) FROM series");
+        // Legacy/INPX imports populate books.series, not necessarily the separate series table.
+        // Match the catalog's active-book series facet rather than counting unused lookup rows.
+        long series = queryExecutor.queryForLong("""
+                SELECT COUNT(DISTINCT LOWER(TRIM(series)))
+                  FROM books
+                 WHERE COALESCE(deleted, 0) = 0
+                   AND TRIM(COALESCE(series, '')) <> ''
+                """);
         long genres = queryExecutor.queryForLong("SELECT COUNT(*) FROM genres");
         long languages = aggregate.languages();
         long publishers = aggregate.publishers();

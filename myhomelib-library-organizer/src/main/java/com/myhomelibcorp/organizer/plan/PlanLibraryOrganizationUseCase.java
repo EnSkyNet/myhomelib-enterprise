@@ -75,7 +75,9 @@ public final class PlanLibraryOrganizationUseCase {
     }
 
     private Path collisionTarget(Path desired,String hash,Set<String> reserved,Path root) {
-        String tag=hash==null||hash.length()<8?"conflict":hash.substring(0,8);String name=desired.getFileName().toString();int dot=name.lastIndexOf('.');String stem=dot>0?name.substring(0,dot):name,ext=dot>0?name.substring(dot):"";Path parent=desired.getParent();
+        String tag=hash==null||hash.length()<8?"conflict":hash.substring(0,8);String name=desired.getFileName().toString();int dot = name.toLowerCase(Locale.ROOT).endsWith(".fb2.zip")
+                ? name.length() - ".fb2.zip".length() : name.lastIndexOf('.');
+        String stem=dot>0?name.substring(0,dot):name,ext=dot>0?name.substring(dot):"";Path parent=desired.getParent();
         for(int i=1;i<10000;i++){String suffix=i==1?tag:tag+"-"+i;Path c=parent.resolve(stem+" ["+suffix+"]"+ext);String k=paths.collisionKey(root.relativize(c));if(!reserved.contains(k)&&!Files.exists(c, LinkOption.NOFOLLOW_LINKS))return c;}
         throw new IllegalStateException("Cannot resolve target collision for "+desired);
     }

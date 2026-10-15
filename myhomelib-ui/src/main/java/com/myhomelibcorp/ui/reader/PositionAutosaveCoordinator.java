@@ -38,6 +38,7 @@ final class PositionAutosaveCoordinator<P, A> implements AutoCloseable {
     private final AtomicReference<Snapshot<P, A>> state = new AtomicReference<>(Snapshot.empty());
     private final AtomicLong revisionSequence = new AtomicLong();
     private final ConcurrentMap<BookKey, Snapshot<P, A>> pendingFailures = new ConcurrentHashMap<>();
+    private final ConcurrentMap<BookKey, Long> successfullySavedRevisions = new ConcurrentHashMap<>();
     private final ConcurrentMap<BookKey, Object> persistenceLocks = new ConcurrentHashMap<>();
 
     PositionAutosaveCoordinator(String subject, String threadName, Persistence<P, A> persistence) {
@@ -75,6 +76,8 @@ final class PositionAutosaveCoordinator<P, A> implements AutoCloseable {
 
     boolean flush() {
         retryPendingFailures();
+        // API contract: this reports only the currently selected book's flush result.
+        // Older pending failures remain queued for retry and are checked by closeAndFlush().
         return flushCurrentIfDirty();
     }
 
@@ -88,6 +91,7 @@ final class PositionAutosaveCoordinator<P, A> implements AutoCloseable {
         }
         state.set(Snapshot.empty());
         pendingFailures.clear();
+        successfullySavedRevisions.clear();
         persistenceLocks.clear();
         return allSaved;
     }
@@ -145,8 +149,17 @@ final class PositionAutosaveCoordinator<P, A> implements AutoCloseable {
     }
 
     private boolean persistLocked(BookKey key, Snapshot<P, A> snapshot) {
+        // Two concurrent flushes can claim successive snapshots before either acquires the
+        // per-book lock. A delayed older flush must never overwrite a newer committed one.
+        long committedRevision = successfullySavedRevisions.getOrDefault(key, -1L);
+        if (snapshot.revision() <= committedRevision) {
+            pendingFailures.computeIfPresent(key, (ignored, pending) ->
+                    pending.revision() <= committedRevision ? null : pending);
+            return true;
+        }
         try {
             if (persistence.save(snapshot.collectionId(), snapshot.bookId(), snapshot.latest(), snapshot.auxiliary())) {
+                successfullySavedRevisions.put(key, snapshot.revision());
                 pendingFailures.computeIfPresent(key, (ignored, pending) ->
                         pending.revision() <= snapshot.revision() ? null : pending);
                 return true;

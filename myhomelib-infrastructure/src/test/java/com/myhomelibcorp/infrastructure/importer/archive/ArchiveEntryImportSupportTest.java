@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.CancellationException;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -83,6 +84,25 @@ class ArchiveEntryImportSupportTest {
     }
 
     @Test
+    void lateParserFailureDoesNotLeakPartiallyParsedBooksIntoDestination(@TempDir Path dir) {
+        Book existing = Book.builder().title("Existing").file(BookFile.empty()).build();
+        Queue<Book> destination = new ArrayDeque<>();
+        destination.add(existing);
+        BookImporterPort importer = importer(path -> Stream.of("Leaked", "BROKEN")
+                .map(title -> {
+                    if ("BROKEN".equals(title)) throw new IllegalArgumentException("late parser failure");
+                    return Book.builder().title(title).file(BookFile.empty()).build();
+                }));
+
+        assertThatThrownBy(() -> ArchiveEntryImportSupport.materializeAndImport(
+                dir.resolve("library.rar"), "partial.fb2", importer,
+                new SingleChunkReader(new byte[]{1, 2, 3}), 0, destination))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("late parser failure");
+        assertThat(destination).containsExactly(existing);
+    }
+
+    @Test
     void rejectsZeroProgressReaderInsteadOfSpinning(@TempDir Path dir) {
         BookImporterPort importer = importer(path -> Stream.empty());
 
@@ -95,6 +115,47 @@ class ArchiveEntryImportSupportTest {
                 new ArrayDeque<>()))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("no progress");
+    }
+
+    @Test
+    void copyEntryRejectsCumulativeOverflowBeforeWritingOverBudgetChunk(@TempDir Path dir) throws IOException {
+        Path target = dir.resolve("entry.txt");
+        assertThatThrownBy(() -> ArchiveEntryImportSupport.copyEntryBounded(
+                new SingleChunkReader(new byte[]{1, 2, 3}), target, 4, 10, 6))
+                .isInstanceOf(ArchiveEntryImportSupport.CumulativeArchiveLimitException.class);
+        assertThat(target).exists();
+        assertThat(Files.size(target)).isZero();
+    }
+
+    @Test
+    void rejectsCumulativeOverflowBeforeWritingEntryToDisk(@TempDir Path dir) {
+        BookImporterPort importer = importer(path -> {
+            throw new AssertionError("Importer must not run after archive budget is exceeded");
+        });
+        assertThatThrownBy(() -> ArchiveEntryImportSupport.materializeAndImport(
+                dir.resolve("library.rar"), "overflow.fb2", importer,
+                new SingleChunkReader(new byte[]{1, 2, 3}),
+                ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES - 2, new ArrayDeque<>()))
+                .isInstanceOf(ArchiveEntryImportSupport.CumulativeArchiveLimitException.class);
+    }
+
+    @Test
+    void interruptionAbortsExtractionAndNeverParsesEntry(@TempDir Path dir) {
+        BookImporterPort importer = importer(path -> {
+            throw new AssertionError("Importer must not run after interruption");
+        });
+        try {
+            assertThatThrownBy(() -> ArchiveEntryImportSupport.materializeAndImport(
+                    dir.resolve("library.rar"), "cancel.fb2", importer,
+                    buffer -> {
+                        Thread.currentThread().interrupt();
+                        buffer[0] = 42;
+                        return 1;
+                    }, 0, new ArrayDeque<>()))
+                    .isInstanceOf(CancellationException.class);
+        } finally {
+            Thread.interrupted(); // Clear the test thread's interrupt flag.
+        }
     }
 
     @Test

@@ -90,6 +90,34 @@ public class UiBackgroundExecutor {
     }
 
     /**
+     * Defers an incompatible collection operation without blocking JavaFX or occupying the bounded
+     * UI query pool. A virtual thread waits for the existing lifecycle barrier to be released.
+     * Callers must check their captured collection identity in the task: a SWITCH can finish
+     * before the deferred lease is acquired.
+     */
+    public <T> CompletableFuture<T> submitCollectionScopedAwait(
+            LibraryOperationType operationType, Callable<T> task) {
+        if (operationType == null) throw new IllegalArgumentException("operationType is required");
+        if (task == null) throw new IllegalArgumentException("task is required");
+        return AsyncCallSupport.submit(() -> {
+            try (LibraryOperationCoordinator.Lease lease =
+                         operationCoordinator.acquireDetachedSharedAwait(operationType)) {
+                try {
+                    T result = task.call();
+                    lease.markCompleted("");
+                    return result;
+                } catch (CancellationException cancellation) {
+                    lease.markCancelled("Deferred collection work cancelled");
+                    throw cancellation;
+                } catch (Exception | Error failure) {
+                    lease.markFailed(failure);
+                    throw failure;
+                }
+            }
+        }, operationExecutor);
+    }
+
+    /**
      * Collection-scoped blocking network work. This uses a separate virtual-thread lane so a slow
      * server/HTTP timeout cannot occupy every presentation worker and make local Book Details look
      * frozen. The caller still controls real network parallelism (for downloads, via downloadSlots).

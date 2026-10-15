@@ -147,6 +147,11 @@ public final class UndoLibraryOrganizationUseCase {
                     cleanupRedundantBackup(backup,item.sourceSha256());
                     return;
                 }
+                // Prove that an original or backup can be restored BEFORE deleting
+                // the only currently accessible converted/optimized artifact.
+                if (!sourceMatches(item)) {
+                    requireVerifiedBackup(backup, item.sourceSha256(), item.itemId());
+                }
                 removeOwnedFile(target,item.targetSha256(),"Organizer rollback target removal");
             }
             if (sourceMatches(item)) {
@@ -156,58 +161,115 @@ public final class UndoLibraryOrganizationUseCase {
             if (backup != null) { restoreBackup(backup,source,item.sourceSha256()); return; }
             throw new IllegalStateException("Validated rollback has neither source nor backup: "+item.itemId());
         }
-        if("EXTRACT".equals(action)){
-            if(target!=null&&Files.exists(target, LinkOption.NOFOLLOW_LINKS)){verifyOptionalHash(target,item.targetSha256(),"Rollback hash mismatch");removeOwnedFile(target,item.targetSha256(),"Organizer rollback target removal");}
-            if(!sourceMatches(item))throw new IllegalStateException("Archive entry changed before rollback: "+sourceLabel(item));
+        if ("EXTRACT".equals(action)) {
+            if (!sourceMatches(item)) {
+                throw new IllegalStateException("Archive entry changed before rollback: " + sourceLabel(item));
+            }
+            if (target != null && Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                removeOwnedFile(target, item.targetSha256(), "Organizer rollback target removal");
+            }
             return;
         }
-        if("DELETE_EXACT_DUPLICATE".equals(action)||"ARCHIVE_ORIGINAL".equals(action)){restoreBackup(backup,source,item.sourceSha256());return;}
+        if("DELETE_EXACT_DUPLICATE".equals(action)||"ARCHIVE_ORIGINAL".equals(action)) {
+            if (sourceMatches(item)) {
+                cleanupRedundantBackup(backup, item.sourceSha256());
+            } else {
+                requireVerifiedBackup(backup, item.sourceSha256(), item.itemId());
+                restoreBackup(backup, source, item.sourceSha256());
+            }
+            return;
+        }
         if("RENAME".equals(action)||"MOVE".equals(action)||"MOVE_AND_RENAME".equals(action)){
-            if(target==null||!regular(target))throw new IllegalStateException("Rollback target is missing: "+target);verifyOptionalHash(target,item.targetSha256(),"Rollback hash mismatch");if(Files.exists(source, LinkOption.NOFOLLOW_LINKS))throw new FileAlreadyExistsException(source.toString());Path parent=source.toAbsolutePath().normalize().getParent();if(parent!=null)OrganizerPathSafety.createDirectoriesNoLinks(parent,"Organizer rollback source directory");moveSafe(target,source,item.targetSha256());return;
+            // After a crash between restoring the file and recording ROLLED_BACK, a
+            // verified source with no target means the rollback already succeeded.
+            if ((target == null || !Files.exists(target, LinkOption.NOFOLLOW_LINKS)) && sourceMatches(item)) return;
+            if (target == null || !regular(target)) throw new IllegalStateException("Rollback target is missing: " + target);
+            verifyRequiredHash(target, item.targetSha256(), "Rollback hash mismatch");
+            if (source == null) throw new IllegalStateException("Rollback source path is missing");
+            if (Files.exists(source, LinkOption.NOFOLLOW_LINKS)) throw new FileAlreadyExistsException(source.toString());
+            Path parent = source.toAbsolutePath().normalize().getParent();
+            if (parent != null) OrganizerPathSafety.createDirectoriesNoLinks(parent, "Organizer rollback source directory");
+            moveSafe(target, source, item.targetSha256());
+            return;
         }
-        if("OPTIMIZE".equals(action)||"OPTIMIZE_AND_MOVE".equals(action)){
-            if(target!=null&&Files.exists(target, LinkOption.NOFOLLOW_LINKS)){verifyOptionalHash(target,item.targetSha256(),"Rollback hash mismatch");removeOwnedFile(target,item.targetSha256(),"Organizer rollback target removal");}
-            if(!item.sourceEntry().isBlank()){if(!sourceMatches(item))throw new IllegalStateException("Archive entry changed before rollback: "+sourceLabel(item));}
-            else restoreBackup(backup,source,item.sourceSha256());return;
+        if ("OPTIMIZE".equals(action) || "OPTIMIZE_AND_MOVE".equals(action)) {
+            // Never remove the optimized result before proving the original survives.
+            boolean archiveEntry = !item.sourceEntry().isBlank();
+            boolean alreadyRestored = sourceMatches(item);
+            // For in-place processing source and target are the same pathname.
+            // If it already contains the original bytes, never delete it as a
+            // supposed output, even when source and target hashes coincide.
+            if (alreadyRestored && samePath(source, target)) {
+                cleanupRedundantBackup(backup, item.sourceSha256());
+                return;
+            }
+            if (archiveEntry && !alreadyRestored) {
+                throw new IllegalStateException("Archive entry changed before rollback: " + sourceLabel(item));
+            }
+            if (!archiveEntry && !alreadyRestored) {
+                requireVerifiedBackup(backup, item.sourceSha256(), item.itemId());
+            }
+            if (target != null && Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                removeOwnedFile(target, item.targetSha256(), "Organizer rollback target removal");
+            }
+            if (!archiveEntry && !alreadyRestored) restoreBackup(backup, source, item.sourceSha256());
+            else if (!archiveEntry && alreadyRestored) cleanupRedundantBackup(backup, item.sourceSha256());
+            return;
         }
-        if("CONVERT".equals(action)||"CONVERT_AND_MOVE".equals(action)){
-            if(target!=null&&Files.exists(target, LinkOption.NOFOLLOW_LINKS)){verifyOptionalHash(target,item.targetSha256(),"Rollback hash mismatch");removeOwnedFile(target,item.targetSha256(),"Organizer rollback target removal");}
-            if(!item.sourceEntry().isBlank()){if(!sourceMatches(item))throw new IllegalStateException("Archive entry changed before rollback: "+sourceLabel(item));}
-            else if(backup!=null)restoreBackup(backup,source,item.sourceSha256());return;
+        if ("CONVERT".equals(action) || "CONVERT_AND_MOVE".equals(action)) {
+            boolean archiveEntry = !item.sourceEntry().isBlank();
+            boolean alreadyRestored = sourceMatches(item);
+            // For in-place processing source and target are the same pathname.
+            // If it already contains the original bytes, never delete it as a
+            // supposed output, even when source and target hashes coincide.
+            if (alreadyRestored && samePath(source, target)) {
+                cleanupRedundantBackup(backup, item.sourceSha256());
+                return;
+            }
+            if (archiveEntry && !alreadyRestored) {
+                throw new IllegalStateException("Archive entry changed before rollback: " + sourceLabel(item));
+            }
+            if (!archiveEntry && !alreadyRestored) {
+                requireVerifiedBackup(backup, item.sourceSha256(), item.itemId());
+            }
+            if (target != null && Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                removeOwnedFile(target, item.targetSha256(), "Organizer rollback target removal");
+            }
+            if (!archiveEntry && !alreadyRestored) restoreBackup(backup, source, item.sourceSha256());
+            else if (!archiveEntry && alreadyRestored) cleanupRedundantBackup(backup, item.sourceSha256());
+            return;
         }
+        throw new IllegalStateException("Unsupported organizer rollback action: " + action);
     }
     private OrganizationAction action(String value) {
         try { return OrganizationAction.valueOf(value == null ? "" : value); }
         catch (RuntimeException ignored) { return null; }
     }
+    private void requireVerifiedBackup(Path backup, String expected, UUID itemId) throws Exception {
+        if (backup == null || !regular(backup)) {
+            throw new IllegalStateException("Rollback has no verified original or backup: " + itemId);
+        }
+        verifyRequiredHash(backup, expected, "Rollback backup hash mismatch");
+    }
     private void cleanupRedundantBackup(Path backup,String expected)throws Exception{if(backup!=null&&regular(backup))removeOwnedFile(backup,expected,"Organizer redundant backup removal");}
     private void restoreBackup(Path backup,Path source,String expected)throws Exception{if(backup==null||!regular(backup))throw new IllegalStateException("Rollback backup is missing: "+backup);verifyOptionalHash(backup,expected,"Rollback hash mismatch");if(Files.exists(source, LinkOption.NOFOLLOW_LINKS))throw new FileAlreadyExistsException(source.toString());Path parent=source.toAbsolutePath().normalize().getParent();if(parent!=null)OrganizerPathSafety.createDirectoriesNoLinks(parent,"Organizer rollback source directory");moveSafe(backup,source,expected);}
-    private void moveSafe(Path source,Path target,String expected)throws Exception{
-        if(expected==null||expected.isBlank())throw new IllegalStateException("Organizer rollback move expected SHA-256 is missing");
-        Path safeSource=OrganizerPathSafety.canonicalExistingFile(source,"Organizer rollback move source");
-        verifyOptionalHash(safeSource,expected,"Rollback hash mismatch");
-        if(Files.exists(target,LinkOption.NOFOLLOW_LINKS))throw new FileAlreadyExistsException(target.toString());
-        try{
-            Files.move(safeSource,target);
-        } catch(FileSystemException crossVolume){
-            OrganizerPathSafety.copyFreshFile(safeSource,target,"Organizer rollback cross-volume copy");
-            try {
-                verifyOptionalHash(target,expected,"Rollback hash mismatch");
-                removeOwnedFile(safeSource,expected,"Organizer rollback cross-volume source removal");
-                return;
-            } catch(Exception failure) {
-                try { removeOwnedFileIfPresent(target,expected,"Organizer rollback failed cross-volume target cleanup"); }
-                catch(Exception cleanup) { failure.addSuppressed(cleanup); }
-                failure.addSuppressed(crossVolume);
-                throw failure;
-            }
+    /**
+     * Restore by publishing a verified full copy under an atomically reserved fresh
+     * name, and only then removing the old verified file. A simple Files.move
+     * after Files.exists is NOT a safe no-clobber operation under concurrency.
+     * On providers without hard links, publication fails closed: the old file
+     * remains available for manual recovery instead of risking a foreign target.
+     */
+    private void moveSafe(Path source, Path target, String expected) throws Exception {
+        if (expected == null || !expected.matches("(?i)[0-9a-f]{64}")) {
+            throw new IllegalStateException("Organizer rollback move expected SHA-256 is missing or invalid");
         }
-        try { verifyOptionalHash(target,expected,"Rollback hash mismatch"); }
-        catch(Exception changed) {
-            try { if(!Files.exists(source,LinkOption.NOFOLLOW_LINKS)) Files.move(target,source); }
-            catch(Exception restore) { changed.addSuppressed(restore); }
-            throw changed;
-        }
+        Path safeSource = OrganizerPathSafety.canonicalExistingFile(source, "Organizer rollback move source");
+        verifyRequiredHash(safeSource, expected, "Rollback source hash mismatch");
+        new OrganizerTargetPublisher().publish(safeSource, target, expected);
+        // If a concurrent modification makes source removal unsafe, retain the
+        // published copy as recovery evidence; never delete an unverified file.
+        removeOwnedFile(safeSource, expected, "Organizer rollback verified source removal");
     }
 
     private boolean sourceMatches(OrganizationJournalItem item){

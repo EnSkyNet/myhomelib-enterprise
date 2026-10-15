@@ -24,6 +24,8 @@ import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecycle
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.shared.format.SupportedFormat;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +41,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.stream.Stream;
@@ -353,21 +356,115 @@ public class ImportFileUseCase {
             bulkImportOptimizer.enableBulkInsertMode();
         }
 
+        final long estimatedCountForLambda = estimatedCount;
+        boolean atomicArchive = isMultiBookArchive(context.getFile());
+        boolean archiveCommitted = false;
         try {
             var importer = importerRegistry.findImporter(context.getFile());
             DuplicatePolicy policy = context.isUpdateExisting() ? DuplicatePolicy.MERGE : DuplicatePolicy.SKIP;
             List<Book> batch = new ArrayList<>(batchSize);
-
-            // Оновлюємо прогрес на початку
             reportProgress(importProgressListener, 0.0, estimatedCount, totalProcessed, lastReported, startTime);
             emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.IMPORTING, true)
                     .withProgress(0, estimatedCount)
                     .withCurrentItem(context.getFile().getFileName().toString()));
 
+            Runnable ingest = () -> ingestLegacyStream(context, importer, policy, batch,
+                    batchSize, atomicArchive, importProgressListener, estimatedCountForLambda,
+                    totalProcessed, lastReported, startTime, telemetry, operationId, stats, changes);
+            if (atomicArchive) {
+                // No publication or search indexing until the outer transaction commits.
+                bookSaver.inAtomicArchiveImport(() -> { ingest.run(); return null; });
+                archiveCommitted = true;
+            } else {
+                ingest.run();
+            }
+        } catch (CancellationException cancelled) {
+            if (!atomicArchive) throw cancelled;
+            ImportResult result = ImportResult.cancelled(System.currentTimeMillis() - startTime);
+            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.CANCELLED, false)
+                    .withProgress(0, estimatedCount));
+            publishFinished(context, result);
+            return result;
+        } catch (Exception e) {
+            log.error("Помилка імпорту файлу: {}", context.getFile(), e);
+            // A failed multi-book archive must never be reported as partially successful.
+            // Its SQLite transaction has already been rolled back here.
+            if (atomicArchive) {
+                throw new IllegalStateException("Не вдалося повністю імпортувати архів: " + context.getFile(), e);
+            }
+            ImportErrorHandler.ErrorAction action = errorHandler.handleError(context.getFile(), e, 1);
+            if (action == ImportErrorHandler.ErrorAction.STOP_IMPORT) {
+                throw new RuntimeException("Імпорт зупинено через критичну помилку", e);
+            }
+            stats.incrementErrors();
+        } finally {
+            if (estimatedCount > 10000) {
+                bulkImportOptimizer.disableBulkInsertMode();
+            }
+        }
+
+        ImportResult result = new ImportResult(
+                stats.getImported().get(),
+                stats.getSkipped().get(),
+                stats.getDuplicates().get(),
+                stats.getErrors().get(),
+                stats.getDurationMs(),
+                (!archiveCommitted && isCancelled(context)) ? ImportStatus.CANCELLED
+                        : (stats.getErrors().get() > 0 ? ImportStatus.SUCCESS_WITH_WARNINGS : ImportStatus.SUCCESS),
+                changes.snapshot(),
+                List.of());
+        log.info("Імпорт файлу завершено: {}", result);
+
+        if (context.isIndexAfterSave() && requiresSearchFinalization(result)) {
+            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
+                    .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
+                            result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
+            if (context.getStatusConsumer() != null) context.getStatusConsumer().accept("Оновлення пошукового індексу…");
+            if (context.getProgressListener() != null) context.getProgressListener().accept(-1.0);
+            if (result.changes().complete()) {
+                applyIncrementalIndex(result.changes());
+                log.info("📌 Selective Lucene update після legacy import: +{}, ~{}, -{}",
+                        result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount());
+            } else {
+                searchIndexer.rebuildIndex();
+                log.info("📌 Full Lucene rebuild після bounded legacy change-tracking overflow");
+            }
+        }
+
+        // 100% means both DB import and requested search synchronization have completed.
+        // Cancellation may leave already committed legacy batches synchronized, but is not completion.
+        if (archiveCommitted || !isCancelled(context)) {
+            reportProgress(progressListener, 1.0, estimatedCount, totalProcessed, lastReported, startTime);
+            if (context.isPublishFinishedEvent()) {
+                emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.COMPLETED, false)
+                        .withProgress(totalProcessed.get(), estimatedCount > 0 ? estimatedCount : totalProcessed.get())
+                        .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
+                                result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
+            }
+        } else {
+            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.CANCELLED, false)
+                    .withProgress(totalProcessed.get(), estimatedCount)
+                    .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
+                            result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
+        }
+        scheduleContentIndex(context, result);
+        publishFinished(context, result);
+        return result;
+    }
+
+    /** Archive transactions keep only one batch of Book objects in memory. */
+    private void ingestLegacyStream(ImportContext context,
+                                    com.myhomelibcorp.application.port.out.importer.BookImporterPort importer,
+                                    DuplicatePolicy policy, List<Book> batch, int batchSize, boolean atomicArchive,
+                                    DoubleConsumer importProgressListener, long estimatedCount,
+                                    AtomicLong totalProcessed, AtomicLong lastReported, long startTime,
+                                    Consumer<OperationProgress> telemetry, String operationId,
+                                    ImportStatistics stats, ImportChangeAccumulator changes) {
             try (Stream<Book> bookStream = importer.importBooks(context.getFile())) {
                 var iterator = enrichWithCollectionRoot(bookStream, context.getRootDirectory()).iterator();
                 while (iterator.hasNext()) {
-                    if (context.getCancelFlag() != null && context.getCancelFlag().get()) {
+                    if (isCancelled(context) || Thread.currentThread().isInterrupted()) {
+                        if (atomicArchive) throw new CancellationException("Archive import cancelled before commit");
                         log.info("Імпорт файлу скасовано користувачем");
                         break;
                     }
@@ -403,67 +500,19 @@ public class ImportFileUseCase {
                 saveLegacyBatch(batch, policy, stats, changes);
                 batch.clear();
             }
-
-        } catch (Exception e) {
-            log.error("Помилка імпорту файлу: {}", context.getFile(), e);
-            ImportErrorHandler.ErrorAction action = errorHandler.handleError(context.getFile(), e, 1);
-            if (action == ImportErrorHandler.ErrorAction.STOP_IMPORT) {
-                throw new RuntimeException("Імпорт зупинено через критичну помилку", e);
+            if (atomicArchive && (isCancelled(context) || Thread.currentThread().isInterrupted())) {
+                throw new CancellationException("Archive import cancelled before commit");
             }
-            stats.incrementErrors();
-        } finally {
-            if (estimatedCount > 10000) {
-                bulkImportOptimizer.disableBulkInsertMode();
-            }
-        }
+            // Detect archive modification after the last batch but before SQLite commit.
+            if (atomicArchive) assertExpectedSourceFingerprint(context);
+    }
 
-        ImportResult result = new ImportResult(
-                stats.getImported().get(),
-                stats.getSkipped().get(),
-                stats.getDuplicates().get(),
-                stats.getErrors().get(),
-                stats.getDurationMs(),
-                isCancelled(context) ? ImportStatus.CANCELLED
-                        : (stats.getErrors().get() > 0 ? ImportStatus.SUCCESS_WITH_WARNINGS : ImportStatus.SUCCESS),
-                changes.snapshot(),
-                List.of());
-        log.info("Імпорт файлу завершено: {}", result);
-
-        if (context.isIndexAfterSave() && requiresSearchFinalization(result)) {
-            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
-                    .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
-                            result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
-            if (context.getStatusConsumer() != null) context.getStatusConsumer().accept("Оновлення пошукового індексу…");
-            if (context.getProgressListener() != null) context.getProgressListener().accept(-1.0);
-            if (result.changes().complete()) {
-                applyIncrementalIndex(result.changes());
-                log.info("📌 Selective Lucene update після legacy import: +{}, ~{}, -{}",
-                        result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount());
-            } else {
-                searchIndexer.rebuildIndex();
-                log.info("📌 Full Lucene rebuild після bounded legacy change-tracking overflow");
-            }
-        }
-
-        // 100% means both DB import and requested search synchronization have completed.
-        // Cancellation may leave already committed legacy batches synchronized, but is not completion.
-        if (!isCancelled(context)) {
-            reportProgress(progressListener, 1.0, estimatedCount, totalProcessed, lastReported, startTime);
-            if (context.isPublishFinishedEvent()) {
-                emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.COMPLETED, false)
-                        .withProgress(totalProcessed.get(), estimatedCount > 0 ? estimatedCount : totalProcessed.get())
-                        .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
-                                result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
-            }
-        } else {
-            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.CANCELLED, false)
-                    .withProgress(totalProcessed.get(), estimatedCount)
-                    .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
-                            result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
-        }
-        scheduleContentIndex(context, result);
-        publishFinished(context, result);
-        return result;
+    private static boolean isMultiBookArchive(Path file) {
+        // Use the same compound-extension registry as the UI/importer selection.
+        // Hand-maintained suffix lists previously missed .fb2zip archives.
+        return SupportedFormatRegistry.standard().detect(file)
+                .map(format -> format.family() == SupportedFormat.Family.ARCHIVE)
+                .orElse(false);
     }
 
     private void saveLegacyBatch(List<Book> batch,

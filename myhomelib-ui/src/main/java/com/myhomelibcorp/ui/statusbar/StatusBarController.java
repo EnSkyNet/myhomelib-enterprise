@@ -26,6 +26,8 @@ import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
 @RequiredArgsConstructor
@@ -41,6 +43,10 @@ public class StatusBarController {
 
     private volatile List<OperationCenterEntry> operationSnapshot = List.of();
     private volatile LibraryOperationType coordinatedOperation;
+    private final AtomicBoolean statisticsRefreshRunning = new AtomicBoolean();
+    private volatile long lastStatisticsRefreshNanos;
+    /** The index coordinator is separate from the operation-center UI journal. */
+    private String mirroredIndexOperationId;
 
     @FXML private Label statusLabel;
     @FXML private Label operationsLabel;
@@ -61,8 +67,14 @@ public class StatusBarController {
             updateOperationsLabel(operationSnapshot);
             refreshBackgroundStatus(vm);
         }));
+        libraryOperations.addCompletionListener(completion -> {
+            if (completion.operation() == LibraryOperationType.INDEX) {
+                UiExecutor.runOnUiThread(() -> finishIndexHistory(completion));
+            }
+        });
         libraryOperations.addListener(operation -> UiExecutor.runOnUiThread(() -> {
             coordinatedOperation = operation;
+            if (operation == LibraryOperationType.INDEX) startIndexHistoryIfMissing();
             refreshBackgroundStatus(vm);
         }));
 
@@ -70,6 +82,7 @@ public class StatusBarController {
         vm.statisticsProperty().addListener((obs, old, stats) -> {
             if (stats != null) {
                 updateStatsLabel(stats);
+                if (stats.isStale()) scheduleStaleStatisticsRefresh();
             }
         });
 
@@ -81,11 +94,74 @@ public class StatusBarController {
                     if (!Objects.equals(collectionId, currentCollectionId())) return;
                     vm.setStatistics(stats);
                     updateStatsLabel(stats);
+                    if (stats.isStale()) scheduleStaleStatisticsRefresh();
                 }))
                 .exceptionally(error -> {
                     log.warn("Не вдалося прочитати кеш статистики для status bar", error);
                     return null;
                 });
+    }
+
+    /** A stale snapshot must not imply that a calculation is already running.
+     *  Refresh is serialized, rate-limited, and never executes on the JavaFX thread.
+     */
+    private void scheduleStaleStatisticsRefresh() {
+        String collectionId = currentCollectionId();
+        if (collectionId == null) return;
+        long now = System.nanoTime();
+        long previous = lastStatisticsRefreshNanos;
+        if (previous != 0 && now - previous < TimeUnit.MINUTES.toNanos(1)) return;
+        if (!statisticsRefreshRunning.compareAndSet(false, true)) return;
+        lastStatisticsRefreshNanos = now;
+        log.info("STATISTICS_BACKGROUND_REFRESH_START collection={}", collectionId);
+        try {
+            executor.submitCollectionScopedAwait(LibraryOperationType.EDIT, () -> {
+                if (!Objects.equals(collectionId, currentCollectionId())) {
+                    throw new java.util.concurrent.CancellationException("Collection changed before statistics refresh");
+                }
+                LibraryStatistics cached = statisticsService.getStatistics();
+                if (cached == null || cached.isStale()) statisticsService.refreshStatistics();
+                return statisticsService.getStatistics();
+            }).whenComplete((result, failure) -> {
+                statisticsRefreshRunning.set(false);
+                if (failure != null) {
+                    log.warn("STATISTICS_BACKGROUND_REFRESH_FAILED collection={}", collectionId, failure);
+                    return;
+                }
+                log.info("STATISTICS_BACKGROUND_REFRESH_DONE collection={} stale={}", collectionId,
+                        result == null || result.isStale());
+                UiExecutor.runOnUiThread(() -> {
+                    if (Objects.equals(collectionId, currentCollectionId()) && result != null) {
+                        appState.getStatusBar().setStatistics(result);
+                    }
+                });
+            });
+        } catch (RuntimeException error) {
+            statisticsRefreshRunning.set(false);
+            log.warn("STATISTICS_BACKGROUND_REFRESH_REJECTED collection={}", collectionId, error);
+        }
+    }
+
+    /** Mirror startup/index-only operations so the Operations workspace is not empty during rebuild. */
+    void startIndexHistoryIfMissing() {
+        if (mirroredIndexOperationId != null) return;
+        if (operationCenter.snapshot().stream().anyMatch(entry -> entry.active()
+                && entry.kind() == com.myhomelibcorp.ui.operation.OperationKind.INDEX_REBUILD)) return;
+        mirroredIndexOperationId = operationCenter.start(
+                LibraryOperationUiText.activeStatus(LibraryOperationType.INDEX), currentCollectionId(),
+                com.myhomelibcorp.ui.operation.OperationKind.INDEX_REBUILD,
+                com.myhomelibcorp.application.progress.OperationStage.UPDATING_SEARCH_INDEX, false);
+    }
+
+    void finishIndexHistory(com.myhomelibcorp.application.operation.LibraryOperationCompletion result) {
+        String id = mirroredIndexOperationId;
+        mirroredIndexOperationId = null;
+        if (id == null) return;
+        switch (result.outcome()) {
+            case COMPLETED -> operationCenter.complete(id, result.detail());
+            case FAILED -> operationCenter.fail(id, result.detail());
+            case CANCELLED -> operationCenter.cancel(id, result.detail());
+        }
     }
 
     private String currentCollectionId() {

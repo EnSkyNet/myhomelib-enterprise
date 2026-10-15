@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
 
 class LibraryOperationCrashManifestReaderTest {
     @TempDir Path tempDir;
@@ -37,6 +38,15 @@ class LibraryOperationCrashManifestReaderTest {
         assertThatThrownBy(() -> new LibraryOperationCrashManifestReader().read(manifest))
                 .isInstanceOf(Exception.class)
                 .hasMessageContaining("exceeds safety limit");
+    }
+
+    @Test
+    void readsLegacySchemaTwoWithoutSupplementaryEventLog() throws Exception {
+        Path manifest = tempDir.resolve("legacy.json");
+        Files.writeString(manifest, validManifest());
+        var snapshot = new LibraryOperationCrashManifestReader().read(manifest);
+        assertThat(snapshot.schemaVersion()).isEqualTo(2);
+        assertThat(snapshot.items()).isEmpty();
     }
 
     private static String validManifest() {

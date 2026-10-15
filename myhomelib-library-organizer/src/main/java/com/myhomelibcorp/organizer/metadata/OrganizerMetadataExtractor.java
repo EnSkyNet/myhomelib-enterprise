@@ -138,8 +138,16 @@ public final class OrganizerMetadataExtractor {
                     else if (e == XMLStreamConstants.END_ELEMENT) {
                         String local = r.getLocalName();
                         if ("author".equals(local) && inAuthor) {
-                            String name = String.join(" ", List.of(first,middle,last).stream().filter(v -> v != null && !v.isBlank()).toList());
-                            if (!name.isBlank()) authors.add(name); inAuthor = false;
+                            // FB2 gives structured name fields. Preserve the family/given boundary
+                            // with a comma so normalization cannot mistake the patronymic
+                            // (or a compound family name) for the surname.
+                            String given = String.join(" ", List.of(first, middle).stream()
+                                    .filter(v -> v != null && !v.isBlank()).toList());
+                            String name = last != null && !last.isBlank() && !given.isBlank()
+                                    ? last.strip() + ", " + given
+                                    : (given.isBlank() ? (last == null ? "" : last.strip()) : given);
+                            if (!name.isBlank()) authors.add(name);
+                            inAuthor = false;
                         } else if ("annotation".equals(local) && inAnnotation) {
                             annotation = normalizeWhitespace(annotationText);
                             if (annotationTruncated) warnings.add("FB2 annotation was truncated to the metadata safety limit");

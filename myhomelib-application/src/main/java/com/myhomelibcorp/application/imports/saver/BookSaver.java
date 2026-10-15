@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 @Component
 @Slf4j
@@ -83,6 +84,24 @@ public class BookSaver {
         }
         log.debug("Книгу збережено: {}", stableEffective.getTitle());
         return true;
+    }
+
+    /**
+     * Runs all batches from one multi-book archive in a single collection transaction.
+     * saveBatchWithResult() joins this transaction (REQUIRED propagation), so a late
+     * parser/IO failure cannot leave the beginning of the archive committed.
+     *
+     * The duplicate-key cache is not transactional. Clear it after a rollback so a
+     * later retry does not treat rolled-back books as existing duplicates.
+     */
+    public <T> T inAtomicArchiveImport(Supplier<T> action) {
+        if (action == null) throw new IllegalArgumentException("Archive import action is required");
+        try {
+            return transactionTemplate.execute(status -> action.get());
+        } catch (RuntimeException | Error failure) {
+            duplicateDetector.clearCache();
+            throw failure;
+        }
     }
 
     public int saveBatch(List<Book> books, boolean indexAfterSave, DuplicatePolicy policy) {
