@@ -318,11 +318,16 @@ public final class NoLinkPathSafety {
                     // A null fileKey offers no reliable ownership proof: retain the
                     // incomplete artifact as diagnostic evidence rather than risk
                     // deleting somebody else's file.
-                    if (createdFileKey != null && Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
+                    if (Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
                         BasicFileAttributes current = Files.readAttributes(safeTarget,
                                 BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-                        if (current.isRegularFile() && createdFileKey.equals(current.fileKey())) {
+                        if (createdFileKey != null && current.isRegularFile()
+                                && createdFileKey.equals(current.fileKey())) {
                             Files.delete(safeTarget);
+                        } else {
+                            System.getLogger(NoLinkPathSafety.class.getName()).log(System.Logger.Level.WARNING,
+                                    "FILE_COPY_UNVERIFIABLE_ARTIFACT_RETAINED role={0} file={1}",
+                                    role, safeTarget.getFileName());
                         }
                     }
                 } catch (IOException cleanup) {

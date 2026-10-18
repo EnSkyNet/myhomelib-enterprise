@@ -6,7 +6,9 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -62,7 +64,7 @@ class OrganizerTargetPublisherTest {
     }
 
     @Test
-    void sourceChangedAtCopyStartDoesNotLeaveUnverifiedStagingFile() throws Exception {
+    void sourceChangedAtCopyStartNeverPublishesUnverifiedStagingFile() throws Exception {
         Path source = Files.writeString(temp.resolve("racing-source.fb2"), "original text", StandardCharsets.UTF_8);
         String initialDigest = OrganizerFileIntegritySupport.sha256(source);
         Path staged = temp.resolve("staging/unverified.fb2");
@@ -86,12 +88,12 @@ class OrganizerTargetPublisherTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("hash mismatch");
         assertThat(changed.get()).isTrue();
-        assertThat(staged).doesNotExist();
+        assertCleanedOrRetainedWithoutFileIdentity(staged);
         assertThat(Files.readString(source)).isEqualTo("concurrent replacement");
     }
 
     @Test
-    void cancellationAfterCopyBeforeTargetHashRemovesOwnedStagingBytes() throws Exception {
+    void cancellationAfterCopyBeforeTargetHashCleansOnlyProvablyOwnedStagingBytes() throws Exception {
         Path source = Files.writeString(temp.resolve("complete-source.fb2"), "complete payload");
         Path staged = temp.resolve("staging/finished-but-cancelled.fb2");
         String hash = OrganizerFileIntegritySupport.sha256(source);
@@ -105,7 +107,7 @@ class OrganizerTargetPublisherTest {
                 source, staged, hash, cancelAfterCopy))
                 .isInstanceOf(java.util.concurrent.CancellationException.class);
         assertThat(Files.readString(source)).isEqualTo("complete payload");
-        assertThat(staged).doesNotExist();
+        assertCleanedOrRetainedWithoutFileIdentity(staged);
     }
 
     @Test
@@ -130,7 +132,7 @@ class OrganizerTargetPublisherTest {
     }
 
     @Test
-    void cancellationAtDestinationVerificationMilestoneCleansOnlyOwnOutput() throws Exception {
+    void cancellationAtDestinationVerificationMilestoneCleansOnlyProvablyOwnedOutput() throws Exception {
         Path source = Files.writeString(temp.resolve("source.fb2"), "milestone cancel");
         Path staged = temp.resolve("staging/milestone-cancel.fb2");
         String digest = OrganizerFileIntegritySupport.sha256(source);
@@ -140,7 +142,7 @@ class OrganizerTargetPublisherTest {
                 cancel::get, (stage, bytes) -> {
                     if ("VERIFY_TARGET_START".equals(stage)) cancel.set(true);
                 })).isInstanceOf(java.util.concurrent.CancellationException.class);
-        assertThat(staged).doesNotExist();
+        assertCleanedOrRetainedWithoutFileIdentity(staged);
         assertThat(Files.readString(source)).isEqualTo("milestone cancel");
     }
 
@@ -220,6 +222,21 @@ class OrganizerTargetPublisherTest {
         }
         assertThat(Files.readString(left)).isEqualTo("LEFT PAYLOAD");
         assertThat(Files.readString(right)).isEqualTo("RIGHT PAYLOAD");
+    }
+
+    /**
+     * Windows' default NIO provider may return null for BasicFileAttributes.fileKey().
+     * A failed copy cannot prove that a path still names its own CREATE_NEW artifact
+     * when that happens, so it must retain the artifact rather than delete a
+     * potentially replaced file. Unix providers with an identity can clean it.
+     */
+    private static void assertCleanedOrRetainedWithoutFileIdentity(Path staged) throws Exception {
+        if (!Files.exists(staged, LinkOption.NOFOLLOW_LINKS)) return;
+        BasicFileAttributes attrs = Files.readAttributes(staged, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        assertThat(attrs.isRegularFile()).isTrue();
+        assertThat(attrs.fileKey())
+                .as("A failed copy may retain its artifact only when the provider cannot prove ownership")
+                .isNull();
     }
 
     private static boolean tryPublish(Path staged, Path target, CountDownLatch ready,
