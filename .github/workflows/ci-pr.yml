@@ -290,6 +290,44 @@ jobs:
           '-Dsurefire.failIfNoSpecifiedTests=false'
           test
 
+
+  windows-organizer:
+    needs: source-integrity
+    name: Windows organizer filesystem regression
+    runs-on: windows-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up JDK 21 with Maven cache
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Organizer copy cancellation publication and recovery regressions
+        shell: pwsh
+        run: >-
+          .\tools\invoke-maven.ps1 -B -ntp
+          -pl myhomelib-library-organizer -am
+          '-Dtest=ApplyLibraryOrganizationUseCaseTest,OrganizerTargetPublisherTest,OrganizerIoStallMonitorTest,OrganizerPathSafetyTest,OrganizerArchiveSupportTest'
+          '-Dsurefire.failIfNoSpecifiedTests=false'
+          test
+
+      - name: Retain native Windows test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-organizer-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+
   dependency-scan:
     needs: source-integrity
     name: Dependency vulnerability scan
