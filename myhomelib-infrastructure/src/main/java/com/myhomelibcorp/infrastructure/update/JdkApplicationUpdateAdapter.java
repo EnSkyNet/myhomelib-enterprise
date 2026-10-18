@@ -17,11 +17,15 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.UUID;
 import java.io.StringReader;
 import java.io.StringWriter;
 
@@ -83,18 +87,48 @@ public final class JdkApplicationUpdateAdapter implements ApplicationUpdatePort 
             if(response.statusCode()!=200){response.body().close();throw new IllegalStateException("Update artifact HTTP "+response.statusCode());}
             long declared=response.headers().firstValueAsLong("Content-Length").orElse(-1L);
             if(declared>=0 && declared!=manifest.artifactLength()){response.body().close();throw new SecurityException("Update Content-Length mismatch");}
+            MessageDigest downloadedDigest=MessageDigest.getInstance("SHA-256");
             try(InputStream in=response.body(); var out=Files.newOutputStream(tmp,java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,java.nio.file.StandardOpenOption.WRITE)){
                 byte[] buf=new byte[64*1024]; long total=0;
-                for(int n;(n=in.read(buf))>=0;){ if(n==0)continue; total+=n; if(total>manifest.artifactLength()) throw new SecurityException("Update artifact exceeds declared length"); out.write(buf,0,n); }
+                for(int n;(n=in.read(buf))>=0;){
+                    if(n==0)continue;
+                    total+=n;
+                    if(total>manifest.artifactLength()) throw new SecurityException("Update artifact exceeds declared length");
+                    out.write(buf,0,n);
+                    downloadedDigest.update(buf,0,n);
+                }
                 if(total!=manifest.artifactLength()) throw new SecurityException("Update artifact is truncated");
             }
+            if(!manifest.sha256().equals(HexFormat.of().formatHex(downloadedDigest.digest())))
+                throw new SecurityException("Downloaded update artifact SHA-256 mismatch");
             Path candidate=dir.resolve("candidate-"+manifest.sha256()+".bin");
-            if(Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
-                AtomicFileSupport.requireSafeRegularFile(candidate,"existing update candidate");
-                Files.delete(tmp); ok=true; return candidate;
+            try {
+                // A normal no-replace move avoids overwriting a candidate created by another downloader.
+                if(Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) throw new FileAlreadyExistsException(candidate.toString());
+                Files.move(tmp,candidate);
+                ok=true; return candidate;
+            } catch(FileAlreadyExistsException occupied) {
+                // The filename is not evidence of content integrity: a previous attempt
+                // may have left damaged bytes behind. Never delete an unowned cache entry.
+                if(cachedArtifactMatches(candidate,manifest)) {
+                    Files.delete(tmp); ok=true; return candidate;
+                }
+                Path fresh=dir.resolve("candidate-"+manifest.sha256()+"-"+UUID.randomUUID()+".bin");
+                Files.move(tmp,fresh);
+                ok=true; return fresh;
             }
-            Files.move(tmp,candidate,StandardCopyOption.ATOMIC_MOVE); ok=true; return candidate;
         } finally { if(!ok) Files.deleteIfExists(tmp); }
+    }
+
+    private static boolean cachedArtifactMatches(Path path,ReleaseManifest manifest) throws Exception {
+        AtomicFileSupport.requireSafeRegularFile(path,"existing update candidate");
+        if(Files.size(path)!=manifest.artifactLength()) return false;
+        MessageDigest digest=MessageDigest.getInstance("SHA-256");
+        try(InputStream in=Files.newInputStream(path,LinkOption.NOFOLLOW_LINKS)) {
+            byte[] buf=new byte[64*1024];
+            for(int n;(n=in.read(buf))>=0;) if(n>0) digest.update(buf,0,n);
+        }
+        return manifest.sha256().equals(HexFormat.of().formatHex(digest.digest()));
     }
 
     @Override public void savePlan(UpdatePlan plan) throws Exception {
