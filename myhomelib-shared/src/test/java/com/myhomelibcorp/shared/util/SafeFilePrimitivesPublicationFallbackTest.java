@@ -31,6 +31,41 @@ class SafeFilePrimitivesPublicationFallbackTest {
     }
 
     @Test
+    void knownUnsupportedVolumeAvoidsRepeatedHardLinkFailures() throws Exception {
+        var knowledge = new SafeFilePrimitives.UnsupportedHardLinkVolumes();
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        Path prepared = Files.writeString(temp.resolve("prepared"), "OWNED BOOK");
+        for (int i = 0; i < 8; i++) {
+            Path target = temp.resolve("book-" + i + ".epub");
+            assertFalse(SafeFilePrimitives.publishFreshNoReplace(prepared, target, "organizer",
+                    (link, existing) -> {
+                        attempts.incrementAndGet();
+                        throw new FileSystemException(link.toString(), existing.toString(), "Неверная функция");
+                    }, knowledge));
+            assertEquals("OWNED BOOK", Files.readString(target));
+        }
+        assertEquals(1, attempts.get(), "An unsupported mounted volume must not be reprobed for each book");
+        assertEquals("OWNED BOOK", Files.readString(prepared));
+    }
+
+    @Test
+    void otherFileSystemErrorsDoNotPoisonVolumeCache() throws Exception {
+        var knowledge = new SafeFilePrimitives.UnsupportedHardLinkVolumes();
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        Path prepared = Files.writeString(temp.resolve("prepared"), "BOOK");
+        for (int i = 0; i < 2; i++) {
+            Path target = temp.resolve("no-permission-" + i);
+            assertThrows(FileSystemException.class, () -> SafeFilePrimitives.publishFreshNoReplace(
+                    prepared, target, "organizer", (link, existing) -> {
+                        attempts.incrementAndGet();
+                        throw new FileSystemException(link.toString(), existing.toString(), "Access is denied");
+                    }, knowledge));
+            assertFalse(Files.exists(target));
+        }
+        assertEquals(2, attempts.get());
+    }
+
+    @Test
     void destinationCollisionPreservesOriginalAndStaging() throws Exception {
         Path pending = Files.writeString(temp.resolve("staged"), "NEW");
         Path target = Files.writeString(temp.resolve("existing"), "ORIGINAL");

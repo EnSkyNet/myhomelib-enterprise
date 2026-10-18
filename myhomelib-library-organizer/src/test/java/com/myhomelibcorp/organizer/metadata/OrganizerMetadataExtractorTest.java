@@ -100,6 +100,45 @@ class OrganizerMetadataExtractorTest {
     }
 
     @Test
+    void usesEpub3ExplicitFileAsForSurnameFirstDirectory() throws Exception {
+        String container = """
+                <?xml version="1.0"?>
+                <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+                  <rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles>
+                </container>
+                """;
+        String opf = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <package xmlns="http://www.idpf.org/2007/opf" version="3.0"
+                    xmlns:dc="http://purl.org/dc/elements/1.1/">
+                  <metadata>
+                    <dc:title>Книга</dc:title>
+                    <dc:creator id="c1">Александр Гауз</dc:creator>
+                    <meta refines="#c1" property="file-as">Гауз, Александр</meta>
+                  </metadata>
+                  <manifest/><spine/>
+                </package>
+                """;
+        Path epub = tempDir.resolve("sort-creator.epub");
+        try (ZipOutputStream archive = new ZipOutputStream(Files.newOutputStream(epub))) {
+            archive.putNextEntry(new ZipEntry("META-INF/container.xml"));
+            archive.write(container.getBytes(StandardCharsets.UTF_8));
+            archive.closeEntry();
+            archive.putNextEntry(new ZipEntry("book.opf"));
+            archive.write(opf.getBytes(StandardCharsets.UTF_8));
+            archive.closeEntry();
+        }
+        var raw = new OrganizerMetadataExtractor().extract(epub,
+                new DetectedBookFormat("epub", "application/epub+zip", DetectionConfidence.CERTAIN,
+                        ".epub", false, "fixture"));
+        assertThat(raw.rawAuthors()).containsExactly("Гауз, Александр");
+        var path = new com.myhomelibcorp.organizer.naming.CanonicalBookPathService()
+                .relativePath(new MetadataNormalizationService().normalize(raw),
+                        com.myhomelibcorp.organizer.policy.OrganizerProfile.safeDefault(), "epub");
+        assertThat(path.getName(0).toString()).isEqualTo("Гауз Александр");
+    }
+
+    @Test
     void keepsUnstructuredCreatorNamesWithoutGuessingSurname() {
         var raw = new ExtractedBookMetadata("Title", java.util.List.of("Mary Ann van der Meer"), "", "", "en",
                 "", "", null, "", java.util.List.of(), false, "epub", DetectionConfidence.CERTAIN,

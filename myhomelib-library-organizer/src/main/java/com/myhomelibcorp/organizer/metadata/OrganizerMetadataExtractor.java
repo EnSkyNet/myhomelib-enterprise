@@ -169,7 +169,10 @@ public final class OrganizerMetadataExtractor {
             String opfPath = packagePath(zip);
             ZipArchiveEntry opf = zip.getEntry(opfPath);
             if (opf == null || opf.getSize() > MAX_XML_ENTRY_BYTES) throw new IllegalArgumentException("EPUB package missing/too large");
-            List<String> authors=new ArrayList<>(), genres=new ArrayList<>(); String title="",lang="",isbn="",publisher="",series="",seq="",annotation=""; Integer year=null; boolean cover=false;
+            List<String> authors=new ArrayList<>(), genres=new ArrayList<>();
+            List<String> creatorIds = new ArrayList<>();
+            Map<String, String> refinedFileAs = new HashMap<>();
+            String title="",lang="",isbn="",publisher="",series="",seq="",annotation=""; Integer year=null; boolean cover=false;
             try (InputStream in = boundedEntryStream(zip, opf, MAX_XML_ENTRY_BYTES)) {
                 XMLStreamReader r=SecureXmlInputFactory.create(true, false).createXMLStreamReader(in);
                 try {
@@ -178,21 +181,47 @@ public final class OrganizerMetadataExtractor {
                         String local=r.getLocalName();
                         if ("item".equals(local) && value(attr(r,"properties")).contains("cover-image")) cover=true;
                         else if (Set.of("title","creator","language","identifier","publisher","date","subject","description").contains(local)) {
+                            String creatorId = "creator".equals(local) ? value(attr(r, "id")) : "";
+                            // EPUB 2 opf:file-as is explicit surname-first metadata; prefer it
+                            // to an ambiguous dc:creator display string when available.
+                            String directFileAs = "creator".equals(local)
+                                    ? r.getAttributeValue("http://www.idpf.org/2007/opf", "file-as") : null;
                             String text=safeElementText(r, warnings, local);
-                            switch(local) { case "title" -> title=firstNonBlank(title,text); case "creator" -> {if(!text.isBlank())authors.add(text);} case "language" -> lang=firstNonBlank(lang,text); case "identifier" -> {if(isbn.isBlank() && text.replaceAll("[- ]","").matches("(?i)(?:ISBN)?(?:97[89])?\\d{9}[\\dX]")) isbn=text;} case "publisher" -> publisher=firstNonBlank(publisher,text); case "date" -> {if(year==null && text.matches("\\d{4}.*")) year=Integer.valueOf(text.substring(0,4));} case "subject" -> {if(!text.isBlank())genres.add(text);} case "description" -> annotation=firstNonBlank(annotation,text); }
+                            switch(local) { case "title" -> title=firstNonBlank(title,text); case "creator" -> {if(!text.isBlank()) {authors.add(reliableFileAs(directFileAs, text)); creatorIds.add(creatorId);}} case "language" -> lang=firstNonBlank(lang,text); case "identifier" -> {if(isbn.isBlank() && text.replaceAll("[- ]","").matches("(?i)(?:ISBN)?(?:97[89])?\\d{9}[\\dX]")) isbn=text;} case "publisher" -> publisher=firstNonBlank(publisher,text); case "date" -> {if(year==null && text.matches("\\d{4}.*")) year=Integer.valueOf(text.substring(0,4));} case "subject" -> {if(!text.isBlank())genres.add(text);} case "description" -> annotation=firstNonBlank(annotation,text); }
                         } else if ("meta".equals(local)) {
                             String name=value(attr(r,"name")), content=value(attr(r,"content")), property=value(attr(r,"property"));
                             if ("calibre:series".equalsIgnoreCase(name)) series=firstNonBlank(series,content);
                             else if ("calibre:series_index".equalsIgnoreCase(name)) seq=firstNonBlank(seq,content);
                             else if (property.endsWith("belongs-to-collection")) { String text=safeElementText(r, warnings, local); series=firstNonBlank(series,text); }
                             else if (property.endsWith("group-position")) { String text=safeElementText(r, warnings, local); seq=firstNonBlank(seq,text); }
+                            else if (property.endsWith("file-as")) {
+                                String refines = value(attr(r, "refines"));
+                                String text = safeElementText(r, warnings, local);
+                                if (refines.startsWith("#") && !text.isBlank()) refinedFileAs.put(refines.substring(1), text);
+                            }
                         }
                     }
                 } finally { r.close(); }
             }
+            // EPUB 3 file-as metadata can appear after the corresponding creator element.
+            for (int i = 0; i < creatorIds.size(); i++) {
+                String id = creatorIds.get(i);
+                if (!id.isBlank() && refinedFileAs.containsKey(id)) {
+                    authors.set(i, reliableFileAs(refinedFileAs.get(id), authors.get(i)));
+                }
+            }
             if(title.isBlank())title=filenameTitle(source);
             return new ExtractedBookMetadata(title,authors,series,seq,lang,isbn,publisher,year,annotation,genres,cover,format.format(),format.confidence(),warnings);
         }
+    }
+
+    /** Accept only explicitly comma-delimited surname-first sort names. */
+    private static String reliableFileAs(String candidate, String displayed) {
+        if (candidate == null || candidate.length() > MAX_METADATA_FIELD_CHARS) return displayed;
+        String value = candidate.strip();
+        int comma = value.indexOf(',');
+        if (comma <= 0 || comma != value.lastIndexOf(',') || comma >= value.length() - 1) return displayed;
+        return value;
     }
 
     private ExtractedBookMetadata parseDocx(Path source, DetectedBookFormat format, List<String> warnings) throws Exception {

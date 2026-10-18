@@ -6,6 +6,7 @@ import com.myhomelibcorp.application.dto.ReadingProgressDto;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.ReadingProgressRepository;
+import com.myhomelibcorp.application.exception.ReadingProgressConflictException;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.usecase.book.ResolveBookContentUseCase;
 import com.myhomelibcorp.application.usecase.book.ResolvedBookContent;
@@ -117,11 +118,37 @@ public class WebReaderService implements WebReaderUseCase {
                     return new WebProgressSaveResult(false, existing);
                 }
             }
-            return new WebProgressSaveResult(true, saveProgressUnderLease(bookId, update.chapterIndex(), update.absoluteOffset()));
+            // Hold the revision observed at stale-update validation. Re-reading it
+            // during content extraction would turn a stale request into a fresh CAS writer.
+            long observedRevision = existing == null
+                    ? progressRepository.revisionWhenAbsent(bookId)
+                    : requireRevision(existing);
+            try {
+                return new WebProgressSaveResult(true,
+                        saveProgressUnderLease(bookId, update.chapterIndex(), update.absoluteOffset(), observedRevision));
+            } catch (ReadingProgressConflictException conflict) {
+                // An intervening desktop/web commit won. Tell the browser to use
+                // the current canonical row; never silently overwrite it.
+                ReadingProgressDto canonical = progressRepository.findByBookId(bookId)
+                        .orElseThrow(() -> new IOException("Reading position removed concurrently", conflict));
+                return new WebProgressSaveResult(false, canonical);
+            }
         });
     }
 
     private ReadingProgressDto saveProgressUnderLease(String bookId, int chapterIndex, long absoluteOffset) throws IOException {
+        return saveProgressUnderLease(bookId, chapterIndex, absoluteOffset, null);
+    }
+
+    private static long requireRevision(ReadingProgressDto progress) {
+        if (progress.getRevision() == null || progress.getRevision() < 0) {
+            throw new IllegalStateException("Stored reading progress has no valid revision");
+        }
+        return progress.getRevision();
+    }
+
+    private ReadingProgressDto saveProgressUnderLease(String bookId, int chapterIndex, long absoluteOffset,
+                                                     Long expectedRevision) throws IOException {
         WebReaderDocument doc = openUnderLease(bookId, chapterIndex)
                 .orElseThrow(() -> new IOException("Book not found"));
         if (!doc.supported() || doc.chapters().isEmpty()) throw new IOException("Web Reader format is unsupported");
@@ -130,8 +157,11 @@ public class WebReaderService implements WebReaderUseCase {
         long total = doc.chapters().getLast().endOffset();
         int localOffset = (int) Math.min(Integer.MAX_VALUE, Math.max(0L, clamped - chapter.startOffset()));
         ReadingProgressDto existing = progressRepository.findByBookId(bookId).orElse(null);
+        long revision = expectedRevision != null ? expectedRevision
+                : existing == null ? progressRepository.revisionWhenAbsent(bookId) : requireRevision(existing);
         ReadingProgressDto dto = ReadingProgressDto.builder()
                 .bookId(bookId)
+                .revision(revision)
                 .anchorId(chapter.index() + ":" + clamped + ":0:" + localOffset)
                 .paragraphIndex(0)
                 .paragraphId("web:" + chapter.id())

@@ -444,6 +444,34 @@ class ApplyLibraryOrganizationUseCaseTest {
         assertThat(Files.readString(sourceRoot.resolve("1.fb2"))).isEqualTo("original-1");
     }
 
+    @Test
+    void managedCatalogSafetyFailureStopsBeforeJournalOrFileMutation() throws Exception {
+        Path sourceRoot = Files.createDirectories(temp.resolve("protected-source"));
+        Path destinationRoot = temp.resolve("protected-destination");
+        Path source = sourceRoot.resolve("book.fb2");
+        Files.writeString(source, "original protected bytes");
+        Path target = destinationRoot.resolve("book.fb2");
+        OrganizationPlanItem item = new OrganizationPlanItem(UUID.randomUUID(), source, "", sha256(source),
+                target, "fb2", "fb2", OrganizationAction.MOVE, false, "", DuplicateDecision.none(),
+                100, List.of(), List.of());
+        OrganizationPlan plan = new OrganizationPlan(UUID.randomUUID(), Instant.now(), OrganizerProfile.safeDefault(),
+                sourceRoot, destinationRoot, List.of(item), PlanStatistics.from(List.of(item)), List.of());
+        OrganizerCatalogPort blockingCatalog = new OrganizerCatalogPort() {
+            @Override public boolean supports(OrganizationPlanItem ignored) { return false; }
+            @Override public void afterFilesystemCommit(OrganizationPlanItem ignored) { }
+            @Override public void rollbackCatalog(OrganizationPlanItem ignored) { }
+            @Override public void validateBeforeFilesystemCommit(OrganizationPlanItem ignored) {
+                throw new IllegalStateException("Catalog path cannot be updated");
+            }
+        };
+        InMemoryJournal journal = new InMemoryJournal();
+        assertThatThrownBy(() -> useCase(journal, List.of(blockingCatalog)).apply(plan, () -> false))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("Catalog path cannot be updated");
+        assertThat(Files.readString(source)).isEqualTo("original protected bytes");
+        assertThat(Files.exists(target)).isFalse();
+        assertThat(journal.operation(plan.operationId())).isNull();
+    }
+
     private ApplyLibraryOrganizationUseCase useCase(OrganizationJournalPort journal) {
         return useCase(journal, List.of());
     }

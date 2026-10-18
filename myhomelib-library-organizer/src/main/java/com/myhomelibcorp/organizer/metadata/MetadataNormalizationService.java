@@ -104,8 +104,19 @@ public final class MetadataNormalizationService {
                         .filter(s -> !s.isBlank()).toList()), given, middle, family, true);
             }
         }
-        // Without a reliable delimiter, preserve display order instead of guessing family/given semantics.
-        issues.add(new NormalizationIssue("AUTHOR_UNSTRUCTURED", "Ім’я автора збережено без перестановки: " + value));
+        // Some EPUB/other creator metadata lose FB2 first/middle/last boundaries. Only infer
+        // given-first for a small, auditable set of common given names, with an optional
+        // patronymic in position two. Never blindly reverse arbitrary 2/3-token creators:
+        // "Дорничев Дмитрий" is already surname-first, and pseudonyms are ambiguous.
+        NormalizedAuthor inferred = InferredAuthorNameOrder.fromGivenFirst(value);
+        if (inferred != null) {
+            issues.add(new NormalizationIssue("AUTHOR_ORDER_INFERRED",
+                    "Порядок ПІБ припущено за поширеним ім’ям, перевірте попередній перегляд: " + value));
+            return inferred;
+        }
+        NormalizedAuthor alreadySurnameFirst = InferredAuthorNameOrder.fromSurnameFirst(value);
+        if (alreadySurnameFirst != null) return alreadySurnameFirst;
+        issues.add(new NormalizationIssue("AUTHOR_UNSTRUCTURED", "Неможливо надійно визначити прізвище; перевірте автора: " + value));
         return new NormalizedAuthor(value, "", "", "", false);
     }
 

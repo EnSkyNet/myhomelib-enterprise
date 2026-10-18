@@ -55,8 +55,8 @@ public class OperationCenterController implements WorkspaceLifecycle {
     @FXML
     public void initialize() {
         stateColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(stateText(cell.getValue())));
-        titleColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().title()));
-        kindColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(kindText(cell.getValue().kind())));
+        titleColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(titleText(cell.getValue())));
+        kindColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(kindText(cell.getValue())));
         stageColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(stageText(cell.getValue().stage())));
         progressColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(progressText(cell.getValue())));
         startedColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(TIME_FORMAT.format(cell.getValue().startedAt())));
@@ -138,16 +138,16 @@ public class OperationCenterController implements WorkspaceLifecycle {
             return;
         }
         StringBuilder text = new StringBuilder();
-        text.append(entry.title()).append('\n');
+        text.append(titleText(entry)).append('\n');
         text.append(UiText.text("ui.java.operation_center_controller.384f693f20")).append(stateText(entry)).append('\n');
-        text.append(UiText.text("ui.java.operation_center_controller.9a32dc9dce")).append(kindText(entry.kind())).append('\n');
+        text.append(UiText.text("ui.java.operation_center_controller.9a32dc9dce")).append(kindText(entry)).append('\n');
         text.append(UiText.text("ui.java.operation_center_controller.16299a6f6e")).append(stageText(entry.stage())).append('\n');
         text.append(UiText.text("ui.java.operation_center_controller.88044a908f")).append(progressText(entry)).append('\n');
         text.append(UiText.text("ui.java.operation_center_controller.dcf55c7dd2")).append(TIME_FORMAT.format(entry.startedAt())).append('\n');
         text.append(UiText.text("ui.java.operation_center_controller.d093002eea")).append(finishedText(entry)).append('\n');
         text.append(UiText.text("ui.java.operation_center_controller.7ad64391a4")).append(durationText(entry.duration(Instant.now()))).append('\n');
         text.append(UiText.text("ui.java.operation_center_controller.fb174e7936")).append(resultText(entry)).append('\n');
-        if (!entry.collectionId().isBlank()) text.append(UiText.text("ui.java.operation_center_controller.a8897fc87d")).append(entry.collectionId()).append('\n');
+        // Collection identifiers are internal diagnostics, not user-facing details.
         if (entry.inserted() != 0 || entry.updated() != 0 || entry.deleted() != 0) {
             text.append(UiText.text("ui.java.operation_center_controller.4eb7a3577f")).append(entry.inserted())
                     .append(UiText.text("ui.java.operation_center_controller.39b11d0f55")).append(entry.updated())
@@ -159,9 +159,9 @@ public class OperationCenterController implements WorkspaceLifecycle {
                     .append(UiText.text("ui.java.operation_center_controller.dae00d4c2f")).append(entry.warnings())
                     .append(UiText.text("ui.java.operation_center_controller.37eb1b14b0")).append(entry.errors()).append('\n');
         }
-        if (!entry.currentItem().isBlank()) text.append(UiText.text("ui.java.operation_center_controller.ac657d3875")).append(entry.currentItem()).append('\n');
-        if (!entry.errorMessage().isBlank()) text.append(UiText.text("ui.java.operation_center_controller.eb7ae2e067")).append(entry.errorMessage()).append('\n');
-        text.append(UiText.text("ui.java.operation_center_controller.3163064c5d")).append(entry.operationId());
+        // Raw operation details can contain filesystem paths and machine-readable JSON.
+        if (!entry.errorMessage().isBlank()) text.append(UiText.text("common.error.details_in_log")).append('\n');
+        // Operation IDs are available only in the diagnostic log.
         detailsArea.setText(text.toString());
     }
 
@@ -171,15 +171,7 @@ public class OperationCenterController implements WorkspaceLifecycle {
     }
 
     private static String resultText(OperationCenterEntry entry) {
-        if (entry == null) return "";
-        if (!entry.errorMessage().isBlank()) return entry.errorMessage();
-        if (!entry.currentItem().isBlank() && !entry.active()) return entry.currentItem();
-        return switch (entry.stage()) {
-            case COMPLETED -> UiText.text("common.success");
-            case CANCELLED -> UiText.text("ui.import.stage.cancelled");
-            case FAILED -> UiText.text("common.error");
-            default -> entry.currentItem().isBlank() ? UiText.text("ui.java.operation_center_controller.af4dd92893") : entry.currentItem();
-        };
+        return OperationUserResultText.result(entry);
     }
 
     private static String stateText(OperationCenterEntry entry) {
@@ -238,7 +230,21 @@ public class OperationCenterController implements WorkspaceLifecycle {
             try { current.close(); } catch (Exception ignored) { }
         }
     }
-    private static String kindText(OperationKind kind) {
+    private static String titleText(OperationCenterEntry entry) {
+        if (entry == null) return "";
+        String title = entry.title();
+        if (title.startsWith("{") || title.contains("\\") || title.matches(".*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-.*")) {
+            return UiText.text("ui.fxml.operation_center_workspace.operation");
+        }
+        return title;
+    }
+
+    private static String kindText(OperationCenterEntry entry) {
+        if (entry == null) return kindText((OperationKind) null);
+        return kindText(entry.kind());
+    }
+
+    static String kindText(OperationKind kind) {
         if (kind == null) return UiText.text("ui.java.operation_center_controller.390dc352b4");
         return switch (kind) {
             case COLLECTION_CREATE -> UiText.text("ui.import.stage.creating_collection");
@@ -250,6 +256,7 @@ public class OperationCenterController implements WorkspaceLifecycle {
             case RESTORE -> UiText.text("ui.import.stage.restoring");
             case INTEGRITY_CHECK -> UiText.text("ui.import.stage.integrity_checks");
             case MAINTENANCE -> UiText.text("ui.java.operation_center_controller.ac5b03f144");
+            case LIBRARY_ORGANIZATION -> UiText.text("ui.organizer.title");
             case BOOK_DOWNLOAD -> UiText.text("ui.import.stage.book_download");
             case BOOK_CONVERSION -> UiText.text("ui.import.stage.converting");
             case GENERIC -> UiText.text("ui.java.operation_center_controller.390dc352b4");

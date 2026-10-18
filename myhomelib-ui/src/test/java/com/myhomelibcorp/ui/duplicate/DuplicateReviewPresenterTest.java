@@ -64,7 +64,7 @@ class DuplicateReviewPresenterTest {
     }
 
     @Test
-    void exactGroupFormatterShowsHashTitlesFormatsAndBookIds() {
+    void exactGroupFormatterShowsReadableTitlesFormatsAndPathsWithoutTechnicalIds() {
         String bookId = "11111111-1111-1111-1111-111111111111";
         var group = new ExactDuplicateGroup("abc123", List.of(
                 new ExactDuplicateArtifact(BookId.fromString(bookId), "a", "Book A", "fb2",
@@ -73,7 +73,8 @@ class DuplicateReviewPresenterTest {
                         new BookFile("b.epub", "", "", 10, ""), 10)));
 
         assertThat(DuplicateReviewUiService.formatExactGroups(List.of(group)))
-                .contains("abc123", "Book A", "FB2", "a.fb2", bookId, "Book B", "EPUB");
+                .contains("Book A", "FB2", "a.fb2", "Book B", "EPUB")
+                .doesNotContain("abc123", bookId, "22222222-2222-2222-2222-222222222222");
     }
 
     private static BookDto book(String id, String title, String authors, BookArtifactDto artifact) {

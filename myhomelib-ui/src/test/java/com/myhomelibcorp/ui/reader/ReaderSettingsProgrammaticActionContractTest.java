@@ -118,8 +118,11 @@ class ReaderSettingsProgrammaticActionContractTest {
                 button.fire();
             } catch (Throwable t) { error.set(t); }
         });
-        assertThat(done.await(8, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-        if (error.get() != null) throw new AssertionError(error.get());
+        boolean returned = done.await(8, java.util.concurrent.TimeUnit.SECONDS);
+        // Surface exceptions raised by the FX event handler rather than masking them
+        // as a modal-dialog timeout (the button lookup runs on another FX callback).
+        if (error.get() != null) throw new AssertionError("Reader profile action " + buttonText, error.get());
+        assertThat(returned).as("Dialog must close for profile action %s", buttonText).isTrue();
         assertThat(observed.get()).isNotNull();
         assertThat(observed.get().target()).isEqualTo(expected);
     }

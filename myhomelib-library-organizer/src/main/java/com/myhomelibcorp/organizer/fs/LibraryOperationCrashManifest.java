@@ -8,6 +8,8 @@ import com.myhomelibcorp.organizer.plan.OrganizationPlanItem;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -20,7 +22,8 @@ import java.util.UUID;
  *
  * <p>The database journal remains authoritative for managed state, while this manifest intentionally
  * lives inside the operation workspace so external-folder operations can still be inspected after a
- * process crash. Every write is replace-by-rename and therefore never edits the previous manifest in place.</p>
+ * process crash. The initial snapshot is published once; subsequent durable state events are
+ * appended to a checksum-framed event log, without rewriting the initial snapshot.</p>
  */
 public final class LibraryOperationCrashManifest {
     private final UUID operationId;
@@ -39,35 +42,55 @@ public final class LibraryOperationCrashManifest {
         this.destinationRoot = plan.destinationRoot();
         this.manifestPath = Objects.requireNonNull(manifestPath, "manifestPath");
         for (OrganizationPlanItem item : plan.actions()) {
-            items.put(item.itemId(), new ItemSnapshot(item.itemId(), item.action().name(), item.sourcePath(), item.sourceEntry(),
-                    item.targetPath(), OrganizationItemState.PLANNED, item.expectedSourceSha256(), "", null, ""));
+            Objects.requireNonNull(item, "plan item");
+            ItemSnapshot snapshot = new ItemSnapshot(item.itemId(), item.action().name(), item.sourcePath(), item.sourceEntry(),
+                    item.targetPath(), OrganizationItemState.PLANNED, item.expectedSourceSha256(), "", null, "");
+            if (items.putIfAbsent(snapshot.itemId(), snapshot) != null) {
+                throw new IllegalArgumentException("Duplicate item id in organizer crash-manifest plan");
+            }
         }
     }
 
     public static LibraryOperationCrashManifest create(OrganizationPlan plan, Path manifestPath) throws Exception {
         LibraryOperationCrashManifest manifest = new LibraryOperationCrashManifest(plan, manifestPath);
+        // A crash manifest is immutable once created. Never replace an existing snapshot
+        // and then fail to create its already-existing event log: that would destroy the
+        // recovery evidence from the original operation.
+        Path safeManifest = OrganizerPathSafety.canonicalForCreation(manifestPath, "Organizer crash manifest");
+        Path safeEvents = OrganizerPathSafety.canonicalForCreation(
+                ManifestEventLog.path(safeManifest), "Organizer crash-manifest events");
+        if (Files.exists(safeManifest, LinkOption.NOFOLLOW_LINKS)) {
+            throw new FileAlreadyExistsException(safeManifest.toString());
+        }
+        if (Files.exists(safeEvents, LinkOption.NOFOLLOW_LINKS)) {
+            throw new FileAlreadyExistsException(safeEvents.toString());
+        }
         manifest.persist();
         ManifestEventLog.create(manifestPath);
         return manifest;
     }
 
     public synchronized void operationState(OrganizationOperationState state, String message) throws Exception {
-        this.operationState = Objects.requireNonNull(state, "state");
-        this.operationMessage = safe(message);
+        Objects.requireNonNull(state, "state");
+        String nextMessage = safe(message);
         ManifestEventLog.append(manifestPath, "{\"type\":\"operation\",\"state\":\""
-                + state.name() + "\",\"message\":\"" + json(operationMessage)
+                + state.name() + "\",\"message\":\"" + json(nextMessage)
                 + "\",\"updatedAt\":\"" + Instant.now() + "\"}");
+        // Only expose a state that has made it into the durable event log.
+        this.operationState = state;
+        this.operationMessage = nextMessage;
     }
 
     public synchronized void itemState(OrganizationPlanItem item, OrganizationItemState state,
                                        String sourceSha256, String targetSha256, Path backupPath,
                                        String message) throws Exception {
         Objects.requireNonNull(item, "item");
-        items.put(item.itemId(), new ItemSnapshot(item.itemId(), item.action().name(), item.sourcePath(), item.sourceEntry(),
+        requireOriginalItem(item);
+        ItemSnapshot snapshot = new ItemSnapshot(item.itemId(), item.action().name(), item.sourcePath(), item.sourceEntry(),
                 item.targetPath(), Objects.requireNonNull(state, "state"), safe(sourceSha256),
-                safe(targetSha256), backupPath, safe(message)));
-        ItemSnapshot snapshot = items.get(item.itemId());
+                safe(targetSha256), backupPath, safe(message));
         ManifestEventLog.append(manifestPath, itemEventJson(snapshot));
+        items.put(item.itemId(), snapshot);
     }
 
     /** Persist a batch of no-file-change decisions with one durable event-log sync. */
@@ -80,8 +103,7 @@ public final class LibraryOperationCrashManifest {
                 case NOOP, KEEP_AS_IS, REVIEW_DUPLICATE, SKIP_UNSUPPORTED -> true;
                 default -> false;
             }) throw new IllegalArgumentException("Only non-mutating organizer items may be batched");
-            if (!items.containsKey(item.itemId()))
-                throw new IllegalArgumentException("Unknown item in crash manifest skip batch");
+            requireOriginalItem(item);
             ItemSnapshot snapshot = new ItemSnapshot(item.itemId(), item.action().name(), item.sourcePath(),
                     item.sourceEntry(), item.targetPath(), OrganizationItemState.SKIPPED, "", "", null, "");
             snapshots.add(snapshot);
@@ -93,13 +115,24 @@ public final class LibraryOperationCrashManifest {
 
     public Path path() { return manifestPath; }
 
+    private void requireOriginalItem(OrganizationPlanItem item) {
+        ItemSnapshot previous = items.get(item.itemId());
+        if (previous == null) {
+            throw new IllegalArgumentException("Unknown item in organizer crash manifest");
+        }
+        if (!previous.action().equals(item.action().name())
+                || !Objects.equals(previous.sourcePath(), item.sourcePath())
+                || !Objects.equals(previous.sourceEntry(), safe(item.sourceEntry()))
+                || !Objects.equals(previous.targetPath(), item.targetPath())) {
+            throw new IllegalArgumentException("Organizer crash-manifest item identity changed");
+        }
+    }
+
     private void persist() throws Exception {
         Path safeManifest = OrganizerPathSafety.canonicalForCreation(manifestPath, "Organizer crash-manifest path");
         Path parent = safeManifest.getParent();
         if (parent == null) throw new IllegalArgumentException("Manifest path has no parent");
         OrganizerPathSafety.createDirectoriesNoLinks(parent, "Organizer crash-manifest directory");
-        String expectedManifestHash = SafeFilePublication.snapshotExistingTarget(
-                safeManifest, "Organizer existing crash-manifest");
         Path temp = Files.createTempFile(parent, ".manifest-", ".tmp");
         String tempHash = null;
         try {
@@ -109,7 +142,7 @@ public final class LibraryOperationCrashManifest {
                     java.nio.file.StandardOpenOption.WRITE, java.nio.file.LinkOption.NOFOLLOW_LINKS);
             tempHash = SafeFilePublication.sha256(temp, "Organizer crash-manifest temporary file");
             SafeFilePublication.publishReplacingIfUnchanged(
-                    temp, safeManifest, expectedManifestHash, "Organizer crash-manifest");
+                    temp, safeManifest, null, "Organizer crash-manifest");
             OrganizerPathSafety.canonicalExistingFile(safeManifest, "Organizer persisted crash-manifest");
         } finally {
             if (Files.exists(temp, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {

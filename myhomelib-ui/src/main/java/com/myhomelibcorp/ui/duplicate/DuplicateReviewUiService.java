@@ -279,7 +279,7 @@ public class DuplicateReviewUiService {
             if (value.survivor() != null && isCurrentBook(expectedCollectionId, expectedSourceBookId)) {
                 appState.getBookDetails().setCurrentBook(value.survivor());
             }
-            status.setText(UiText.text("ui.java.duplicate_review_ui_service.f7ee989cc7") + value.result().mergeId()
+            status.setText(UiText.text("ui.java.duplicate_review_ui_service.f7ee989cc7")
                     + (value.result().searchIndexSynchronized() ? UiText.text("ui.java.duplicate_review_ui_service.f163fed16a")
                     : UiText.text("ui.java.duplicate_review_ui_service.e12ccbbe50")));
             reload.run();
@@ -316,7 +316,7 @@ public class DuplicateReviewUiService {
             if (value.survivor() != null && isCurrentBook(expectedCollectionId, selectedId)) {
                 appState.getBookDetails().setCurrentBook(value.survivor());
             }
-            status.setText(UiText.text("ui.java.duplicate_review_ui_service.4e38f4437a") + value.result().mergeId()
+            status.setText(UiText.text("ui.java.duplicate_review_ui_service.4e38f4437a")
                     + (value.result().searchIndexSynchronized() ? UiText.text("ui.java.duplicate_review_ui_service.f163fed16a")
                     : UiText.text("ui.java.duplicate_review_ui_service.dd32f90203")));
             reload.run();
@@ -482,8 +482,9 @@ public class DuplicateReviewUiService {
         progress.setProgress(result.total() == 0 ? 1.0 : Math.min(1.0, (double) result.processed() / result.total()));
         counters.setText(result.processed() + " / " + result.total());
         if (result.cancelled()) {
-            status.setText(UiText.text("ui.java.duplicate_review_ui_service.69c903c2bb") + result.processed() + UiText.text("ui.java.duplicate_review_ui_service.5a37634d69") + result.total()
-                    + UiText.text("ui.java.duplicate_review_ui_service.d5600fa21d") + result.scanId() + ".");
+            status.setText(UiText.text("ui.java.duplicate_review_ui_service.69c903c2bb") + result.processed()
+                    + UiText.text("ui.java.duplicate_review_ui_service.5a37634d69") + result.total()
+                    + UiText.text("ui.java.duplicate_review_ui_service.d5600fa21d"));
             return;
         }
         status.setText(UiText.text("ui.java.duplicate_review_ui_service.13c279bfac") + result.groups().size() + UiText.text("ui.java.duplicate_review_ui_service.d2f0a5e078")
@@ -496,12 +497,12 @@ public class DuplicateReviewUiService {
         StringBuilder out = new StringBuilder();
         int index = 1;
         for (ExactDuplicateGroup group : groups) {
-            out.append("#").append(index++).append(" SHA-256 ").append(group.sha256()).append('\n');
+            out.append("#").append(index++).append(' ')
+                    .append(UiText.text("ui.comic.duplicates.group")).append('\n');
             group.artifacts().forEach(artifact -> out.append("  • ")
                     .append(artifact.title()).append(" — ")
                     .append(artifact.format().toUpperCase(Locale.ROOT)).append(" — ")
-                    .append(artifact.file().getFileName()).append(UiText.text("ui.java.duplicate_review_ui_service.f470563a9e"))
-                    .append(artifact.bookId().asString()).append(")\n"));
+                    .append(artifact.file().getFileName()).append("\n"));
             out.append('\n');
         }
         return out.toString().stripTrailing();

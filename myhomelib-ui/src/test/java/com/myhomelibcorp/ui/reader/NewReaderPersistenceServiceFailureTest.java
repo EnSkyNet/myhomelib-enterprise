@@ -20,12 +20,12 @@ class NewReaderPersistenceServiceFailureTest {
     private final NewReaderPersistenceService service = newPersistence(progress, bookmarks, i18n);
 
     NewReaderPersistenceServiceFailureTest() {
-        when(i18n.format("ui.reader.persistence.position_load_error", "book-1"))
-                .thenReturn("Не вдалося завантажити позицію читання для book-1");
-        when(i18n.format("ui.reader.persistence.bookmarks_load_error", "book-1"))
-                .thenReturn("Не вдалося завантажити закладки для book-1");
-        when(i18n.format("ui.reader.persistence.bookmark_count_error", "book-1"))
-                .thenReturn("Не вдалося підрахувати закладки для book-1");
+        when(i18n.text("ui.reader.persistence.position_load_error"))
+                .thenReturn("Не вдалося завантажити позицію читання");
+        when(i18n.text("ui.reader.persistence.bookmarks_load_error"))
+                .thenReturn("Не вдалося завантажити закладки");
+        when(i18n.text("ui.reader.persistence.bookmark_count_error"))
+                .thenReturn("Не вдалося підрахувати закладки");
     }
 
     @Test

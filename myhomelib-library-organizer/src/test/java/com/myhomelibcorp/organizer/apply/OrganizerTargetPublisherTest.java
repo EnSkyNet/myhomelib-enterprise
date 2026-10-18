@@ -18,6 +18,29 @@ class OrganizerTargetPublisherTest {
     @TempDir Path temp;
 
     @Test
+    void cancelledPublicationNeverExposesACompletedTargetOrUnownedPartialCopy() throws Exception {
+        Path staged = temp.resolve("large-stage.fb2");
+        byte[] block = new byte[1024 * 1024];
+        try (var out = Files.newOutputStream(staged)) {
+            for (int i = 0; i < 12; i++) out.write(block);
+        }
+        Path target = temp.resolve("destination/book.fb2");
+        String digest = OrganizerFileIntegritySupport.sha256(staged);
+        var polls = new java.util.concurrent.atomic.AtomicInteger();
+
+        assertThatThrownBy(() -> new OrganizerTargetPublisher().publish(
+                staged, target, digest, () -> polls.incrementAndGet() >= 5))
+                .isInstanceOf(java.util.concurrent.CancellationException.class);
+        assertThat(polls.get()).isGreaterThanOrEqualTo(5);
+        assertThat(target).doesNotExist();
+        assertThat(staged).exists();
+        try (var stagedFiles = Files.list(target.getParent())) {
+            assertThat(stagedFiles.map(path -> path.getFileName().toString()).toList())
+                    .noneMatch(name -> name.startsWith(".mhl-tmp-"));
+        }
+    }
+
+    @Test
     void longValidNamesDoNotOverflowTemporaryNames() throws Exception {
         Path source = Files.writeString(temp.resolve("a".repeat(230) + ".fb2"), "long name payload");
         Path target = temp.resolve("target").resolve("b".repeat(230) + ".fb2");
@@ -36,6 +59,89 @@ class OrganizerTargetPublisherTest {
         assertThatThrownBy(() -> OrganizerFileIntegritySupport.sha256(source, () -> polls.incrementAndGet() >= 3))
                 .isInstanceOf(java.util.concurrent.CancellationException.class);
         assertThat(Files.size(source)).isEqualTo(512 * 1024);
+    }
+
+    @Test
+    void sourceChangedAtCopyStartDoesNotLeaveUnverifiedStagingFile() throws Exception {
+        Path source = Files.writeString(temp.resolve("racing-source.fb2"), "original text", StandardCharsets.UTF_8);
+        String initialDigest = OrganizerFileIntegritySupport.sha256(source);
+        Path staged = temp.resolve("staging/unverified.fb2");
+        var changed = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.function.BooleanSupplier concurrentEdit = () -> {
+            boolean copyHasStarted = StackWalker.getInstance().walk(frames -> frames.anyMatch(frame ->
+                    frame.getClassName().equals("com.myhomelibcorp.shared.util.NoLinkPathSafety")
+                            && frame.getMethodName().startsWith("copyFreshFile")));
+            if (copyHasStarted && changed.compareAndSet(false, true)) {
+                try {
+                    Files.writeString(source, "concurrent replacement", StandardCharsets.UTF_8);
+                } catch (java.io.IOException failure) {
+                    throw new java.io.UncheckedIOException(failure);
+                }
+            }
+            return false;
+        };
+
+        assertThatThrownBy(() -> OrganizerFileIntegritySupport.copyAndVerify(
+                source, staged, initialDigest, concurrentEdit))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("hash mismatch");
+        assertThat(changed.get()).isTrue();
+        assertThat(staged).doesNotExist();
+        assertThat(Files.readString(source)).isEqualTo("concurrent replacement");
+    }
+
+    @Test
+    void cancellationAfterCopyBeforeTargetHashRemovesOwnedStagingBytes() throws Exception {
+        Path source = Files.writeString(temp.resolve("complete-source.fb2"), "complete payload");
+        Path staged = temp.resolve("staging/finished-but-cancelled.fb2");
+        String hash = OrganizerFileIntegritySupport.sha256(source);
+        var checkpoints = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.BooleanSupplier cancelAfterCopy = () ->
+                // With a small source the seventh cancellation check falls after
+                // streaming: in V20's post-copy check, or V21's target re-read.
+                checkpoints.incrementAndGet() >= 7;
+
+        assertThatThrownBy(() -> OrganizerFileIntegritySupport.copyAndVerify(
+                source, staged, hash, cancelAfterCopy))
+                .isInstanceOf(java.util.concurrent.CancellationException.class);
+        assertThat(Files.readString(source)).isEqualTo("complete payload");
+        assertThat(staged).doesNotExist();
+    }
+
+    @Test
+    void verifiedCopyEmitsFirstChunkAndVerificationMilestones() throws Exception {
+        Path source = Files.write(temp.resolve("progress-source.fb2"), new byte[2 * 1024 * 1024 + 5]);
+        Path staged = temp.resolve("staging/progress.fb2");
+        String digest = OrganizerFileIntegritySupport.sha256(source);
+        java.util.List<String> stages = new java.util.ArrayList<>();
+        java.util.List<Long> copied = new java.util.ArrayList<>();
+
+        OrganizerFileIntegritySupport.copyAndVerify(source, staged, digest, () -> false, (stage, bytes) -> {
+            stages.add(stage);
+            copied.add(bytes);
+        });
+
+        assertThat(stages).containsSubsequence("OPENED", "BYTES", "STREAM_DONE",
+                "VERIFY_TARGET_START", "VERIFY_TARGET_DONE");
+        assertThat(copied.get(stages.indexOf("BYTES"))).isPositive();
+        assertThat(copied.get(stages.indexOf("STREAM_DONE"))).isEqualTo(Files.size(source));
+        assertThat(copied.get(stages.indexOf("VERIFY_TARGET_DONE"))).isEqualTo(Files.size(source));
+        assertThat(OrganizerFileIntegritySupport.sha256(staged)).isEqualTo(digest);
+    }
+
+    @Test
+    void cancellationAtDestinationVerificationMilestoneCleansOnlyOwnOutput() throws Exception {
+        Path source = Files.writeString(temp.resolve("source.fb2"), "milestone cancel");
+        Path staged = temp.resolve("staging/milestone-cancel.fb2");
+        String digest = OrganizerFileIntegritySupport.sha256(source);
+        var cancel = new java.util.concurrent.atomic.AtomicBoolean();
+
+        assertThatThrownBy(() -> OrganizerFileIntegritySupport.copyAndVerify(source, staged, digest,
+                cancel::get, (stage, bytes) -> {
+                    if ("VERIFY_TARGET_START".equals(stage)) cancel.set(true);
+                })).isInstanceOf(java.util.concurrent.CancellationException.class);
+        assertThat(staged).doesNotExist();
+        assertThat(Files.readString(source)).isEqualTo("milestone cancel");
     }
 
     @Test

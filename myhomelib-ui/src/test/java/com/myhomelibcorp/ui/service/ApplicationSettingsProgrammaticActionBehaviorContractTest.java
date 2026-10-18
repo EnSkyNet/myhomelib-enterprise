@@ -60,7 +60,7 @@ class ApplicationSettingsProgrammaticActionBehaviorContractTest {
             return null;
         });
         verify(i18n).languageDiagnostics();
-        verify(i18n).languageDiagnosticsFile();
+        verify(i18n, never()).languageDiagnosticsFile();
 
         UiActionTestSupport.fx(() -> {
             Platform.runLater(ApplicationSettingsProgrammaticActionBehaviorContractTest::hideShowingWindows);

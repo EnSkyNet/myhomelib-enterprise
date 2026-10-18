@@ -4,13 +4,13 @@
   "product_version": "8.0.0",
   "contract": "Every current user-triggerable FXML/programmatic JavaFX or Web Library action has explicit reviewed automated evidence; handler/callback fingerprints force review after behavioral code changes.",
   "summary": {
-    "actions": 486,
+    "actions": 489,
     "fxml_actions": 275,
-    "programmatic_actions": 205,
+    "programmatic_actions": 208,
     "web_actions": 6,
     "direct_fxml_actions": 207,
-    "delegate_contract_actions": 279,
-    "behavioral_evidence_actions": 486,
+    "delegate_contract_actions": 282,
+    "behavioral_evidence_actions": 489,
     "unmapped": 0
   },
   "entries": [
@@ -7989,6 +7989,63 @@
         "myhomelib-application/src/test/java/com/myhomelibcorp/application/opds/OpdsSettingsServiceTest.java"
       ],
       "callback_sha256": "425c6885037a8af1c7217dd74f4f117cf5e885f399a8fbcb17fe05f1c92ac433",
+      "behavioral_evidence": true
+    },
+    {
+      "key": "PROGRAMMATIC|myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java|authorBatchButton|1",
+      "kind": "PROGRAMMATIC",
+      "surface": "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java",
+      "controller": "LibraryOrganizerUiService",
+      "action": "authorBatchButton.setOnAction[1]",
+      "control": "authorBatchButton",
+      "label": "authorBatchButton",
+      "preconditions": "контекст, заданий діалогом/reader/service; boundary тестується без реальної зовнішньої мутації",
+      "expected_result": "callback елемента «authorBatchButton» виконує заявлений flow класу LibraryOrganizerUiService",
+      "user_function_ref": "organizer",
+      "coverage": "AUTOMATED_DELEGATE_CONTRACT",
+      "evidence": [
+        "myhomelib-library-organizer/src/test/java/com/myhomelibcorp/organizer/analysis/OrganizerMixedLibraryAcceptanceTest.java",
+        "myhomelib-library-organizer/src/test/java/com/myhomelibcorp/organizer/apply/ApplyLibraryOrganizationUseCaseTest.java"
+      ],
+      "callback_sha256": "a3250f1d7bea29a8fb1a0559c24c450071f60b505fce0cd668a2da2c93838b2d",
+      "behavioral_evidence": true
+    },
+    {
+      "key": "PROGRAMMATIC|myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java|authorPreviewButton|1",
+      "kind": "PROGRAMMATIC",
+      "surface": "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java",
+      "controller": "LibraryOrganizerUiService",
+      "action": "authorPreviewButton.setOnAction[1]",
+      "control": "authorPreviewButton",
+      "label": "authorPreviewButton",
+      "preconditions": "контекст, заданий діалогом/reader/service; boundary тестується без реальної зовнішньої мутації",
+      "expected_result": "callback елемента «authorPreviewButton» виконує заявлений flow класу LibraryOrganizerUiService",
+      "user_function_ref": "organizer",
+      "coverage": "AUTOMATED_DELEGATE_CONTRACT",
+      "evidence": [
+        "myhomelib-library-organizer/src/test/java/com/myhomelibcorp/organizer/analysis/OrganizerMixedLibraryAcceptanceTest.java",
+        "myhomelib-library-organizer/src/test/java/com/myhomelibcorp/organizer/apply/ApplyLibraryOrganizationUseCaseTest.java"
+      ],
+      "callback_sha256": "b3ac072f90cbb7ae401f9b03176bd792fdb1abea89c7632fb5b6b6d212aeb58f",
+      "behavioral_evidence": true
+    },
+    {
+      "key": "PROGRAMMATIC|myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java|authorSelectionButton|1",
+      "kind": "PROGRAMMATIC",
+      "surface": "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java",
+      "controller": "LibraryOrganizerUiService",
+      "action": "authorSelectionButton.setOnAction[1]",
+      "control": "authorSelectionButton",
+      "label": "authorSelectionButton",
+      "preconditions": "контекст, заданий діалогом/reader/service; boundary тестується без реальної зовнішньої мутації",
+      "expected_result": "callback елемента «authorSelectionButton» виконує заявлений flow класу LibraryOrganizerUiService",
+      "user_function_ref": "organizer",
+      "coverage": "AUTOMATED_DELEGATE_CONTRACT",
+      "evidence": [
+        "myhomelib-library-organizer/src/test/java/com/myhomelibcorp/organizer/analysis/OrganizerMixedLibraryAcceptanceTest.java",
+        "myhomelib-library-organizer/src/test/java/com/myhomelibcorp/organizer/apply/ApplyLibraryOrganizationUseCaseTest.java"
+      ],
+      "callback_sha256": "fb22efe173587b5f7d4a938697b264cd84c05a166e7f673e93024c928d4188d9",
       "behavioral_evidence": true
     },
     {

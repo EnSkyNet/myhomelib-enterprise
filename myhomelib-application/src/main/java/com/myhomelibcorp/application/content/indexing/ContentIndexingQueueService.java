@@ -65,6 +65,10 @@ public class ContentIndexingQueueService implements DisposableBean {
     private final AtomicLong completed = new AtomicLong();
     private final AtomicLong failed = new AtomicLong();
     private final Object enqueueLock = new Object();
+    // Synchronous freshness/discard checkpoints must not race an already-running asynchronous
+    // checkpoint. Otherwise an older snapshot can finish after clear() and resurrect completed work
+    // if the process crashes in that window.
+    private final Object checkpointWriteLock = new Object();
     private volatile String lastError = "";
 
     private final ScheduledExecutorService coordinator;
@@ -163,8 +167,22 @@ public class ContentIndexingQueueService implements DisposableBean {
             restoredCollections.remove(id);
             throw new IllegalStateException("Content indexing checkpoint exceeds queue capacity: " + state.tasks().size());
         }
+        Set<String> restoredTaskIds = new java.util.HashSet<>();
+        Set<String> restoredArtifactKeys = new java.util.HashSet<>();
         for (ContentIndexingTask task : state.tasks()) {
-            if (task == null || !id.equals(task.collectionId())) {
+            if (task == null) {
+                restoredCollections.remove(id);
+                throw new IllegalStateException("Content indexing checkpoint contains a null task");
+            }
+            if (!restoredTaskIds.add(task.taskId())) {
+                restoredCollections.remove(id);
+                throw new IllegalStateException("Content indexing checkpoint contains duplicate task ID");
+            }
+            if (!restoredArtifactKeys.add(artifactKey(task))) {
+                restoredCollections.remove(id);
+                throw new IllegalStateException("Content indexing checkpoint contains duplicate artifact work");
+            }
+            if (!id.equals(task.collectionId())) {
                 restoredCollections.remove(id);
                 throw new IllegalStateException("Content indexing checkpoint contains a task for another collection");
             }
@@ -214,15 +232,31 @@ public class ContentIndexingQueueService implements DisposableBean {
         if (tasks == null || tasks.isEmpty()) return 0;
         List<ContentIndexingTask> acceptedTasks = tasks.stream().filter(Objects::nonNull).toList();
         if (acceptedTasks.isEmpty()) return 0;
+        java.util.LinkedHashMap<String, ContentIndexingTask> uniqueById = new java.util.LinkedHashMap<>();
+        for (ContentIndexingTask task : acceptedTasks) {
+            ContentIndexingTask previous = uniqueById.putIfAbsent(task.taskId(), task);
+            if (previous != null && !Objects.equals(previous, task)) {
+                throw new IllegalArgumentException("Content indexing batch contains conflicting task ID: " + task.taskId());
+            }
+        }
+        List<ContentIndexingTask> uniqueTasks = List.copyOf(uniqueById.values());
         java.util.LinkedHashSet<String> collections = new java.util.LinkedHashSet<>();
         synchronized (enqueueLock) {
-            // Reserve capacity for the whole batch before publishing its first task. A conservative
+            // Validate all task identities before publishing the first task. This keeps a rejected
+            // batch from leaving half of its changes queued.
+            for (ContentIndexingTask task : uniqueTasks) {
+                ContentIndexingTask existing = outstanding.get(task.taskId());
+                if (existing != null && !Objects.equals(existing, task)) {
+                    throw new IllegalArgumentException("Content indexing task ID is already assigned to another task");
+                }
+            }
+            // Reserve capacity for the whole unique batch before publishing its first task. A conservative
             // reservation is intentional: falling back to a full rebuild is safer than exposing a
             // partially queued change set that could later be mistaken for a fresh index.
-            if (acceptedTasks.size() > availableCapacity()) {
+            if (uniqueTasks.size() > availableCapacity()) {
                 throw new IllegalStateException("Content indexing queue capacity exceeded: " + MAX_OUTSTANDING_TASKS);
             }
-            for (ContentIndexingTask task : acceptedTasks) {
+            for (ContentIndexingTask task : uniqueTasks) {
                 enqueueInternal(task, false);
                 collections.add(task.collectionId());
             }
@@ -242,7 +276,17 @@ public class ContentIndexingQueueService implements DisposableBean {
                 && !active.contains(previousId)
                 && outstanding.containsKey(previousId);
         boolean alreadyOutstanding = outstanding.containsKey(task.taskId());
-        if (!replacingPending && !alreadyOutstanding && outstanding.size() >= MAX_OUTSTANDING_TASKS) {
+        if (alreadyOutstanding) {
+            ContentIndexingTask existing = outstanding.get(task.taskId());
+            if (!Objects.equals(existing, task)) {
+                throw new IllegalArgumentException("Content indexing task ID is already assigned to another task");
+            }
+            // Idempotent re-enqueue of the exact same task must not add a second queue entry.
+            // Still request a checkpoint so a transiently failed earlier checkpoint can be healed.
+            if (checkpoint) requestCheckpoint(task.collectionId());
+            return;
+        }
+        if (!replacingPending && outstanding.size() >= MAX_OUTSTANDING_TASKS) {
             throw new IllegalStateException("Content indexing queue capacity exceeded: " + MAX_OUTSTANDING_TASKS);
         }
         // Publishing a stale marker before the task becomes visible prevents content search
@@ -346,7 +390,9 @@ public class ContentIndexingQueueService implements DisposableBean {
             staleHolds.remove(id);
             restoredCollections.remove(id);
         }
-        checkpointPort.clear(id);
+        synchronized (checkpointWriteLock) {
+            checkpointPort.clear(id);
+        }
         notifyListeners();
         return true;
     }
@@ -596,13 +642,15 @@ public class ContentIndexingQueueService implements DisposableBean {
     }
 
     private void checkpointCollection(String collectionId) {
-        List<ContentIndexingTask> tasks = outstanding.values().stream()
-                .filter(task -> task.collectionId().equals(collectionId))
-                .sorted(ORDER)
-                .toList();
-        boolean rebuildRequired = rebuildRequiredCollections.contains(collectionId);
-        if (tasks.isEmpty() && !rebuildRequired) checkpointPort.clear(collectionId);
-        else checkpointPort.save(new ContentIndexQueueCheckpoint(collectionId, paused.get(), rebuildRequired, tasks));
+        synchronized (checkpointWriteLock) {
+            List<ContentIndexingTask> tasks = outstanding.values().stream()
+                    .filter(task -> task.collectionId().equals(collectionId))
+                    .sorted(ORDER)
+                    .toList();
+            boolean rebuildRequired = rebuildRequiredCollections.contains(collectionId);
+            if (tasks.isEmpty() && !rebuildRequired) checkpointPort.clear(collectionId);
+            else checkpointPort.save(new ContentIndexQueueCheckpoint(collectionId, paused.get(), rebuildRequired, tasks));
+        }
     }
 
     private boolean safeOnBattery() {

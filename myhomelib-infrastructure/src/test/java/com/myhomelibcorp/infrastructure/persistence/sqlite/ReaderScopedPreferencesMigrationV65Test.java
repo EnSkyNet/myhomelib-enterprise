@@ -28,7 +28,7 @@ class ReaderScopedPreferencesMigrationV65Test {
         Flyway flyway = Flyway.configure().dataSource(ds).locations("classpath:db/migration").load();
         flyway.migrate();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("70");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("73");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='reader_book_preferences'", Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT preferences_json FROM reader_preference_overrides WHERE scope_type='BOOK' AND scope_key='book-v65'", String.class)).contains("dark");
 

@@ -38,8 +38,10 @@ class PortableSnapshotConflictServiceTest {
             assertThat(c.reason().key()).isEqualTo("ui.sync.conflict.reason.portable_section_changed");
             assertThat(c.localSnapshot().key()).startsWith("ui.sync.conflict.snapshot.");
             assertThat(c.remoteSnapshot().key()).startsWith("ui.sync.conflict.snapshot.");
-            assertThat(c.localSnapshot().arguments().getLast()).matches("[0-9a-f]{64}");
-            assertThat(c.remoteSnapshot().arguments().getLast()).matches("[0-9a-f]{64}");
+            // User-facing conflicts report section sizes, not opaque fingerprints.
+            // Developer-only SHA-256 values must never enter localized UI arguments.
+            assertThat(c.localSnapshot().arguments()).containsExactly("1");
+            assertThat(c.remoteSnapshot().arguments()).containsExactly("1");
         });
     }
 

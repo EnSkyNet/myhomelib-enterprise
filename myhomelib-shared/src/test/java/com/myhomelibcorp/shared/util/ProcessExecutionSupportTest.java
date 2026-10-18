@@ -12,6 +12,8 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.CancellationException;
@@ -60,19 +62,34 @@ class ProcessExecutionSupportTest {
         List<String> command = new java.util.ArrayList<>(javaCommand(SpawnChildAndSleep.class));
         command.add(pidFile.toString());
 
-        assertThatThrownBy(() -> ProcessExecutionSupport.run(command, null, Duration.ofMillis(500), 4096))
-                .isInstanceOf(ProcessExecutionSupport.ProcessTimeoutException.class);
-
-        long deadline = System.nanoTime() + Duration.ofSeconds(3).toNanos();
-        while (!Files.exists(pidFile) && System.nanoTime() < deadline) Thread.sleep(25);
-        assertThat(pidFile).exists();
-        long childPid = Long.parseLong(Files.readString(pidFile).trim());
-        while (ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false)
-                && System.nanoTime() < deadline) {
-            Thread.sleep(25);
+        // Starting a JVM that itself spawns another JVM can take longer than
+        // 500 ms on a loaded CI host. Wait until the child is provably running
+        // before checking that the timeout terminates its entire process tree.
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var execution = pool.submit(() -> ProcessExecutionSupport.run(
+                    command, null, Duration.ofSeconds(6), 4096));
+            long readyDeadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+            // Files.writeString first creates the PID file, then writes its content.
+            // Seeing the empty file is not proof that the child PID is ready.
+            String pidText = "";
+            while (!execution.isDone() && System.nanoTime() < readyDeadline) {
+                if (Files.exists(pidFile)) pidText = Files.readString(pidFile).trim();
+                if (pidText.matches("[0-9]+")) break;
+                Thread.sleep(25);
+            }
+            assertThat(pidText).as("The spawned child must publish a complete numeric PID before timeout")
+                    .matches("[0-9]+");
+            long childPid = Long.parseLong(pidText);
+            assertThatThrownBy(() -> execution.get(10, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class)
+                    .hasCauseInstanceOf(ProcessExecutionSupport.ProcessTimeoutException.class);
+            long terminatedDeadline = System.nanoTime() + Duration.ofSeconds(3).toNanos();
+            while (ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false)
+                    && System.nanoTime() < terminatedDeadline) Thread.sleep(25);
+            assertThat(ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false)).isFalse();
+        } finally {
+            Files.deleteIfExists(pidFile);
         }
-        assertThat(ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false)).isFalse();
-        Files.deleteIfExists(pidFile);
     }
 
     @Test

@@ -201,9 +201,8 @@ public class IntegrityCheckController {
         if (!matches.isEmpty()) {
             text.append(UiText.text("ui.java.integrity_check_controller.29008ba6f7"));
             for (ArtifactIntegrityFinding finding : matches) {
-                text.append("• ").append(finding.bookTitle().isBlank() ? finding.bookId() : finding.bookTitle())
-                        .append(" [").append(findingStatus(finding.status())).append("]\n  ")
-                        .append(finding.path());
+                text.append("• ").append(userFacingFindingLabel(finding))
+                        .append(" [").append(findingStatus(finding.status())).append("]");
                 String findingDetail = findingDetail(finding);
                 if (!findingDetail.isBlank()) text.append("\n  ").append(findingDetail);
                 text.append('\n');
@@ -356,7 +355,7 @@ public class IntegrityCheckController {
     private String formatContentIndexHealth(ContentIndexHealth health) {
         if (health == null) return UiText.text("ui.java.integrity_check_controller.7a32e9c7f4");
         return UiText.text("ui.java.integrity_check_controller.2fd8ee5431")
-                + UiText.text("ui.java.integrity_check_controller.ce86b580b9") + health.collectionId() + "\n"
+                + UiText.text("ui.java.integrity_check_controller.ce86b580b9") + currentCollectionName() + "\n"
                 + UiText.text("ui.java.integrity_check_controller.e2998e14d1") + health.schemaVersion() + "\n"
                 + UiText.text("ui.java.integrity_check_controller.9c6f189d5e") + formatNumber(health.documentCount()) + "\n"
                 + UiText.text("ui.java.integrity_check_controller.173f73a83f") + formatBytes(health.sizeBytes()) + "\n"
@@ -402,7 +401,7 @@ public class IntegrityCheckController {
             case "extracting" -> UiText.text("ui.java.integrity_check_controller.5ad513428b");
             case "extracted" -> UiText.text("ui.java.integrity_check_controller.7b06b00769");
             case "complete" -> UiText.text("ui.import.stage.completed");
-            default -> phase;
+            default -> UiText.text("ui.import.stage.processing");
         };
     }
 
@@ -415,6 +414,14 @@ public class IntegrityCheckController {
     private String currentCollectionId() {
         var collection = appState.getCurrentLibraryCollection();
         return collection == null || collection.getId() == null ? "" : collection.getId().trim();
+    }
+
+    private String currentCollectionName() {
+        var collection = appState.getCurrentLibraryCollection();
+        if (collection == null || collection.getName() == null || collection.getName().isBlank()) {
+            return UiText.text("ui.bootstrap.no_collection");
+        }
+        return collection.getName().trim();
     }
 
     @FXML public void onShowMissing() { selectIssue(LibraryHealthIssueType.MISSING_ARTIFACTS); }
@@ -513,14 +520,15 @@ public class IntegrityCheckController {
         if (!report.artifactFindings().isEmpty()) {
             out.append(UiText.text("ui.java.integrity_check_controller.28c3515a59"));
             for (ArtifactIntegrityFinding finding : report.artifactFindings()) {
-                out.append(findingStatus(finding.status())).append(" | ").append(finding.artifactId())
-                        .append(UiText.text("ui.java.integrity_check_controller.3d7f5de62c")).append(finding.bookId()).append(" | ").append(finding.path()).append('\n');
+                // Diagnostic UUIDs and hashes belong in the support log, not in
+                // the report opened by a reader or exported to share with others.
+                log.debug("Integrity diagnostic: artifact={}, book={}, path={}, expectedSha={}, observedSha={}",
+                        finding.artifactId(), finding.bookId(), finding.path(),
+                        finding.baselineSha256(), finding.observedSha256());
+                out.append(findingStatus(finding.status())).append(" | ")
+                        .append(userFacingFindingLabel(finding)).append('\n');
                 String findingDetail = findingDetail(finding);
                 if (!findingDetail.isBlank()) out.append("  ").append(findingDetail).append('\n');
-                if (!finding.baselineSha256().isBlank() || !finding.observedSha256().isBlank()) {
-                    out.append(UiText.text("ui.java.integrity_check_controller.9b9bfb620c")).append(finding.baselineSha256())
-                            .append(UiText.text("ui.java.integrity_check_controller.18f714e296")).append(finding.observedSha256()).append('\n');
-                }
             }
         }
         return out.toString();
@@ -559,6 +567,16 @@ public class IntegrityCheckController {
                     : UiText.text("ui.integrity.issue.backup_age.detail_missing");
             default -> base;
         };
+    }
+
+    /** A readable title and optional filename, without internal IDs, hashes or absolute paths. */
+    static String userFacingFindingLabel(ArtifactIntegrityFinding finding) {
+        String title = finding.bookTitle().isBlank()
+                ? UiText.text("ui.integrity.book_without_title") : finding.bookTitle().strip();
+        String source = finding.path().replace('\\', '/');
+        int slash = source.lastIndexOf('/');
+        String filename = source.substring(slash + 1).strip();
+        return filename.isBlank() ? title : title + " — " + filename;
     }
 
     private String findingStatus(com.myhomelibcorp.application.integrity.ArtifactIntegrityStatus status) {

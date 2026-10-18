@@ -1,7 +1,7 @@
 {
   "summary": {
-    "actions": 486,
-    "automated_action_specific": 485,
+    "actions": 489,
+    "automated_action_specific": 488,
     "justified_exclusions": 1,
     "missing": 0
   },
@@ -8437,6 +8437,60 @@
       "status": "AUTOMATED_ACTION_SPECIFIC",
       "evidence": [
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/opds/OpdsTokenUiContractTest.java"
+      ]
+    },
+    {
+      "key": "PROGRAMMATIC|myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java|authorBatchButton|1",
+      "kind": "PROGRAMMATIC",
+      "surface": "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java",
+      "controller": "LibraryOrganizerUiService",
+      "action": "authorBatchButton.setOnAction[1]",
+      "user_function_ref": "organizer",
+      "implementation_fingerprint": "a3250f1d7bea29a8fb1a0559c24c450071f60b505fce0cd668a2da2c93838b2d",
+      "behavior_tokens": [
+        "auditAuthorFolders",
+        "authorBatchButton",
+        "getAuthorBatchButton"
+      ],
+      "status": "AUTOMATED_ACTION_SPECIFIC",
+      "evidence": [
+        "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiServiceActionBehaviorContractTest.java"
+      ]
+    },
+    {
+      "key": "PROGRAMMATIC|myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java|authorPreviewButton|1",
+      "kind": "PROGRAMMATIC",
+      "surface": "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java",
+      "controller": "LibraryOrganizerUiService",
+      "action": "authorPreviewButton.setOnAction[1]",
+      "user_function_ref": "organizer",
+      "implementation_fingerprint": "b3ac072f90cbb7ae401f9b03176bd792fdb1abea89c7632fb5b6b6d212aeb58f",
+      "behavior_tokens": [
+        "previewAuthorFolder",
+        "authorPreviewButton",
+        "getAuthorPreviewButton"
+      ],
+      "status": "AUTOMATED_ACTION_SPECIFIC",
+      "evidence": [
+        "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiServiceActionBehaviorContractTest.java"
+      ]
+    },
+    {
+      "key": "PROGRAMMATIC|myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java|authorSelectionButton|1",
+      "kind": "PROGRAMMATIC",
+      "surface": "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java",
+      "controller": "LibraryOrganizerUiService",
+      "action": "authorSelectionButton.setOnAction[1]",
+      "user_function_ref": "organizer",
+      "implementation_fingerprint": "fb22efe173587b5f7d4a938697b264cd84c05a166e7f673e93024c928d4188d9",
+      "behavior_tokens": [
+        "prepareOfflineAuthorRepair",
+        "authorSelectionButton",
+        "getAuthorSelectionButton"
+      ],
+      "status": "AUTOMATED_ACTION_SPECIFIC",
+      "evidence": [
+        "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiServiceActionBehaviorContractTest.java"
       ]
     },
     {

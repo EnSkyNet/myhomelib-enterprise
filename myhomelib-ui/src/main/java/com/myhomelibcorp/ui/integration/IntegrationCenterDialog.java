@@ -146,7 +146,7 @@ public final class IntegrationCenterDialog {
             secure.setText(status.secureStoreAvailable()
                     ? UiText.text("ui.integration.kobo.secure_store") + status.secureStoreBackend()
                     : UiText.text("ui.integration.kobo.secure_store_unavailable"));
-            device.setText(UiText.text("ui.integration.kobo.device_id") + (status.deviceId().isBlank() ? "—" : status.deviceId()));
+            device.setText(UiText.text("ui.integration.kobo.device_id") + (status.deviceId().isBlank() ? "—" : UiText.text("ui.integration.device.configured")));
             lastSync.setText(UiText.text("ui.integration.kobo.last_sync") + (status.lastSyncAt().isBlank() ? "—" : status.lastSyncAt()));
             lastError.setText(UiText.text("ui.integration.kobo.last_error") + (status.lastError().isBlank() ? "—" : status.lastError()));
             enableRotate.setText(UiText.text(status.enabled() ? "ui.integration.kobo.rotate" : "ui.integration.kobo.enable"));
@@ -201,7 +201,7 @@ public final class IntegrationCenterDialog {
                 ? UiText.text("ui.java.integration_center_dialog.c3f7718ea3") + config.secureStoreBackend()
                 : UiText.text("ui.java.integration_center_dialog.0ac1a72697"));
         secure.setWrapText(true);
-        Label device = new Label(UiText.text("ui.java.integration_center_dialog.c2253ff68b") + config.deviceId());
+        Label device = new Label(UiText.text("ui.java.integration_center_dialog.c2253ff68b") + (config.deviceId().isBlank() ? "—" : UiText.text("ui.integration.device.configured")));
         device.setWrapText(true);
         Label status = new Label(config.configured() ? UiText.text("ui.java.integration_center_dialog.42ab129878") : UiText.text("ui.java.integration_center_dialog.13dc2d6776"));
         status.setWrapText(true);
@@ -265,7 +265,7 @@ public final class IntegrationCenterDialog {
         secure.setText(current.secureStoreAvailable()
                 ? UiText.text("ui.java.integration_center_dialog.c3f7718ea3") + current.secureStoreBackend()
                 : UiText.text("ui.java.integration_center_dialog.6c791a152b"));
-        device.setText(UiText.text("ui.java.integration_center_dialog.c2253ff68b") + current.deviceId());
+        device.setText(UiText.text("ui.java.integration_center_dialog.c2253ff68b") + (current.deviceId().isBlank() ? "—" : UiText.text("ui.integration.device.configured")));
         status.setText(current.configured() ? UiText.text("ui.java.integration_center_dialog.42ab129878") : UiText.text("ui.java.integration_center_dialog.13dc2d6776"));
         copyKey.setDisable(current.syncKey().isBlank());
         test.setDisable(!current.configured());
@@ -383,11 +383,9 @@ public final class IntegrationCenterDialog {
             if (selected == null) return;
             String requested = selected.permissions().isEmpty() ? UiText.text("ui.java.integration_center_dialog.f255c31049")
                     : UiText.text("ui.java.integration_center_dialog.23a12524b4") + selected.permissions().stream().map(this::permissionName).reduce((a,b) -> a + "\n• " + b).orElse("");
-            String fingerprint = selected.packageSha256().isBlank() ? UiText.text("ui.java.integration_center_dialog.88d0c9e046") : selected.packageSha256();
             boolean confirmed = dialogs.showConfirmation(UiText.text("ui.java.integration_center_dialog.f2fbdd82ed"),
                     UiText.text("ui.java.integration_center_dialog.379cf312b4") + selected.displayName() + "»?",
-                    requested + UiText.text("ui.java.integration_center_dialog.9b258edbd7") + fingerprint
-                            + UiText.text("ui.java.integration_center_dialog.01de2a3143"));
+                    requested + UiText.text("ui.java.integration_center_dialog.01de2a3143"));
             if (!confirmed) return;
             showResult(UiText.text("ui.java.integration_center_dialog.ccecfa5e49"), backend.enablePlugin(selected.pluginId(), true));
             reload.run();
@@ -501,7 +499,7 @@ public final class IntegrationCenterDialog {
         providers.setCellFactory(list -> new ListCell<>() {
             @Override protected void updateItem(IntegrationBackend.AiProviderInfo item, boolean empty) {
                 super.updateItem(item, empty);
-                setText(empty || item == null ? null : item.displayName() + "  [" + item.id() + "]");
+                setText(empty || item == null ? null : item.displayName());
             }
         });
         providers.getItems().setAll(backend.aiProviders());
@@ -584,10 +582,10 @@ public final class IntegrationCenterDialog {
                     + UiText.text("common.error.operation_failed")
                     + " " + UiText.text("common.error.details_in_log");
         }
-        return UiText.text("ui.integration.details.id") + p.pluginId() + UiText.text("ui.java.integration_center_dialog.58f67dfa2b") + p.displayName() + UiText.text("ui.java.integration_center_dialog.79157266a1") + p.version()
+        return UiText.text("ui.java.integration_center_dialog.58f67dfa2b") + p.displayName() + UiText.text("ui.java.integration_center_dialog.79157266a1") + p.version()
                 + UiText.text("ui.java.integration_center_dialog.cbf6d7509f") + pluginState(p.state()) + UiText.text("ui.java.integration_center_dialog.1f832c2f02") + trustName(p.trust())
                 + UiText.text("ui.java.integration_center_dialog.2d931fe71d") + services + UiText.text("ui.java.integration_center_dialog.0274dde603") + permissions
-                + UiText.text("ui.integration.details.sha256") + p.packageSha256() + UiText.text("ui.java.integration_center_dialog.bf9f97a3ce") + pluginSource(p) + failure;
+                + UiText.text("ui.java.integration_center_dialog.bf9f97a3ce") + pluginSource(p) + failure;
     }
 
     private String pluginSource(IntegrationBackend.PluginInfo plugin) {
@@ -595,14 +593,14 @@ public final class IntegrationCenterDialog {
         if (!plugin.installedPackage() || "BUNDLED".equalsIgnoreCase(plugin.source())) {
             return UiText.text("ui.integration.plugin.source.bundled");
         }
-        return plugin.source();
+        return UiText.text("ui.integration.plugin.source.installed");
     }
 
     private String aiProviderDetails(IntegrationBackend.AiProviderInfo p) {
         if (p == null) return "";
         String operations = p.operations().stream().map(this::aiOperationName).reduce((a,b) -> a + ", " + b).orElse(UiText.text("ui.java.integration_center_dialog.d382957ff0"));
         String secrets = p.requiredSecrets().isEmpty() ? UiText.text("ui.java.integration_center_dialog.a9a4e11132") : String.join(", ", p.requiredSecrets());
-        return UiText.text("ui.integration.details.id") + p.id() + UiText.text("ui.java.integration_center_dialog.b69b3c715c") + operations + UiText.text("ui.java.integration_center_dialog.206462b35f") + (p.networkRequired() ? UiText.text("ui.java.integration_center_dialog.a6c1de6be2") : UiText.text("ui.java.integration_center_dialog.1b29cc7683"))
+        return UiText.text("ui.java.integration_center_dialog.b69b3c715c") + operations + UiText.text("ui.java.integration_center_dialog.206462b35f") + (p.networkRequired() ? UiText.text("ui.java.integration_center_dialog.a6c1de6be2") : UiText.text("ui.java.integration_center_dialog.1b29cc7683"))
                 + UiText.text("ui.java.integration_center_dialog.65ac5e95bf") + secrets;
     }
 

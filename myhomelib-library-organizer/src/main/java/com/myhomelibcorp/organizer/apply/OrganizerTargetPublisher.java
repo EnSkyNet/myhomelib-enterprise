@@ -30,6 +30,12 @@ final class OrganizerTargetPublisher {
      * changed/replaced staged file cannot be published unnoticed.
      */
     void publish(Path staged, Path target, String expectedHash) throws Exception {
+        publish(staged, target, expectedHash, () -> false);
+    }
+
+    void publish(Path staged, Path target, String expectedHash,
+                 java.util.function.BooleanSupplier cancelled) throws Exception {
+        OrganizerFileIntegritySupport.checkCancelled(cancelled);
         if (expectedHash == null || !expectedHash.matches("(?i)[0-9a-f]{64}")) {
             throw new IllegalArgumentException("A validated SHA-256 digest is required for organizer publication");
         }
@@ -57,15 +63,22 @@ final class OrganizerTargetPublisher {
         Path temp = safeTarget.resolveSibling(".mhl-tmp-" + UUID.randomUUID());
         boolean published = false;
         try {
-            OrganizerPathSafety.copyFreshFile(safeStaged, temp, "Organizer destination temporary copy");
-            verifyRequiredHash(temp, expectedHash, "Destination temporary copy hash mismatch");
+            OrganizerPathSafety.copyFreshFile(safeStaged, temp, "Organizer destination temporary copy", cancelled);
+            OrganizerFileIntegritySupport.checkCancelled(cancelled);
+            if (!expectedHash.equalsIgnoreCase(OrganizerFileIntegritySupport.sha256(temp, cancelled))) {
+                throw new IllegalStateException("Destination temporary copy hash mismatch: " + temp);
+            }
+            OrganizerFileIntegritySupport.checkCancelled(cancelled);
             // Prefer atomic hard-link publication. FAT/exFAT and some other Windows
             // volumes reject it with ERROR_INVALID_FUNCTION; fall back to a fresh
             // no-replace copy rather than aborting the entire organization operation.
             // Final bytes are verified before the catalog/source is mutated.
-            SafeFilePrimitives.publishFreshNoReplace(temp, safeTarget, "Organizer target");
+            SafeFilePrimitives.publishFreshNoReplace(temp, safeTarget, "Organizer target", cancelled);
             published = true;
-            verifyRequiredHash(safeTarget, expectedHash, "Final target hash mismatch");
+            if (!expectedHash.equalsIgnoreCase(OrganizerFileIntegritySupport.sha256(safeTarget, cancelled))) {
+                throw new IllegalStateException("Final target hash mismatch: " + safeTarget);
+            }
+            OrganizerFileIntegritySupport.checkCancelled(cancelled);
         } catch (Exception failure) {
             try {
                 Files.deleteIfExists(temp);

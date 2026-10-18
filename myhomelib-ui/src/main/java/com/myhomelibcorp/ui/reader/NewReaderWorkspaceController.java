@@ -1955,7 +1955,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             audioPositionAutosaver = null;
         }
         if (!finalPositionSaved) {
-            appState.getStatusBar().setStatusText(i18n.text("ui.reader.warning.position_save_retry"));
+            appState.getStatusBar().setStatusText(i18n.text("ui.reader.warning.position_save_failed"));
         }
 
         finishReadingSession();

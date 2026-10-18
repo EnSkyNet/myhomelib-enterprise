@@ -13,7 +13,15 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class ReadingProgressDto {
     private String bookId;
+    /** SQLite generation observed by the caller: null = legacy unguarded writer,
+     * -1 = row absent with no deletion record, <=-3 = observed delete generation,
+     * >=0 = compare-and-swap update. Not exported to backups. */
+    private Long revision;
     private String anchorId;
+    /** Durable text resume anchor. Null means this medium has not been recorded yet. */
+    private String textAnchorId;
+    /** Durable audio resume anchor. Kept independently of the text position. */
+    private String audioAnchorId;
     private int paragraphIndex;
 
     @Builder.Default

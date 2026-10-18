@@ -294,9 +294,7 @@ class GoogleBooksMetadataProviderTest {
 
     @Test
     void requestDeadlineMapsToTimeout() throws Exception {
-        CountDownLatch received = new CountDownLatch(1);
         handler.set(exchange -> {
-            received.countDown();
             try {
                 Thread.sleep(500);
             } catch (InterruptedException interrupted) {
@@ -312,7 +310,8 @@ class GoogleBooksMetadataProviderTest {
                 .isInstanceOf(MetadataProviderException.class)
                 .satisfies(error -> assertThat(((MetadataProviderException) error).kind())
                         .isEqualTo(MetadataProviderErrorKind.TIMEOUT));
-        assertThat(received.getCount()).isZero();
+        // A 100 ms deadline may expire before the loopback server accepts the
+        // request on a busy CI runner. Delivery is not required for a TIMEOUT.
     }
 
     private GoogleBooksMetadataProvider provider(ApplicationSettingsPort settings) {

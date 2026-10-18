@@ -29,6 +29,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** User-facing conversion workflow backed by the provider-neutral conversion SPI. */
@@ -36,6 +39,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Slf4j
 public final class BookConversionUiService {
     private static final int MAX_BATCH_CONCURRENCY = 2;
+    private static final long BATCH_PROGRESS_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(150);
+    private final AtomicBoolean batchPreflightRunning = new AtomicBoolean();
     private final ConvertBookUseCase convertBook;
     private final UiBackgroundExecutor background;
     private final DialogService dialogs;
@@ -121,7 +126,52 @@ public final class BookConversionUiService {
     }
 
     private void showBatch(Window owner, List<BookId> bookIds, String expectedCollectionId) {
-        List<String> commonFormats = commonFormats(bookIds, expectedCollectionId);
+        // Capability discovery may query metadata for every selected book. Never do this
+        // on the JavaFX event thread, even before the conversion dialog is displayed.
+        if (!batchPreflightRunning.compareAndSet(false, true)) return;
+        String title = UiText.text("ui.conversion.batch.preparing");
+        String operationId;
+        try {
+            operationId = operations.start(title, expectedCollectionId,
+                    OperationKind.BOOK_CONVERSION, OperationStage.VALIDATING, false);
+        } catch (RuntimeException failure) {
+            batchPreflightRunning.set(false);
+            throw failure;
+        }
+        AtomicLong nextProgressNanos = new AtomicLong();
+        background.submitCollectionScoped(LibraryOperationType.QUERY, () ->
+                commonFormats(bookIds, expectedCollectionId, checked -> {
+                    long now = System.nanoTime();
+                    long next = nextProgressNanos.get();
+                    if (checked == bookIds.size() || (now - next >= 0
+                            && nextProgressNanos.compareAndSet(next, now + BATCH_PROGRESS_INTERVAL_NANOS))) {
+                        operations.accept(title, expectedCollectionId, OperationKind.BOOK_CONVERSION,
+                                com.myhomelibcorp.application.progress.OperationProgress.stage(
+                                                operationId, OperationStage.VALIDATING, false)
+                                        .withProgress(checked, bookIds.size()));
+                    }
+                })).whenComplete((common, error) -> Platform.runLater(() -> {
+                    batchPreflightRunning.set(false);
+                    if (!isCurrentCollection(expectedCollectionId)) {
+                        operations.cancel(operationId, UiText.text("ui.import.stage.cancelled"));
+                        return;
+                    }
+                    if (error != null) {
+                        Throwable failure = unwrap(error);
+                        log.error("Batch conversion capability discovery failed: collectionId={}, bookCount={}",
+                                expectedCollectionId, bookIds.size(), failure);
+                        operations.fail(operationId, UiText.text("common.error.details_in_log"));
+                        dialogs.showError(UiText.text("ui.java.book_conversion_ui_service.79797becbd"),
+                                UiExceptionSupport.message(failure));
+                        return;
+                    }
+                    operations.complete(operationId, UiText.text("ui.conversion.batch.formats_ready"));
+                    showBatchDialog(owner, bookIds, expectedCollectionId, common);
+                }));
+    }
+
+    private void showBatchDialog(Window owner, List<BookId> bookIds,
+                                 String expectedCollectionId, List<String> commonFormats) {
         if (commonFormats.isEmpty()) {
             dialogs.showWarning(UiText.text("ui.java.book_conversion_ui_service.79797becbd"),
                     UiText.text("ui.conversion.batch.no_common_format"));
@@ -161,11 +211,21 @@ public final class BookConversionUiService {
     }
 
     private List<String> commonFormats(List<BookId> bookIds, String expectedCollectionId) {
+        return commonFormats(bookIds, expectedCollectionId, ignored -> { });
+    }
+
+    private List<String> commonFormats(List<BookId> bookIds, String expectedCollectionId,
+                                       java.util.function.IntConsumer processed) {
         LinkedHashSet<String> common = null;
+        int checked = 0;
         for (BookId bookId : bookIds) {
             Set<String> targets = availableTargets(bookId, expectedCollectionId).keySet();
             if (common == null) common = new LinkedHashSet<>(targets);
             else common.retainAll(targets);
+            ++checked;
+            if (checked == 1 || checked == bookIds.size() || checked % 128 == 0) {
+                processed.accept(checked);
+            }
             if (common.isEmpty()) return List.of();
         }
         if (common == null) return List.of();
@@ -276,69 +336,90 @@ public final class BookConversionUiService {
                 expectedCollectionId, OperationKind.BOOK_CONVERSION, OperationStage.CONVERTING,
                 true, () -> cancelled.set(true));
 
-        List<CompletableFuture<BatchOutcome>> futures = new ArrayList<>(normalized.size());
-        for (int i = 0; i < normalized.size(); i++) futures.add(new CompletableFuture<>());
+        AtomicInteger completed = new AtomicInteger();
+        AtomicInteger successes = new AtomicInteger();
+        AtomicInteger failures = new AtomicInteger();
+        AtomicInteger cancelledCount = new AtomicInteger();
+        AtomicLong nextProgressNanos = new AtomicLong();
+        Object progressLock = new Object();
+        int[] lastPublished = {0};
+        String title = UiText.text("ui.conversion.batch.operation").formatted(normalized.size());
 
-        int lanes = Math.min(MAX_BATCH_CONCURRENCY, normalized.size());
-        List<CompletableFuture<Void>> laneTails = new ArrayList<>(lanes);
-        for (int i = 0; i < lanes; i++) laneTails.add(CompletableFuture.completedFuture(null));
-
-        // Keep only a small number of external converters in flight. Enqueuing the entire batch
-        // into the shared UI executor would let a large selection starve navigation/Reader work.
-        for (int i = 0; i < normalized.size(); i++) {
-            BookId bookId = normalized.get(i);
-            CompletableFuture<BatchOutcome> outcome = futures.get(i);
-            int lane = i % lanes;
-            CompletableFuture<Void> next = laneTails.get(lane).thenCompose(ignored -> {
-                if (cancelled.get()) {
-                    outcome.complete(new BatchOutcome(bookId, null,
-                            new java.util.concurrent.CancellationException("Batch book conversion cancelled")));
-                    return CompletableFuture.completedFuture(null);
-                }
-                try {
+        // The previous implementation retained one future, result and callback for every book
+        // even though only two conversions were active. Use the same bounded, trampoline-based
+        // runner as downloads: O(concurrency) scheduling state instead of O(selection size).
+        AsyncBatchLaneRunner.run(normalized.size(), MAX_BATCH_CONCURRENCY,
+                index -> {
+                    if (cancelled.get()) {
+                        return CompletableFuture.failedFuture(
+                                new java.util.concurrent.CancellationException("Batch book conversion cancelled"));
+                    }
+                    BookId bookId = normalized.get(index);
                     return background.submitCollectionScopedOperation(LibraryOperationType.CONVERSION,
-                                    () -> executeConversion(bookId, format, outputDirectory,
-                                            expectedCollectionId, cancelled))
-                            .handle((result, error) -> {
-                                outcome.complete(new BatchOutcome(bookId, result,
-                                        error == null ? null : unwrap(error)));
-                                return null;
-                            });
-                } catch (Throwable schedulingFailure) {
-                    outcome.complete(new BatchOutcome(bookId, null, unwrap(schedulingFailure)));
-                    return CompletableFuture.completedFuture(null);
-                }
-            });
-            laneTails.set(lane, next);
-        }
-
-        CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
-                .whenComplete((ignored, aggregateError) -> Platform.runLater(() -> {
-                    List<BatchOutcome> outcomes = futures.stream().map(CompletableFuture::join).toList();
-                    long failures = outcomes.stream().filter(outcome -> outcome.failure() != null
-                            && !(outcome.failure() instanceof java.util.concurrent.CancellationException)).count();
-                    long cancelledCount = outcomes.stream().filter(outcome ->
-                            outcome.failure() instanceof java.util.concurrent.CancellationException).count();
-                    long successes = outcomes.size() - failures - cancelledCount;
-
-                    if (cancelled.get() || cancelledCount > 0) {
+                            () -> executeConversion(bookId, format, outputDirectory,
+                                    expectedCollectionId, cancelled));
+                }, (index, outcome) -> {
+                    Throwable failure = outcome.failure() == null ? null : unwrap(outcome.failure());
+                    if (failure instanceof java.util.concurrent.CancellationException) {
+                        cancelledCount.incrementAndGet();
+                    } else if (failure != null) {
+                        failures.incrementAndGet();
+                        // Technical per-book diagnostics belong in the logfile, not in the UI.
+                        // Log on the worker lane instead of blocking JavaFX with a huge result list.
+                        log.error("Batch book conversion failed: bookId={}, targetFormat={}, collectionId={}, outputDirectory={}, cause={}",
+                                normalized.get(index), format, expectedCollectionId, outputDirectory,
+                                UiExceptionSupport.technicalMessage(failure), failure);
+                    } else {
+                        successes.incrementAndGet();
+                    }
+                    int done = completed.incrementAndGet();
+                    long now = System.nanoTime();
+                    long next = nextProgressNanos.get();
+                    if (done == normalized.size() || (now - next >= 0
+                            && nextProgressNanos.compareAndSet(next, now + BATCH_PROGRESS_INTERVAL_NANOS))) {
+                        synchronized (progressLock) {
+                            // Concurrent completion callbacks can arrive at the publisher out of order.
+                            // Never allow the visible completed count to move backwards.
+                            int latest = completed.get();
+                            if (latest > lastPublished[0]) {
+                                try {
+                                    operations.accept(title, expectedCollectionId, OperationKind.BOOK_CONVERSION,
+                                            com.myhomelibcorp.application.progress.OperationProgress.stage(
+                                                            operationId, OperationStage.CONVERTING, true)
+                                                    .withProgress(latest, normalized.size())
+                                                    .withCounts(0, successes.get(), 0, cancelledCount.get(),
+                                                            0, 0, failures.get()));
+                                    lastPublished[0] = latest;
+                                } catch (RuntimeException telemetryFailure) {
+                                    // A telemetry failure must not prevent later books from converting.
+                                    log.warn("Book conversion progress notification failed", telemetryFailure);
+                                }
+                            }
+                        }
+                    }
+                }).whenComplete((ignored, aggregateError) -> Platform.runLater(() -> {
+                    if (aggregateError != null) {
+                        Throwable error = unwrap(aggregateError);
+                        log.error("Batch book conversion coordinator failed: collectionId={}, targetFormat={}",
+                                expectedCollectionId, format, error);
+                        operations.fail(operationId, UiText.text("ui.conversion.batch.partial")
+                                .formatted(successes.get(), failures.get() + 1L));
+                        return;
+                    }
+                    if (cancelled.get() || cancelledCount.get() > 0) {
                         operations.cancel(operationId, UiText.text("ui.import.stage.cancelled"));
                         return;
                     }
-                    if (failures > 0) {
-                        outcomes.stream().filter(outcome -> outcome.failure() != null).forEach(outcome ->
-                                log.error("Batch book conversion failed: bookId={}, targetFormat={}, collectionId={}, outputDirectory={}, cause={}",
-                                        outcome.bookId(), format, expectedCollectionId, outputDirectory,
-                                        UiExceptionSupport.technicalMessage(outcome.failure()), outcome.failure()));
-                        String summary = UiText.text("ui.conversion.batch.partial").formatted(successes, failures);
+                    if (failures.get() > 0) {
+                        String summary = UiText.text("ui.conversion.batch.partial")
+                                .formatted(successes.get(), failures.get());
                         operations.fail(operationId, summary);
                         if (isCurrentCollection(expectedCollectionId)) {
                             dialogs.showError(UiText.text("ui.java.book_conversion_ui_service.79797becbd"), summary);
                         }
                         return;
                     }
-
-                    String summary = UiText.text("ui.conversion.batch.completed").formatted(successes);
+                    String summary = UiText.text("ui.conversion.batch.completed").formatted(successes.get());
                     operations.complete(operationId, summary);
                     if (isCurrentCollection(expectedCollectionId)) {
                         dialogs.showInfo(UiText.text("ui.java.book_conversion_ui_service.79797becbd"), summary);
@@ -365,8 +446,6 @@ public final class BookConversionUiService {
                     UiText.text("ui.java.book_conversion_ui_service.d11255b49b") + result.artifact().displayName());
         }
     }
-
-    private record BatchOutcome(BookId bookId, ConvertBookUseCase.Result result, Throwable failure) { }
 
     private static String converterName(String id) {
         String normalized = id == null ? "" : id.trim().toLowerCase(java.util.Locale.ROOT);

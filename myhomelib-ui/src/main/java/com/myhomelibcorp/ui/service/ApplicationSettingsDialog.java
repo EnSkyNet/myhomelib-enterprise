@@ -678,8 +678,7 @@ public class ApplicationSettingsDialog {
         String summary = errors == 0 && warnings == 0
                 ? UiText.text("ui.settings.language_diagnostics.ok")
                 : UiText.format("ui.settings.language_diagnostics.summary", errors, warnings);
-        String content = UiText.text("ui.java.application_settings_dialog.813eeb90bc") + localizationService.languageDiagnosticsFile() + "\n\n"
-                + summary + "\n" + UiText.text("ui.settings.language_diagnostics.details_in_file");
+        String content = summary + "\n" + UiText.text("ui.settings.language_diagnostics.details_in_file");
         alert(errors > 0 ? Alert.AlertType.WARNING : Alert.AlertType.INFORMATION,
                 UiText.text("ui.java.application_settings_dialog.0eec5f4c8e"), content);
     }

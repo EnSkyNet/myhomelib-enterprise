@@ -59,7 +59,7 @@ class WebReaderServiceTest {
         when(resolve.execute(any(), anySet())).thenReturn(new ResolvedBookContent(file, false));
         when(extraction.extract(any(), any())).thenReturn(ContentExtractionResult.success("epub-content", content()));
         when(progress.findByBookId(BOOK_ID)).thenReturn(Optional.of(ReadingProgressDto.builder()
-                .bookId(BOOK_ID).anchorId("0:2:0:2").readingTimeSeconds(77).build()));
+                .bookId(BOOK_ID).revision(0L).anchorId("0:2:0:2").readingTimeSeconds(77).build()));
 
         ReadingProgressDto saved = new WebReaderService(load, resolve, extraction, progress).saveProgress(BOOK_ID, 1, 17);
 
@@ -110,6 +110,59 @@ class WebReaderServiceTest {
         assertThat(result.canonical()).isSameAs(existing);
         verify(progress, never()).save(any());
         verifyNoInteractions(load, resolve, extraction);
+    }
+
+    @Test void browserSaveUsesObservedRevisionEvenIfDesktopUpdatesDuringExtraction() throws Exception {
+        LoadBookByIdUseCase load = mock(LoadBookByIdUseCase.class);
+        ResolveBookContentUseCase resolve = mock(ResolveBookContentUseCase.class);
+        ContentExtractionService extraction = mock(ContentExtractionService.class);
+        ReadingProgressRepository progress = mock(ReadingProgressRepository.class);
+        Path file = Files.writeString(temp.resolve("race.fb2"), "stub");
+        when(load.execute(any())).thenReturn(Optional.of(book("race.fb2")));
+        when(resolve.execute(any(), anySet())).thenReturn(new ResolvedBookContent(file, false));
+        when(extraction.extract(any(), any())).thenReturn(ContentExtractionResult.success("fb2-content", content()));
+        ReadingProgressDto before = ReadingProgressDto.builder().bookId(BOOK_ID)
+                .revision(4L).anchorId("0:2:0:2").chapterId("c1").percent(10)
+                .updatedAt(LocalDateTime.now().minusMinutes(5)).build();
+        ReadingProgressDto desktop = ReadingProgressDto.builder().bookId(BOOK_ID)
+                .revision(5L).anchorId("1:19:0:8").chapterId("c2").percent(95)
+                .updatedAt(LocalDateTime.now()).build();
+        when(progress.findByBookId(BOOK_ID))
+                .thenReturn(Optional.of(before), Optional.of(desktop), Optional.of(desktop), Optional.of(desktop));
+        doAnswer(invocation -> {
+            ReadingProgressDto attempt = invocation.getArgument(0);
+            if (!Long.valueOf(5L).equals(attempt.getRevision()))
+                throw new com.myhomelibcorp.application.exception.ReadingProgressConflictException("Stale CAS");
+            return null;
+        }).when(progress).save(any());
+
+        WebProgressSaveResult result = new WebReaderService(load, resolve, extraction, progress)
+                .saveProgress(BOOK_ID, new WebProgressUpdate(0, 5, Instant.now().minusSeconds(30), 123));
+
+        assertThat(result.accepted()).isFalse();
+        assertThat(result.canonical()).isSameAs(desktop);
+        ArgumentCaptor<ReadingProgressDto> attempted = ArgumentCaptor.forClass(ReadingProgressDto.class);
+        verify(progress).save(attempted.capture());
+        assertThat(attempted.getValue().getRevision()).isEqualTo(4L);
+    }
+
+    @Test void directWebSaveUsesCompareAndSwapRevisionInsteadOfBlindLegacyUpsert() throws Exception {
+        LoadBookByIdUseCase load = mock(LoadBookByIdUseCase.class);
+        ResolveBookContentUseCase resolve = mock(ResolveBookContentUseCase.class);
+        ContentExtractionService extraction = mock(ContentExtractionService.class);
+        ReadingProgressRepository progress = mock(ReadingProgressRepository.class);
+        Path file = Files.writeString(temp.resolve("direct.fb2"), "stub");
+        when(load.execute(any())).thenReturn(Optional.of(book("direct.fb2")));
+        when(resolve.execute(any(), anySet())).thenReturn(new ResolvedBookContent(file, false));
+        when(extraction.extract(any(), any())).thenReturn(ContentExtractionResult.success("fb2-content", content()));
+        when(progress.findByBookId(BOOK_ID)).thenReturn(Optional.of(ReadingProgressDto.builder()
+                .bookId(BOOK_ID).revision(8L).anchorId("0:2:0:2").build()));
+
+        new WebReaderService(load, resolve, extraction, progress).saveProgress(BOOK_ID, 0, 6);
+
+        ArgumentCaptor<ReadingProgressDto> attempted = ArgumentCaptor.forClass(ReadingProgressDto.class);
+        verify(progress).save(attempted.capture());
+        assertThat(attempted.getValue().getRevision()).isEqualTo(8L);
     }
 
     @Test void unsupportedFormatOffersTypedFallbackWithoutExtraction() throws Exception {

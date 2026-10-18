@@ -45,7 +45,7 @@ class DatabaseMigrationMatrixTest {
                     .load();
             flyway.migrate();
 
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("70");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("73");
             assertThat(jdbc.queryForObject("SELECT title FROM books WHERE id='book-matrix'", String.class))
                     .isEqualTo("Migration Matrix Book V" + sourceVersion);
             assertThat(jdbc.queryForObject("SELECT keywords FROM books WHERE id='book-matrix'", String.class))

@@ -24,7 +24,17 @@ public final class LibraryOperationCrashManifestReader {
     private static final int MAX_LEGACY_MANIFEST_BYTES = 4 * 1024 * 1024;
     private final ObjectMapper json = new ObjectMapper();
 
+    /** Strict mode for all application and automatic recovery decisions. */
     public LibraryOperationCrashSnapshot read(Path manifest) throws Exception {
+        return readInternal(manifest, false);
+    }
+
+    /** Explicit diagnostic mode: inspect only complete checksum-verified frames after a crash. */
+    public LibraryOperationCrashSnapshot readForManualInspection(Path manifest) throws Exception {
+        return readInternal(manifest, true);
+    }
+
+    private LibraryOperationCrashSnapshot readInternal(Path manifest, boolean manualInspection) throws Exception {
         if (manifest == null) throw new IllegalArgumentException("Crash manifest is missing or unsafe");
         Path file = OrganizerPathSafety.canonicalExistingFile(
                 manifest.toAbsolutePath().normalize(), "Organizer crash manifest");
@@ -70,7 +80,9 @@ public final class LibraryOperationCrashManifestReader {
                 if (current.put(item.itemId(), item) != null)
                     throw new IllegalArgumentException("Duplicate item id in crash manifest");
             }
-            for (String eventJson : ManifestEventLog.read(file)) {
+            List<String> eventLines = manualInspection
+                    ? ManifestEventLog.readLastComplete(file) : ManifestEventLog.read(file);
+            for (String eventJson : eventLines) {
                 JsonNode event = json.readTree(eventJson);
                 String type = requiredText(event, "type");
                 if ("operation".equals(type)) {

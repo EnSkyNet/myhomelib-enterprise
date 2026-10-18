@@ -27,6 +27,59 @@ public final class ManagedCollectionOrganizerCatalogAdapter implements Organizer
         this.mutations = mutations;
     }
 
+    /**
+     * The legacy catalog adapter only represents coordinates within the active
+     * collection root. Moving a tracked file beyond that root would otherwise
+     * skip the catalog callback and leave the row pointing to the deleted source.
+     * Also reject moving a physical container shared by multiple logical books:
+     * findByStorage() returns only one matching book and cannot update all rows.
+     */
+    @Override
+    public void validateBeforeFilesystemCommit(OrganizationPlanItem item) {
+        Collection collection = collections.getCurrentCollection();
+        Path root = normalizedRoot(collection);
+        if (root == null || item == null || item.sourcePath() == null || item.targetPath() == null) return;
+        Path source = item.sourcePath().toAbsolutePath().normalize();
+        Path target = item.targetPath().toAbsolutePath().normalize();
+        if (!source.startsWith(root)) return;
+        // A logical book extracted/converted from an archive is still catalog-managed.
+        // It must not be published outside the managed root, because the callback
+        // cannot represent the new coordinates in this collection's SQLite data.
+        if (!item.sourceEntry().isBlank()) {
+            if (!target.startsWith(root) && locate(root, source, item.sourceEntry()).isPresent()) {
+                throw new IllegalStateException("Книга в архіві належить поточній колекції, але цільова папка "
+                        + "розташована поза її коренем. Зміну скасовано до копіювання.");
+            }
+            return; // A logical extraction does not relocate the shared source archive.
+        }
+        Path parent = source.getParent();
+        String folder = parent == null || parent.equals(root) ? "" : normalizeRelative(root.relativize(parent));
+        String fileName = source.getFileName().toString();
+        // Count physical storage references, not just one logical archive entry.
+        // This catches shared containers for which findByStorage(..., "") returns empty.
+        Integer references = collections.getCurrentJdbcTemplate().queryForObject("""
+                SELECT COUNT(*) FROM books
+                WHERE COALESCE(collection_root, '') IN (?, '')
+                  AND REPLACE(COALESCE(folder, ''), CHAR(92), '/') = ?
+                  AND COALESCE(file_name, '') = ?
+                """, Integer.class, root.toString(), folder, fileName);
+        if (references == null || references == 0) return; // Unmanaged filesystem import/export.
+        if (!target.startsWith(root)) {
+            throw new IllegalStateException("Файл належить поточній колекції, але нова папка розташована поза її коренем. "
+                    + "Переміщення скасовано до оновлення каталогу. Виберіть папку всередині колекції.");
+        }
+        if (references > 1) {
+            throw new IllegalStateException("Цей фізичний файл використовується кількома книгами каталогу. "
+                    + "Переміщення заблоковано, щоб не пошкодити їхні шляхи.");
+        }
+        // Some logical books identify a source archive entry even though the plan
+        // moves its physical container. A single-row findByStorage cannot find it.
+        if (locate(root, source, "").isEmpty()) {
+            throw new IllegalStateException("Не вдалося однозначно визначити запис фізичного файла "
+                    + "в каталозі. Переміщення без оновлення SQLite заборонено.");
+        }
+    }
+
     @Override
     public boolean supports(OrganizationPlanItem item) {
         Collection collection = collections.getCurrentCollection();

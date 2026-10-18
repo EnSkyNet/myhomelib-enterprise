@@ -341,8 +341,25 @@ public class SqliteBookMergeAdapter implements BookMergePort {
         if (rows.isEmpty()) return;
         Map<String, Object> chosen = new LinkedHashMap<>(rows.getFirst());
         chosen.put("book_id", survivor);
+        // Replacing the survivor row is a write. Advance beyond BOTH original
+        // generations so a Reader snapshot cannot pass CAS after the merge.
+        long generation = jdbc().queryForObject("""
+                SELECT COALESCE(MAX(revision), 0) FROM reading_progress
+                 WHERE book_id IN (?, ?)
+                """, Long.class, survivor, merged);
+        chosen.put("revision", Math.addExact(generation, 1L));
         jdbc().update("DELETE FROM reading_progress WHERE book_id = ?", survivor);
         insertRow("reading_progress", chosen);
+        // mergeBookUserScalars retains the maximum historic shelf percentage,
+        // but the authoritative reader position is chosen by *recency* above.
+        // Project the selected row in the same merge transaction so the shelf
+        // cannot report a different position from the Reader.
+        jdbc().update("""
+                UPDATE books SET progress = (
+                  SELECT CAST(ROUND(MIN(100.0, MAX(0.0, COALESCE(percent, 0.0)))) AS INTEGER)
+                    FROM reading_progress WHERE book_id = ?
+                ) WHERE id = ?
+                """, survivor, survivor);
     }
 
     private void mergeReadingHistory(String survivor, String merged) {

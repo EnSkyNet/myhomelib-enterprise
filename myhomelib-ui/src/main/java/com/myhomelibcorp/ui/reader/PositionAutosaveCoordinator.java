@@ -38,8 +38,17 @@ final class PositionAutosaveCoordinator<P, A> implements AutoCloseable {
     private final AtomicReference<Snapshot<P, A>> state = new AtomicReference<>(Snapshot.empty());
     private final AtomicLong revisionSequence = new AtomicLong();
     private final ConcurrentMap<BookKey, Snapshot<P, A>> pendingFailures = new ConcurrentHashMap<>();
-    private final ConcurrentMap<BookKey, Long> successfullySavedRevisions = new ConcurrentHashMap<>();
-    private final ConcurrentMap<BookKey, Object> persistenceLocks = new ConcurrentHashMap<>();
+    // Keep revision state only while a save is in-flight or an unsaved snapshot is
+    // waiting for retry. Successfully saved books do NOT accumulate here forever.
+    // An in-flight reference is registered *before* claiming the UI snapshot; this
+    // prevents a slow older flush from losing its revision fence when a newer flush
+    // of the same book commits and the current book changes.
+    private final ConcurrentMap<BookKey, BookSaveState> saveStates = new ConcurrentHashMap<>();
+    private final Object lifecycleGuard = new Object();
+    private boolean closing;
+    private boolean closeInProgress;
+    private int activeOperations;
+    private Boolean closeResult;
 
     PositionAutosaveCoordinator(String subject, String threadName, Persistence<P, A> persistence) {
         this.subject = requireText(subject, "subject");
@@ -53,47 +62,131 @@ final class PositionAutosaveCoordinator<P, A> implements AutoCloseable {
     }
 
     void start(String collectionId, String bookId, A auxiliary) {
-        flush();
-        state.set(new Snapshot<>(collectionId, bookId, null, auxiliary, false, revisionSequence.get()));
-        startSchedulerIfNeeded();
+        if (!beginOperation()) throw new IllegalStateException("Autosave is already closing");
+        try {
+            flushWork();
+            state.set(new Snapshot<>(collectionId, bookId, null, auxiliary, false, revisionSequence.get()));
+            startSchedulerIfNeeded();
+        } finally {
+            finishOperation();
+        }
     }
 
     void mark(P position) {
-        if (position == null) return;
-        long revision = revisionSequence.incrementAndGet();
-        state.updateAndGet(current -> current.bookId() == null
-                ? current
-                : new Snapshot<>(current.collectionId(), current.bookId(), position, current.auxiliary(), true, revision));
+        if (position == null || !beginOperation()) return;
+        try {
+            long revision = revisionSequence.incrementAndGet();
+            state.updateAndGet(current -> current.bookId() == null || revision <= current.revision()
+                    ? current
+                    : new Snapshot<>(current.collectionId(), current.bookId(), position, current.auxiliary(), true, revision));
+        } finally {
+            finishOperation();
+        }
     }
 
     void mark(P position, A auxiliary) {
-        if (position == null) return;
-        long revision = revisionSequence.incrementAndGet();
-        state.updateAndGet(current -> current.bookId() == null
-                ? current
-                : new Snapshot<>(current.collectionId(), current.bookId(), position, auxiliary, true, revision));
+        if (position == null || !beginOperation()) return;
+        try {
+            long revision = revisionSequence.incrementAndGet();
+            state.updateAndGet(current -> current.bookId() == null || revision <= current.revision()
+                    ? current
+                    : new Snapshot<>(current.collectionId(), current.bookId(), position, auxiliary, true, revision));
+        } finally {
+            finishOperation();
+        }
     }
 
     boolean flush() {
+        if (!beginOperation()) return false;
+        try {
+            return flushWork();
+        } finally {
+            finishOperation();
+        }
+    }
+
+    private boolean flushWork() {
         retryPendingFailures();
         // API contract: this reports only the currently selected book's flush result.
         // Older pending failures remain queued for retry and are checked by closeAndFlush().
         return flushCurrentIfDirty();
     }
 
+    /**
+     * Stop admitting changes and persist the last known positions. A failed close
+     * deliberately keeps the in-memory snapshots: callers may retry after SQLite
+     * becomes available or an outstanding write finishes. Only a fully successful
+     * close releases the recovery data.
+     */
     boolean closeAndFlush() {
-        stopScheduler();
-        retryPendingFailures();
-        boolean currentSaved = flushCurrentIfDirty();
-        boolean allSaved = currentSaved && pendingFailures.isEmpty();
-        if (!allSaved) {
-            log.warn("{} autosave closed with {} retained unsaved position(s)", subject, pendingFailures.size());
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(CLOSE_TIMEOUT_SECONDS);
+        synchronized (lifecycleGuard) {
+            if (Boolean.TRUE.equals(closeResult)) return true;
+            // A second concurrent shutdown must not claim that the first has succeeded.
+            if (closeInProgress) return false;
+            closing = true; // No new marks, starts, or ordinary flushes may be admitted.
+            closeInProgress = true;
         }
-        state.set(Snapshot.empty());
-        pendingFailures.clear();
-        successfullySavedRevisions.clear();
-        persistenceLocks.clear();
-        return allSaved;
+        boolean saved = false;
+        try {
+            stopScheduler();
+
+            // The scheduled executor is not the only caller: an explicit UI or
+            // background flush may still be inside persistence.save().
+            synchronized (lifecycleGuard) {
+                while (activeOperations > 0) {
+                    long remaining = deadlineNanos - System.nanoTime();
+                    if (remaining <= 0) break;
+                    try {
+                        TimeUnit.NANOSECONDS.timedWait(lifecycleGuard, remaining);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+                if (activeOperations > 0) {
+                    log.warn("{} autosave close timed out with {} unfinished operation(s)",
+                            subject, activeOperations);
+                    return false;
+                }
+            }
+
+            retryPendingFailures();
+            boolean currentSaved = flushCurrentIfDirty();
+            // A newer successful snapshot can supersede a failed older retry.
+            // Evaluate the final pending state, not an intermediate retry failure.
+            saved = currentSaved && pendingFailures.isEmpty();
+            if (saved) {
+                state.set(Snapshot.empty());
+                pendingFailures.clear();
+                saveStates.clear();
+            } else {
+                log.warn("{} autosave close failed; {} unsaved position(s) retained for retry",
+                        subject, pendingFailures.size());
+            }
+            return saved;
+        } finally {
+            synchronized (lifecycleGuard) {
+                closeResult = saved;
+                closeInProgress = false;
+                lifecycleGuard.notifyAll();
+            }
+        }
+    }
+
+    private boolean beginOperation() {
+        synchronized (lifecycleGuard) {
+            if (closing) return false;
+            activeOperations++;
+            return true;
+        }
+    }
+
+    private void finishOperation() {
+        synchronized (lifecycleGuard) {
+            activeOperations--;
+            lifecycleGuard.notifyAll();
+        }
     }
 
     @Override
@@ -118,40 +211,48 @@ final class PositionAutosaveCoordinator<P, A> implements AutoCloseable {
     }
 
     private boolean flushCurrentIfDirty() {
-        Snapshot<P, A> snapshot;
         while (true) {
-            snapshot = state.get();
+            Snapshot<P, A> snapshot = state.get();
             if (snapshot.bookId() == null || snapshot.latest() == null || !snapshot.dirty()) return true;
-            if (state.compareAndSet(snapshot, snapshot.clean())) break;
+            BookKey key = new BookKey(snapshot.collectionId(), snapshot.bookId());
+            BookSaveState saveState = register(key);
+            try {
+                if (state.compareAndSet(snapshot, snapshot.clean())) {
+                    return persistRegistered(key, snapshot, saveState);
+                }
+            } finally {
+                release(key, saveState);
+            }
         }
-        return persist(snapshot);
     }
 
     private boolean retryPendingFailures() {
         if (pendingFailures.isEmpty()) return true;
         boolean allSaved = true;
         for (BookKey key : new ArrayList<>(pendingFailures.keySet())) {
-            Object lock = persistenceLocks.computeIfAbsent(key, ignored -> new Object());
-            synchronized (lock) {
-                Snapshot<P, A> pending = pendingFailures.get(key);
-                if (pending != null && !persistLocked(key, pending)) allSaved = false;
+            BookSaveState saveState = register(key);
+            try {
+                synchronized (saveState) {
+                    Snapshot<P, A> pending = pendingFailures.get(key);
+                    if (pending != null && !persistLocked(key, pending, saveState)) allSaved = false;
+                }
+            } finally {
+                release(key, saveState);
             }
         }
         return allSaved;
     }
 
-    private boolean persist(Snapshot<P, A> snapshot) {
-        BookKey key = new BookKey(snapshot.collectionId(), snapshot.bookId());
-        Object lock = persistenceLocks.computeIfAbsent(key, ignored -> new Object());
-        synchronized (lock) {
-            return persistLocked(key, snapshot);
+    private boolean persistRegistered(BookKey key, Snapshot<P, A> snapshot, BookSaveState saveState) {
+        synchronized (saveState) {
+            return persistLocked(key, snapshot, saveState);
         }
     }
 
-    private boolean persistLocked(BookKey key, Snapshot<P, A> snapshot) {
+    private boolean persistLocked(BookKey key, Snapshot<P, A> snapshot, BookSaveState saveState) {
         // Two concurrent flushes can claim successive snapshots before either acquires the
         // per-book lock. A delayed older flush must never overwrite a newer committed one.
-        long committedRevision = successfullySavedRevisions.getOrDefault(key, -1L);
+        long committedRevision = saveState.committedRevision;
         if (snapshot.revision() <= committedRevision) {
             pendingFailures.computeIfPresent(key, (ignored, pending) ->
                     pending.revision() <= committedRevision ? null : pending);
@@ -159,7 +260,7 @@ final class PositionAutosaveCoordinator<P, A> implements AutoCloseable {
         }
         try {
             if (persistence.save(snapshot.collectionId(), snapshot.bookId(), snapshot.latest(), snapshot.auxiliary())) {
-                successfullySavedRevisions.put(key, snapshot.revision());
+                saveState.committedRevision = snapshot.revision();
                 pendingFailures.computeIfPresent(key, (ignored, pending) ->
                         pending.revision() <= snapshot.revision() ? null : pending);
                 return true;
@@ -172,6 +273,35 @@ final class PositionAutosaveCoordinator<P, A> implements AutoCloseable {
             log.warn("{} autosave failed for {}: {}; retained for retry", subject, snapshot.bookId(), error.getMessage());
             return false;
         }
+    }
+
+    private BookSaveState register(BookKey key) {
+        return saveStates.compute(key, (ignored, current) -> {
+            BookSaveState result = current == null ? new BookSaveState() : current;
+            result.activeSaves++;
+            return result;
+        });
+    }
+
+    private void release(BookKey key, BookSaveState acquired) {
+        saveStates.computeIfPresent(key, (ignored, current) -> {
+            if (current != acquired) {
+                throw new IllegalStateException("Autosave state was replaced during an active save");
+            }
+            current.activeSaves--;
+            // Retain the revision fence for a failed snapshot, but forget fully
+            // saved books as soon as their final in-flight save has finished.
+            return current.activeSaves == 0 && !pendingFailures.containsKey(key) ? null : current;
+        });
+    }
+
+    int trackedBookCount() {
+        return saveStates.size();
+    }
+
+    private static final class BookSaveState {
+        private int activeSaves; // Modified under saveStates.compute for this key.
+        private long committedRevision = -1L; // Modified under synchronized(this).
     }
 
     private void rememberFailure(BookKey key, Snapshot<P, A> snapshot) {
