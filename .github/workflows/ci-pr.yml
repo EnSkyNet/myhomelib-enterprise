@@ -52,7 +52,7 @@ jobs:
         shell: bash
         run: >-
           ./tools/invoke-maven.sh -B -ntp
-          -pl myhomelib-shared,myhomelib-domain,myhomelib-application,myhomelib-opds
+          -pl myhomelib-shared,myhomelib-domain,myhomelib-application,myhomelib-opds -am
           test
 
       - name: Migration and security regression tests
