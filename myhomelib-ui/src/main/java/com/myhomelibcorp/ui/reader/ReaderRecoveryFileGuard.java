@@ -67,7 +67,9 @@ final class ReaderRecoveryFileGuard {
                             try (FileLock ignored = acquired) { return action.run(); }
                         }
                     } catch (OverlappingFileLockException busyInJvm) {
-                        // Another instance owns this lock in the same JVM.
+                        if (System.nanoTime() >= deadline) {
+                            throw new IOException("Reader recovery lock unavailable (held in this JVM)", busyInJvm);
+                        }
                     }
                     if (System.nanoTime() >= deadline) {
                         throw new IOException("Reader recovery lock unavailable (3 seconds)");

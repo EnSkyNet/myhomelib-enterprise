@@ -286,7 +286,7 @@ jobs:
         run: >-
           .\tools\invoke-maven.ps1 -B -ntp
           -pl myhomelib-infrastructure -am
-          -Dtest=CredentialMasterKeyManagerTest,PlatformSecretStoreProviderTest,WindowsDpapiSecretStoreIntegrationTest
+          '-Dtest=CredentialMasterKeyManagerTest,PlatformSecretStoreProviderTest,WindowsDpapiSecretStoreIntegrationTest'
           -Dsurefire.failIfNoSpecifiedTests=false
           test
 

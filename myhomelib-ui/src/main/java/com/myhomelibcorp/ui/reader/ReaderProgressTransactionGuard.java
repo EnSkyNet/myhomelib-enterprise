@@ -93,7 +93,9 @@ final class ReaderProgressTransactionGuard {
                             try (FileLock ignored = acquired) { return action.run(); }
                         }
                     } catch (OverlappingFileLockException heldInJvm) {
-                        // Another guard instance may be using this lock file.
+                        if (System.nanoTime() >= deadline) {
+                            throw new IOException("Reader progress transaction lock timed out (held in this JVM)", heldInJvm);
+                        }
                     }
                     if (System.nanoTime() >= deadline) {
                         throw new IOException("Reader progress transaction lock timed out");

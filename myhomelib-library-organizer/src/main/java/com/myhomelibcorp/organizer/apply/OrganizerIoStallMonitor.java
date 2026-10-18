@@ -1,5 +1,8 @@
 package com.myhomelibcorp.organizer.apply;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -13,6 +16,7 @@ import java.util.function.Consumer;
  * the last observed organizer I/O stage and a bounded Java thread stack.
  */
 final class OrganizerIoStallMonitor implements AutoCloseable {
+    private static final Logger LOG = LoggerFactory.getLogger(OrganizerIoStallMonitor.class);
     private record Checkpoint(String stage, UUID itemId, long bytes, long observedNanos) { }
 
     private static final long DEFAULT_SILENCE_MILLIS = 30_000L;
@@ -80,8 +84,9 @@ final class OrganizerIoStallMonitor implements AutoCloseable {
                     + " stage=" + point.stage() + " bytes=" + point.bytes()
                     + " silentMs=" + TimeUnit.NANOSECONDS.toMillis(idle)
                     + " threadState=" + worker.getState() + " workerStack=" + frames);
-        } catch (RuntimeException ignored) {
-            // Monitoring must never alter the outcome of the user's file operation.
+        } catch (RuntimeException diagnosticFailure) {
+            // Monitoring is best-effort: report its failure without affecting the file operation.
+            LOG.warn("Organizer I/O stall diagnostic failed; file operation is unaffected", diagnosticFailure);
         }
     }
 
