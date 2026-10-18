@@ -8446,7 +8446,7 @@
       "controller": "LibraryOrganizerUiService",
       "action": "authorBatchButton.setOnAction[1]",
       "user_function_ref": "organizer",
-      "implementation_fingerprint": "a3250f1d7bea29a8fb1a0559c24c450071f60b505fce0cd668a2da2c93838b2d",
+      "implementation_fingerprint": "be8e1f05972a2624c59a5da943af9975c9fd35b823f4250dea788894d9fb6e23",
       "behavior_tokens": [
         "auditAuthorFolders",
         "authorBatchButton",
@@ -8464,7 +8464,7 @@
       "controller": "LibraryOrganizerUiService",
       "action": "authorPreviewButton.setOnAction[1]",
       "user_function_ref": "organizer",
-      "implementation_fingerprint": "b3ac072f90cbb7ae401f9b03176bd792fdb1abea89c7632fb5b6b6d212aeb58f",
+      "implementation_fingerprint": "50d3ac6d149fad814dead9bfbb323cc73327330f5e5cf20a811b7de467392512",
       "behavior_tokens": [
         "previewAuthorFolder",
         "authorPreviewButton",
@@ -8482,7 +8482,7 @@
       "controller": "LibraryOrganizerUiService",
       "action": "authorSelectionButton.setOnAction[1]",
       "user_function_ref": "organizer",
-      "implementation_fingerprint": "fb22efe173587b5f7d4a938697b264cd84c05a166e7f673e93024c928d4188d9",
+      "implementation_fingerprint": "4dd3b90695f041ee29e522a3cc620a9605b791dc5cc565acd4261d9af5fe8c9f",
       "behavior_tokens": [
         "prepareOfflineAuthorRepair",
         "authorSelectionButton",
