@@ -1,4 +1,14 @@
-# Поточні перевірки, 2026-10-15
+# Поточні перевірки, 2026-10-18
+
+**Current source candidate:** MyHomeLib Enterprise 8.0.0 / V34 External Test R18 — working branch `release/v34-sync` (exact-current root verification not complete).
+**Date:** 2026-10-18
+**Status:** **CURRENT CANDIDATE NOT VERIFIED; LIVE ACCEPTANCE REMAINS REQUIRED.**
+
+Historical R18 Maven baseline aggregate: **2123 tests / 0 failures / 0 errors / 23 skipped**.
+Detailed historical R18 evidence: `docs/release/POST-R17-R18-VALIDATION-2026-10-05-UA.md`.
+
+These R18 historical numbers are not test results for the current branch. The 2026-10-13 validation below is another historical baseline, not release approval for the exact-current commit.
+
 
 Дивіться [поточний звіт](AUDIT-REMEDIATION-2026-10-15-UA.md) і [зовнішню матрицю](AUDIT-EXTERNAL-ACCEPTANCE-2026-10-13-UA.md).
 
