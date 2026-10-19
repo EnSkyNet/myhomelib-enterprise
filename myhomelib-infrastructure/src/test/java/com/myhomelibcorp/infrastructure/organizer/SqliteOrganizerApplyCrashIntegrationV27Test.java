@@ -55,6 +55,7 @@ class SqliteOrganizerApplyCrashIntegrationV27Test {
                 // preserve the actual diagnostic output for any failed assertion.
                 Path childLog = scenario.resolve("crash-worker.log");
                 Process child = new ProcessBuilder(java, "-Dmyhomelib.dataDir=" + stateDir,
+                        "-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8",
                         "-cp", cp, SqliteOrganizerApplyCrashWorkerV27.class.getName(),
                         db.toString(), source.toString(), target.toString(), originalHash,
                         operationId.toString(), itemId.toString(), point)
@@ -64,6 +65,7 @@ class SqliteOrganizerApplyCrashIntegrationV27Test {
                 String output = Files.readString(childLog);
                 assertThat(ended).as(point + ": " + output).isTrue();
                 assertThat(child.exitValue()).as(point + ": " + output).isEqualTo(83);
+                assertThat(output).contains("stdout: Аварійне відновлення", "stderr: Аварійне відновлення");
                 // A fresh adapter and connection must observe the persisted SQLite WAL state.
                 SQLiteDataSource reopened = dataSource(db);
                 JdbcTemplate fresh = new JdbcTemplate(reopened);
