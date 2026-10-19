@@ -85,6 +85,84 @@ class BookWorkspaceAnnotationFxTest {
     }
 
     @Test
+    void discoversAlreadyDownloadedOnlineFb2WhenCatalogueStillClaimsRemote() throws Exception {
+        String id = "44444444-4444-4444-4444-444444444444";
+        BookId bookId = BookId.fromString(id);
+        BookDto book = BookDto.builder().id(id).title("Пожиратель душ. Том 18")
+                .annotation("").local(false).fileName("729586.fb2").build();
+        LoadBookByIdUseCase loader = mock(LoadBookByIdUseCase.class);
+        when(loader.execute(bookId)).thenReturn(Optional.of(book));
+        BookDownloadCoordinator downloads = mock(BookDownloadCoordinator.class);
+        when(downloads.reconcileLocalClaim(book)).thenAnswer(inv -> {
+            book.setLocal(true); // An already existing local file is discovered; never downloaded.
+            return true;
+        });
+        BookDetailsAnalysisService analysis = mock(BookDetailsAnalysisService.class);
+        DocumentInspection inspection = mock(DocumentInspection.class);
+        when(inspection.annotation()).thenReturn("Описание из ранее загруженного FB2");
+        when(analysis.analyze(id)).thenReturn(
+                new RichBookDetailsSession(book, inspection, List.of(), null, null));
+
+        UiBackgroundExecutor executor = new UiBackgroundExecutor(new LibraryOperationCoordinator());
+        BookViewModelMapper mapper = mock(BookViewModelMapper.class);
+        when(mapper.toViewModel(book)).thenReturn(new BookViewModel());
+        ApplicationState state = mock(ApplicationState.class);
+        when(state.getCurrentLibraryCollectionId()).thenReturn("flib");
+        BookWorkspaceController controller = controller(loader, analysis, mapper, executor, state, downloads);
+        CountDownLatch displayed = new CountDownLatch(1);
+        try {
+            onFx(() -> {
+                Label annotation = attachLabels(controller);
+                annotation.textProperty().addListener((obs, oldValue, value) -> {
+                    if ("Описание из ранее загруженного FB2".equals(value)) displayed.countDown();
+                });
+                controller.setBookId(bookId);
+                return null;
+            });
+            assertThat(displayed.await(8, TimeUnit.SECONDS)).isTrue();
+            verify(downloads, times(1)).reconcileLocalClaim(book);
+            verify(analysis, times(1)).analyze(id);
+            verify(downloads, never()).downloadBatch(any(), any());
+        } finally {
+            onFx(() -> { controller.dispose(); return null; });
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    void genuinelyRemoteBookDoesNotTriggerDocumentInspectionOrNetworkDownload() throws Exception {
+        String id = "55555555-5555-5555-5555-555555555555";
+        BookId bookId = BookId.fromString(id);
+        BookDto book = BookDto.builder().id(id).title("Remote")
+                .annotation("").local(false).fileName("729586.fb2").build();
+        LoadBookByIdUseCase loader = mock(LoadBookByIdUseCase.class);
+        when(loader.execute(bookId)).thenReturn(Optional.of(book));
+        BookDownloadCoordinator downloads = mock(BookDownloadCoordinator.class);
+        CountDownLatch checkedDisk = new CountDownLatch(1);
+        when(downloads.reconcileLocalClaim(book)).thenAnswer(inv -> {
+            checkedDisk.countDown();
+            return false;
+        });
+        BookDetailsAnalysisService analysis = mock(BookDetailsAnalysisService.class);
+        UiBackgroundExecutor executor = new UiBackgroundExecutor(new LibraryOperationCoordinator());
+        BookViewModelMapper mapper = mock(BookViewModelMapper.class);
+        when(mapper.toViewModel(book)).thenReturn(new BookViewModel());
+        ApplicationState state = mock(ApplicationState.class);
+        when(state.getCurrentLibraryCollectionId()).thenReturn("flib");
+        BookWorkspaceController controller = controller(loader, analysis, mapper, executor, state, downloads);
+        try {
+            onFx(() -> { attachLabels(controller); controller.setBookId(bookId); return null; });
+            assertThat(checkedDisk.await(8, TimeUnit.SECONDS)).isTrue();
+            assertThat(onFx(() -> getLabel(controller, "annotationLabel").getText())).isBlank();
+            verifyNoInteractions(analysis);
+            verify(downloads, never()).downloadBatch(any(), any());
+        } finally {
+            onFx(() -> { controller.dispose(); return null; });
+            executor.shutdown();
+        }
+    }
+
+    @Test
     void catalogAnnotationTakesPriorityAndRemoteBooksDoNotParse() {
         assertThat(BookWorkspaceController.preferredAnnotation("З каталогу", "З FB2")).isEqualTo("З каталогу");
         assertThat(BookWorkspaceController.preferredAnnotation(" ", "  З FB2  ")).isEqualTo("З FB2");
@@ -94,10 +172,17 @@ class BookWorkspaceAnnotationFxTest {
     private static BookWorkspaceController controller(
             LoadBookByIdUseCase loader, BookDetailsAnalysisService analysis,
             BookViewModelMapper mapper, UiBackgroundExecutor executor, ApplicationState state) {
+        return controller(loader, analysis, mapper, executor, state, mock(BookDownloadCoordinator.class));
+    }
+
+    private static BookWorkspaceController controller(
+            LoadBookByIdUseCase loader, BookDetailsAnalysisService analysis,
+            BookViewModelMapper mapper, UiBackgroundExecutor executor, ApplicationState state,
+            BookDownloadCoordinator downloads) {
         return new BookWorkspaceController(loader, mock(LoadGroupsUseCase.class),
                 mock(AddBookToGroupUseCase.class), mock(CoverPresenter.class),
                 mock(NavigationService.class), mapper, mock(DialogService.class),
-                mock(BookDownloadCoordinator.class), mock(BookSaver.class),
+                downloads, mock(BookSaver.class),
                 mock(ClassicLibraryActionsService.class), executor, state, analysis);
     }
 
