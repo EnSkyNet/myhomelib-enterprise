@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - release/v34-sync
+      - master
     paths:
       - .github/workflows/windows-full-verify.yml
       - tools/windows-isolated.ps1
