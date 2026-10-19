@@ -1,3 +1,15 @@
+# Current V34 continuation status — 2026-10-19
+
+Base master: `37dbc2f450a42754cecfef35ab3f67735aad8ced`. Release remains **NO-GO**.
+
+- PR #25 pre-start cancellation: isolated Windows shared reactor 61/0/0/0; see [evidence](https://github.com/EnSkyNet/myhomelib-enterprise/blob/fix/v34-process-prestart-cancellation/docs/release/V34-PROCESS-PRESTART-2026-10-19.md) in that PR.
+- PR #26 converter cleanup: isolated Windows targeted reactor 51/0/0/4 (47 executed); see [evidence](https://github.com/EnSkyNet/myhomelib-enterprise/blob/fix/v34-converter-workspace-cleanup/docs/release/V34-CONVERTER-CLEANUP-2026-10-19.md) in that PR.
+- Crash-worker UTF-8 diagnostic fix: 1/0/0/0, three real SQLite crash/recovery boundaries; see [evidence](V34-CRASH-WORKER-UTF8-2026-10-19.md).
+- Full clean verify on PR #25 failed at the existing Windows child-log encoding bug. A fresh full run including the diagnostic fix is required; historical full runs below are not current evidence.
+- SCA remains blocked on NVD credentials. Installed-app GUI, real Calibre/device, portable and MSI/EXE lifecycle acceptance remain open.
+
+The following sections are preserved historical evidence.
+
 # Поточні перевірки, 2026-10-18
 
 **Current source candidate:** MyHomeLib Enterprise 8.0.0 / V34 External Test R18 — working branch `release/v34-sync` (exact-current root verification not complete).
