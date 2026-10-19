@@ -356,8 +356,9 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
         UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });
     }
 
-    @Test
-    void failedApplyLeavesProgressPageAndShowsOperationId() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"success", "cancelled", "partial", "failed", "cancel-exception"})
+    void terminalApplyLeavesProgressPageAndShowsOperationId(String outcome) throws Exception {
         var fixture = UiActionTestSupport.constructWithMocks(LibraryOrganizerUiService.class);
         when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incompleteOverview()).thenReturn(List.of());
         when(fixture.dependency(DialogService.class).showConfirmation(anyString(), nullable(String.class), anyString())).thenReturn(true);
@@ -379,14 +380,27 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
                 (javafx.collections.ObservableList<Object>) UiActionTestSupport.getField(wizard, "previewRows");
         UiActionTestSupport.fx(() -> { rows.add(row); UiActionTestSupport.invoke(wizard, "startApply"); return null; });
         assertThat(UiActionTestSupport.getField(wizard, "pageIndex")).isEqualTo(4);
-        UiActionTestSupport.fx(() -> { future.completeExceptionally(new java.io.IOException("copy failed")); return null; });
+        UiActionTestSupport.fx(() -> {
+            switch (outcome) {
+                case "failed" -> future.completeExceptionally(new java.io.IOException("copy failed"));
+                case "cancel-exception" -> future.completeExceptionally(new java.util.concurrent.CancellationException("cancelled"));
+                default -> future.complete(new ApplyResult(id, 1, 0, 1, 0, 0,
+                        outcome.equals("partial") ? 1 : 0, outcome.equals("cancelled"), 0, 0, 0, 0, List.of()));
+            }
+            return null;
+        });
         UiActionTestSupport.fx(() -> null);
         assertThat(UiActionTestSupport.getField(wizard, "pageIndex")).isEqualTo(5);
         assertThat(UiActionTestSupport.getField(wizard, "busy")).isEqualTo(false);
         var details = field(wizard, "resultDetails", javafx.scene.control.TextArea.class);
         String detailText = UiActionTestSupport.fx(details::getText);
-        assertThat(detailText).doesNotContain(id.toString(), "myhomelib.log", "ui.organizer.result.failure_help")
-                .isNotBlank();
+        assertThat(detailText).contains(id.toString()).doesNotContain("ui.organizer.result.");
+        String status = outcome.startsWith("cancel") ? "cancelled"
+                : outcome.equals("failed") || outcome.equals("partial") ? "failed" : "completed";
+        assertThat(UiActionTestSupport.fx(field(wizard, "resultSummary", javafx.scene.control.Label.class)::getText))
+                .isEqualTo(com.myhomelibcorp.ui.service.UiText.text("ui.organizer.result." + status));
+        assertThat(UiActionTestSupport.fx(field(wizard, "undoButton", Button.class)::isDisabled))
+                .isEqualTo(outcome.equals("failed") || outcome.equals("cancel-exception"));
         assertThat(UiActionTestSupport.fx(field(wizard, "nextButton", Button.class)::isDisabled)).isFalse();
         assertThat(UiActionTestSupport.fx(field(wizard, "backButton", Button.class)::isDisabled)).isTrue();
         UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });

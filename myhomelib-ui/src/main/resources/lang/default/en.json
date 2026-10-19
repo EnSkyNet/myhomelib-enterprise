@@ -2854,6 +2854,7 @@
     "ui.organizer.result.open_destination": "Open destination",
     "ui.organizer.result.open_failed": "Could not open destination:",
     "ui.organizer.result.optimization": "EPUB optimized: {0}; size {1} → {2}; saved {3} ({4}).",
+    "ui.organizer.result.operation_id": "Operation ID: %s",
     "ui.organizer.result.undo": "Undo operation",
     "ui.organizer.rules.analysis_threads": "Analysis threads",
     "ui.organizer.rules.canonical_format": "Canonical format",

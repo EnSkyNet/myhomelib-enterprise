@@ -2854,6 +2854,7 @@
     "ui.organizer.result.open_destination": "Відкрити каталог призначення",
     "ui.organizer.result.open_failed": "Не вдалося відкрити каталог:",
     "ui.organizer.result.optimization": "EPUB оптимізовано: {0}; розмір {1} → {2}; зекономлено {3} ({4}).",
+    "ui.organizer.result.operation_id": "ID операції: %s",
     "ui.organizer.result.undo": "Скасувати виконану операцію",
     "ui.organizer.rules.analysis_threads": "Потоки аналізу",
     "ui.organizer.rules.canonical_format": "Основний формат",

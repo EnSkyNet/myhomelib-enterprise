@@ -923,22 +923,27 @@ public class LibraryOrganizerUiService {
                         busy = false;
                         if (error != null) {
                             Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                            applyStatus.setText(UiText.text("ui.organizer.apply.failed") + " " + UiExceptionSupport.message(cause));
-                            resultSummary.setText(UiText.text("ui.organizer.result.failed"));
-                            log.error("ORGANIZER_UI_APPLY_FAILED operationId=" + selectedPlan.operationId(), cause);
+                            boolean cancelled = cause instanceof CancellationException;
+                            applyStatus.setText(UiText.text(cancelled ? "ui.organizer.apply.cancelled" : "ui.organizer.apply.failed")
+                                    + " " + UiExceptionSupport.message(cause));
+                            resultSummary.setText(UiText.text(cancelled ? "ui.organizer.result.cancelled" : "ui.organizer.result.failed"));
+                            if (cancelled) log.info("ORGANIZER_UI_APPLY_CANCELLED operationId={}", selectedPlan.operationId());
+                            else log.error("ORGANIZER_UI_APPLY_FAILED operationId=" + selectedPlan.operationId(), cause);
                             resultDetails.setText(UiExceptionSupport.message(cause) + "\n\n"
-                                    + UiText.text("ui.organizer.result.failure_help"));
+                                    + UiText.text("ui.organizer.result.failure_help") + "\n"
+                                    + UiText.format("ui.organizer.result.operation_id", selectedPlan.operationId()));
                             undoButton.setDisable(true);
                             showPage(5);
                             return;
                         }
                         applyResult = value;
                         applyProgress.setProgress(1);
-                        applyStatus.setText(value.cancelled() ? UiText.text("ui.organizer.apply.cancelled") : UiText.text("ui.organizer.apply.completed"));
+                        applyStatus.setText(UiText.text(value.cancelled() ? "ui.organizer.apply.cancelled"
+                                : value.failed() > 0 ? "ui.organizer.apply.failed" : "ui.organizer.apply.completed"));
                         populateResult(value);
                         undoButton.setDisable(value.committed() <= 0);
                         events.publishEvent(new NavigationRefreshEvent());
-                        updateNavigation();
+                        showPage(5);
                     }));
         }
 
@@ -960,7 +965,8 @@ public class LibraryOrganizerUiService {
         }
 
         private void populateResult(ApplyResult result) {
-            resultSummary.setText(result.cancelled() ? UiText.text("ui.organizer.result.cancelled") : UiText.text("ui.organizer.result.completed"));
+            resultSummary.setText(UiText.text(result.cancelled() ? "ui.organizer.result.cancelled"
+                    : result.failed() > 0 ? "ui.organizer.result.failed" : "ui.organizer.result.completed"));
             String details = UiText.format("ui.organizer.result.details",
                     result.committed(), result.converted(), result.moved(), result.skipped(), result.conflicts(), result.failed(),
                     result.warnings().size());
@@ -969,7 +975,7 @@ public class LibraryOrganizerUiService {
                         humanBytes(result.optimizationSourceBytes()), humanBytes(result.optimizationResultBytes()),
                         humanBytes(result.optimizationSavedBytes()), String.format(Locale.ROOT, "%.2f%%", result.optimizationSavedPercent()));
             }
-            resultDetails.setText(details);
+            resultDetails.setText(details + "\n" + UiText.format("ui.organizer.result.operation_id", result.operationId()));
         }
 
         private void undoOperation() {

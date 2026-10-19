@@ -2854,6 +2854,7 @@
     "ui.organizer.result.open_destination": "Отваряне на целевата папка",
     "ui.organizer.result.open_failed": "Could not open destination:",
     "ui.organizer.result.optimization": "Оптимизирани EPUB: {0}; размер {1} → {2}; спестени {3} ({4}).",
+    "ui.organizer.result.operation_id": "ID на операцията: %s",
     "ui.organizer.result.undo": "Отмяна на операцията",
     "ui.organizer.rules.analysis_threads": "Analysis threads",
     "ui.organizer.rules.canonical_format": "Основен формат",
