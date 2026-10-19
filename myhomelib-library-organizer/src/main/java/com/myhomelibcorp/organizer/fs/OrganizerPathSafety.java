@@ -38,6 +38,24 @@ public final class OrganizerPathSafety {
         return NoLinkPathSafety.copyFreshFile(source, target, role);
     }
 
+    public static Path copyFreshFile(Path source, Path target, String role,
+                                     java.util.function.BooleanSupplier cancelled) throws IOException {
+        return NoLinkPathSafety.copyFreshFile(source, target, role, cancelled);
+    }
+
+    public static Path copyFreshFileVerified(Path source, Path target, String role,
+                                             java.util.function.BooleanSupplier cancelled,
+                                             String expectedSha256) throws IOException {
+        return NoLinkPathSafety.copyFreshFileVerified(source, target, role, cancelled, expectedSha256);
+    }
+
+    public static Path copyFreshFileVerified(Path source, Path target, String role,
+                                             java.util.function.BooleanSupplier cancelled,
+                                             String expectedSha256,
+                                             java.util.function.BiConsumer<String, Long> milestone) throws IOException {
+        return NoLinkPathSafety.copyFreshFileVerified(source, target, role, cancelled, expectedSha256, milestone);
+    }
+
     public static void requireUnderRoot(Path root, Path child, String role) throws IOException {
         NoLinkPathSafety.requireUnderRoot(root, child, role);
     }

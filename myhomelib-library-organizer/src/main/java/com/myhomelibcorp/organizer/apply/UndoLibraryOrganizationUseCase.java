@@ -4,6 +4,8 @@ import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.organizer.fs.LibraryOperationWorkspace;
+import com.myhomelibcorp.organizer.fs.LibraryOperationCrashManifestReader;
+import com.myhomelibcorp.organizer.fs.LibraryOperationCrashSnapshot;
 import com.myhomelibcorp.organizer.fs.OrganizerPathSafety;
 import com.myhomelibcorp.organizer.journal.*;
 import com.myhomelibcorp.organizer.plan.OrganizationAction;
@@ -50,39 +52,136 @@ public final class UndoLibraryOrganizationUseCase {
     public int undo(UUID operationId, String expectedCollectionId)throws Exception {
         Objects.requireNonNull(operationId,"operationId");int restored=0;LibraryOperationCoordinator.Lease lease=operations.acquireDetached(LibraryOperationType.ORGANIZE);
         try {
-            requireExpectedCollection(expectedCollectionId);
-            List<OrganizationJournalItem>items=new ArrayList<>(journal.items(operationId));Collections.reverse(items);
+            String verifiedCollectionId = requireExpectedCollection(operationId, expectedCollectionId);
+            OrganizationJournalOperation expectedOperation = journal.findOperation(operationId)
+                    .orElseThrow(() -> new IllegalStateException("Organizer operation disappeared before rollback"));
+            List<OrganizationJournalItem>items=new ArrayList<>(journal.items(operationId));
+            // Remember whether a crash manifest was present: disappearance or a
+            // newly introduced manifest during filesystem rollback is not safe.
+            boolean manifestPresentAtStart = Files.exists(
+                    LibraryOperationWorkspace.manifestFor(operationId), LinkOption.NOFOLLOW_LINKS);
+            verifyCrashManifestBeforeUndo(operationId, items);
+            Collections.reverse(items);
+            // Loading the journal can race an out-of-band collection switch. The
+            // coordinator excludes normal SWITCH use cases, but not every legacy adapter.
+            requireActiveCollectionUnchanged(verifiedCollectionId);
             for (OrganizationJournalItem item : items) {
                 if (!rollbackEligible(item)) continue;
+                requireActiveCollectionUnchanged(verifiedCollectionId);
+                requireJournalItemUnchanged(item);
                 undoItem(item);
+                requireActiveCollectionUnchanged(verifiedCollectionId);
                 if (item.state() == OrganizationItemState.COMMITTED || item.state() == OrganizationItemState.VALIDATED
                         || item.state() == OrganizationItemState.FAILED) rollbackCatalog(item);
-                journal.updateItem(new OrganizationJournalItem(item.operationId(), item.itemId(), item.sourcePath(), item.sourceEntry(),
-                        item.targetPath(), item.sourceSha256(), item.targetSha256(), item.action(),
-                        OrganizationItemState.ROLLED_BACK, item.backupPath(), item.optimizationProfile(),
-                        item.sizeBefore(), item.sizeAfter(), item.bytesSaved(), item.percentSaved(),
-                        item.optimizationSummaryJson(), item.targetStandard(), item.deviceProfile(), item.compressionBackend(),
-                        item.validationStatus(), "", ""));
+                requireActiveCollectionUnchanged(verifiedCollectionId);
+                requireJournalItemUnchanged(item);
+                OrganizationJournalItem rolledBack = item.withOutcome(
+                        OrganizationItemState.ROLLED_BACK, "", "", "");
+                if (!journal.updateItemIfUnchanged(item, rolledBack)) {
+                    throw new IllegalStateException(
+                            "Organizer journal changed during rollback: conditional item update rejected");
+                }
                 restored++;
             }
-            journal.updateOperation(operationId,OrganizationOperationState.ROLLED_BACK,"{\"rolledBack\":"+restored+"}");
+            requireActiveCollectionUnchanged(verifiedCollectionId);
+            // A writer outside the operation coordinator can mutate or remove a
+            // previously trusted manifest while an Undo item is being restored.
+            // Reconcile against CURRENT durable rows before marking the whole
+            // operation ROLLED_BACK and deleting recovery evidence.
+            boolean manifestPresentAtEnd = Files.exists(
+                    LibraryOperationWorkspace.manifestFor(operationId), LinkOption.NOFOLLOW_LINKS);
+            if (manifestPresentAtStart != manifestPresentAtEnd) {
+                throw new IllegalStateException("Organizer crash manifest changed during rollback; manual review required");
+            }
+            verifyCrashManifestBeforeUndo(operationId, journal.items(operationId));
+            List<UUID> expectedItemIds = items.stream().map(OrganizationJournalItem::itemId).toList();
+            if (!journal.finalizeRollbackIfUnchanged(expectedOperation, expectedItemIds,
+                    "{\"rolledBack\":"+restored+"}")) {
+                throw new IllegalStateException("Organizer journal changed during rollback: "
+                        + "atomic finalization rejected (item set, state or operation identity)");
+            }
             LibraryOperationWorkspace.deleteTree(LibraryOperationWorkspace.rootFor(operationId));
             lease.markCompleted("Rolled back "+restored+" organizer items");return restored;
         } catch(Exception failure){lease.markFailed(failure);throw failure;} finally {lease.close();}
     }
 
 
-    private void requireExpectedCollection(String expectedCollectionId) {
-        String expected = expectedCollectionId == null ? "" : expectedCollectionId.trim();
-        if (expected.isEmpty()) return;
-        if (collectionLifecycle == null) {
+    /**
+     * A direct Undo invocation must not bypass the strict manifest validation used
+     * by recovery status. In particular, a torn event-log tail is evidence of an
+     * interrupted update, even if SQLite still describes a plausible rollback.
+     * Historical operations without a manifest retain the existing compatibility path.
+     */
+    private void verifyCrashManifestBeforeUndo(UUID operationId,
+                                               List<OrganizationJournalItem> items) throws Exception {
+        Path path = LibraryOperationWorkspace.manifestFor(operationId);
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return;
+        try {
+            LibraryOperationCrashSnapshot snapshot = new LibraryOperationCrashManifestReader().read(path);
+            OrganizationJournalOperation recorded = journal.findOperation(operationId)
+                    .orElseThrow(() -> new IllegalStateException("Organizer operation record is missing"));
+            if (!OrganizerManifestJournalConsistency.matches(recorded, items, snapshot)) {
+                throw new IllegalStateException("Organizer manifest differs from the recorded operation or items");
+            }
+        } catch (Exception untrusted) {
+            throw new IllegalStateException(
+                    "Organizer crash manifest requires manual review before rollback", untrusted);
+        }
+    }
+
+    /**
+     * Detect stale in-memory journal rows after callbacks or other uncoordinated writers.
+     * This is a boundary guard, NOT a CAS transaction across SQLite and the filesystem.
+     */
+    private void requireJournalItemUnchanged(OrganizationJournalItem expected) {
+        OrganizationJournalItem current = journal.findItem(expected.operationId(), expected.itemId())
+                .orElseThrow(() -> new IllegalStateException("Organizer journal changed during rollback: item missing"));
+        if (!expected.equals(current)) {
+            throw new IllegalStateException("Organizer journal changed during rollback: item state or identity differs");
+        }
+    }
+
+    private String requireExpectedCollection(UUID operationId, String expectedCollectionId) {
+        OrganizationJournalOperation recorded = journal.findOperation(operationId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Cannot verify organizer rollback: authoritative operation record is missing"));
+        String stored = recorded.collectionId();
+        String supplied = expectedCollectionId == null ? "" : expectedCollectionId.trim();
+        if (!stored.isBlank()) {
+            if (!supplied.isEmpty() && !stored.equals(supplied)) {
+                throw new IllegalStateException("Organizer rollback collection differs from journal collection");
+            }
+            if (collectionLifecycle == null) {
+                throw new IllegalStateException("Cannot verify organizer rollback against active collection");
+            }
+            String active = currentCollectionId();
+            if (!stored.equals(active)) {
+                throw new IllegalStateException("Active collection differs from organizer operation collection");
+            }
+            return stored;
+        }
+        // Old records without durable collection identity are ambiguous. In production,
+        // fail closed instead of trusting an arbitrary collection id from the UI.
+        if (collectionLifecycle != null) {
+            throw new IllegalStateException("Organizer rollback journal has no verified collection identity; manual review required");
+        }
+        if (!supplied.isEmpty()) {
             throw new IllegalStateException("Cannot verify organizer rollback collection identity");
         }
-        var current = collectionLifecycle.getCurrentCollection();
-        String actual = current == null || current.getId() == null ? "" : current.getId();
-        if (!expected.equals(actual)) {
-            throw new IllegalStateException("Active collection differs from organizer operation collection");
+        return stored;
+    }
+
+    /** Fail closed if a collection changes outside the coordinated lifecycle barrier.
+     * This is a best-effort boundary check, not an atomic transaction spanning files and SQLite. */
+    private void requireActiveCollectionUnchanged(String verifiedCollectionId) {
+        if (collectionLifecycle != null && !verifiedCollectionId.equals(currentCollectionId())) {
+            throw new IllegalStateException("Active collection changed during organizer rollback");
         }
+    }
+
+    private String currentCollectionId() {
+        var current = collectionLifecycle.getCurrentCollection();
+        return current == null || current.getId() == null ? "" : current.getId();
     }
 
 

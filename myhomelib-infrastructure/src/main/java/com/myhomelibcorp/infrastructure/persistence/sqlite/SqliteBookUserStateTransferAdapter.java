@@ -6,6 +6,7 @@ import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionDatabasePathResolver;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.infrastructure.persistence.CollectionTransactionExecutor;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteInClauseSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,9 +26,9 @@ import java.util.List;
 
 /**
  * Bounded SQLite-to-SQLite transfer of collection-local reader/user state.
- * Target writes use the Spring-bound current collection connection, so when this
- * adapter is invoked from BookSaver's transaction hook the book rows and state
- * are committed or rolled back together.
+ * All target writes use one Spring-bound collection transaction, including when
+ * this adapter is called outside BookSaver's transaction hook. A late bookmark
+ * or preference error must not leave earlier progress rows committed.
  */
 @Component
 @RequiredArgsConstructor
@@ -68,7 +69,11 @@ public class SqliteBookUserStateTransferAdapter implements BookUserStateTransfer
             throw new IllegalStateException("Source collection database is unavailable or unsafe: " + sourceDb, unsafeSource);
         }
 
-        collections.getCurrentJdbcTemplate().execute((ConnectionCallback<Void>) target -> {
+        // Participate in BookSaver's transaction, or start one if this port is
+        // invoked independently. A raw JdbcTemplate.execute callback otherwise
+        // auto-commits each SQL batch, making partial user-state transfers possible.
+        CollectionTransactionExecutor.run(collections, () ->
+                collections.getCurrentJdbcTemplate().execute((ConnectionCallback<Void>) target -> {
             try (Connection source = DriverManager.getConnection("jdbc:sqlite:" + safeSourceDb)) {
                 // SQLite JDBC reopens by pathname. Revalidate immediately after open so a parent
                 // symlink/reparse swap cannot silently redirect the read-only source database.
@@ -81,6 +86,11 @@ public class SqliteBookUserStateTransferAdapter implements BookUserStateTransfer
                     st.execute("PRAGMA query_only=ON");
                     st.execute("PRAGMA busy_timeout=5000");
                 }
+                // Pin a single SQLite read snapshot for progress, history, bookmarks,
+                // preferences and *all* later ID batches. In auto-commit mode each
+                // SELECT observes a potentially different source commit. BEGIN DEFERRED
+                // allows concurrent WAL writers while preserving our source view.
+                source.setAutoCommit(false);
                 for (int from = 0; from < ids.size(); from += SqliteInClauseSupport.MAX_ITEMS) {
                     List<String> part = ids.subList(from, Math.min(ids.size(), from + SqliteInClauseSupport.MAX_ITEMS));
                     copyReadingProgress(source, target, part);
@@ -91,23 +101,27 @@ public class SqliteBookUserStateTransferAdapter implements BookUserStateTransfer
                 }
                 return null;
             }
-        });
+        }));
         log.debug("Transferred collection-local user state for {} copied books", ids.size());
     }
 
     private static void copyReadingProgress(Connection source, Connection target, List<String> ids) throws SQLException {
         String select = """
-                SELECT book_id,anchor_id,paragraph_index,paragraph_id,char_offset,percent,
-                       chapter_title,chapter_id,updated_at,reading_time_seconds
+                SELECT book_id,anchor_id,text_anchor_id,audio_anchor_id,paragraph_index,
+                       paragraph_id,char_offset,percent,chapter_title,chapter_id,
+                       updated_at,reading_time_seconds,last_device
                 FROM reading_progress WHERE book_id IN (%s)
                 """.formatted(SqliteInClauseSupport.placeholders(ids.size()));
         String upsert = """
                 INSERT INTO reading_progress
-                    (book_id,anchor_id,paragraph_index,paragraph_id,char_offset,percent,
-                     chapter_title,chapter_id,updated_at,reading_time_seconds)
-                VALUES(?,?,?,?,?,?,?,?,?,?)
+                    (book_id,anchor_id,text_anchor_id,audio_anchor_id,paragraph_index,
+                     paragraph_id,char_offset,percent,chapter_title,chapter_id,
+                     updated_at,reading_time_seconds,last_device)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(book_id) DO UPDATE SET
                     anchor_id=excluded.anchor_id,
+                    text_anchor_id=COALESCE(excluded.text_anchor_id,reading_progress.text_anchor_id),
+                    audio_anchor_id=COALESCE(excluded.audio_anchor_id,reading_progress.audio_anchor_id),
                     paragraph_index=excluded.paragraph_index,
                     paragraph_id=excluded.paragraph_id,
                     char_offset=excluded.char_offset,
@@ -115,9 +129,36 @@ public class SqliteBookUserStateTransferAdapter implements BookUserStateTransfer
                     chapter_title=excluded.chapter_title,
                     chapter_id=excluded.chapter_id,
                     updated_at=excluded.updated_at,
-                    reading_time_seconds=excluded.reading_time_seconds
+                    reading_time_seconds=excluded.reading_time_seconds,
+                    last_device=excluded.last_device, revision=reading_progress.revision+1
                 """;
-        copyRows(source, target, ids, select, upsert, 10, false);
+        copyRows(source, target, ids, select, upsert, 13, false);
+        // Bookshelves, filters and search summaries use books.progress rather than
+        // reading_progress.percent. Recalculate the projection from committed rows
+        // in the SAME transaction as the transferred anchors.
+        String placeholders = SqliteInClauseSupport.placeholders(ids.size());
+        try (PreparedStatement check = target.prepareStatement("""
+                SELECT rp.book_id FROM reading_progress rp
+                 WHERE rp.book_id IN (%s)
+                   AND NOT EXISTS (SELECT 1 FROM books b WHERE b.id = rp.book_id)
+                 LIMIT 1
+                """.formatted(placeholders))) {
+            for (int i = 0; i < ids.size(); i++) check.setString(i + 1, ids.get(i));
+            try (ResultSet missing = check.executeQuery()) {
+                if (missing.next()) throw new SQLException("Cannot transfer progress without its target book");
+            }
+        }
+        try (PreparedStatement summary = target.prepareStatement("""
+                UPDATE books
+                   SET progress = (SELECT CAST(ROUND(MIN(100.0, MAX(0.0,
+                                       COALESCE(rp.percent, 0.0)))) AS INTEGER)
+                                     FROM reading_progress rp WHERE rp.book_id = books.id)
+                 WHERE id IN (%s)
+                   AND EXISTS (SELECT 1 FROM reading_progress rp WHERE rp.book_id = books.id)
+                """.formatted(placeholders))) {
+            for (int i = 0; i < ids.size(); i++) summary.setString(i + 1, ids.get(i));
+            summary.executeUpdate();
+        }
     }
 
     private static void copyReadingHistory(Connection source, Connection target, List<String> ids) throws SQLException {

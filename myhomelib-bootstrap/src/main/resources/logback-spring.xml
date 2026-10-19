@@ -32,6 +32,9 @@
     <!-- PROD: desktop-friendly text logging. JSON/ELK encoder was removed because
          the desktop runtime has no ELK transport and it pulled a second Jackson major line. -->
     <springProfile name="prod">
+        <!-- Keep global production verbosity at WARN, but persist organizer
+             copy/preflight/cancellation INFO milestones in myhomelib.log. -->
+        <logger name="com.myhomelibcorp.organizer" level="INFO"/>
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
                 <charset>UTF-8</charset>

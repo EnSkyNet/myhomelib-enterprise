@@ -566,18 +566,35 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private void restoreReadingProgressRow(JsonNode n, BoundedIdentityCache ids, RestoreCounters c) {
         resolveBookId(n, ids, c).ifPresent(bookId -> jdbc().update("""
-                INSERT INTO reading_progress(book_id,paragraph_id,char_offset,percent,updated_at,anchor_id,paragraph_index,last_device)
-                VALUES(?,?,?,?,?,?,?,?)
+                INSERT INTO reading_progress(
+                    book_id,paragraph_id,char_offset,percent,updated_at,anchor_id,
+                    text_anchor_id,audio_anchor_id,paragraph_index,last_device)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(book_id) DO UPDATE SET paragraph_id=excluded.paragraph_id,char_offset=excluded.char_offset,
                     percent=excluded.percent,updated_at=excluded.updated_at,anchor_id=excluded.anchor_id,
-                    paragraph_index=excluded.paragraph_index,last_device=excluded.last_device
+                    text_anchor_id=COALESCE(excluded.text_anchor_id,reading_progress.text_anchor_id),
+                    audio_anchor_id=COALESCE(excluded.audio_anchor_id,reading_progress.audio_anchor_id),
+                    paragraph_index=excluded.paragraph_index,last_device=excluded.last_device, revision=reading_progress.revision+1
                 """, bookId, limitedText(n, "paragraphId", ""), nonNegativeInt(n, "charOffset", 0),
                 percentDouble(n, "percent", 0), limitedText(n, "updatedAt", Instant.EPOCH.toString()),
-                safeNullableLimitedText(n, "anchorId"), nonNegativeInt(n, "paragraphIndex", 0),
+                safeNullableLimitedText(n, "anchorId"),
+                restoredMediaAnchor(n, "textAnchorId", false),
+                restoredMediaAnchor(n, "audioAnchorId", true),
+                nonNegativeInt(n, "paragraphIndex", 0),
                 limitedText(n, "lastDevice", "desktop")));
     }
 
 
+
+    /** Older backup formats contain only the last-active anchor. Classify it safely;
+     * never manufacture the other medium's position. Explicit V71 fields take priority. */
+    private static String restoredMediaAnchor(JsonNode row, String key, boolean audio) {
+        String value = safeNullableLimitedText(row, key);
+        if (value != null && !value.isBlank()) return value;
+        String legacy = safeNullableLimitedText(row, "anchorId");
+        if (legacy == null || legacy.isBlank()) return null;
+        return legacy.startsWith("audio:") == audio ? legacy : null;
+    }
 
     private void restoreReadingHistoryRow(JsonNode n, BoundedIdentityCache ids, RestoreCounters c) {
         resolveBookId(n, ids, c).ifPresent(bookId -> {
@@ -1000,7 +1017,8 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 "SELECT b.lib_id AS libId, b.id AS sourceBookId, " +
                         "rp.paragraph_id AS paragraphId, rp.char_offset AS charOffset, " +
                         "rp.percent AS percent, rp.updated_at AS updatedAt, " +
-                        "rp.anchor_id AS anchorId, COALESCE(rp.paragraph_index,0) AS paragraphIndex, " +
+                        "rp.anchor_id AS anchorId, rp.text_anchor_id AS textAnchorId, " +
+                        "rp.audio_anchor_id AS audioAnchorId, COALESCE(rp.paragraph_index,0) AS paragraphIndex, " +
                         "COALESCE(NULLIF(TRIM(rp.last_device),''),'desktop') AS lastDevice " +
                         "FROM reading_progress rp JOIN books b ON b.id=rp.book_id " +
                         "ORDER BY rp.updated_at, b.id",

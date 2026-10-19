@@ -53,5 +53,23 @@ public record OrganizationJournalItem(UUID operationId, UUID itemId, Path source
                 "", "", "", "", errorCode,errorMessage);
     }
 
+    /**
+     * Preserve every immutable journal attribute when changing an item's outcome.
+     * Centralizing this copy prevents future audit fields being silently lost in
+     * individual Apply/Undo use cases. A known source checksum always wins over
+     * a fallback checksum collected during a failed Apply.
+     */
+    public OrganizationJournalItem withOutcome(OrganizationItemState nextState,
+                                               String fallbackSourceSha256,
+                                               String nextErrorCode,
+                                               String nextErrorMessage) {
+        String sourceHash = sourceSha256.isBlank() ? safe(fallbackSourceSha256) : sourceSha256;
+        return new OrganizationJournalItem(operationId, itemId, sourcePath, sourceEntry,
+                targetPath, sourceHash, targetSha256, action, nextState, backupPath,
+                optimizationProfile, sizeBefore, sizeAfter, bytesSaved, percentSaved,
+                optimizationSummaryJson, targetStandard, deviceProfile, compressionBackend,
+                validationStatus, nextErrorCode, nextErrorMessage);
+    }
+
     private static String safe(String value) { return value == null ? "" : value; }
 }

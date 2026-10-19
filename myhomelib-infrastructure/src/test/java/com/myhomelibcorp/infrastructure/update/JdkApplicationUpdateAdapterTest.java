@@ -79,6 +79,80 @@ class JdkApplicationUpdateAdapterTest {
     }
 
     @Test
+    void damagedCachedCandidateDoesNotReplaceVerifiedNewDownload() throws Exception {
+        System.setProperty("myhomelib.dataDir", temp.toString());
+        byte[] bytes = "complete-update".getBytes(StandardCharsets.UTF_8);
+        ReleaseManifest manifest = manifest(bytes);
+        Path dir = temp.resolve("cache/application-updates/8.1.0");
+        Files.createDirectories(dir);
+        Path poisoned = dir.resolve("candidate-" + manifest.sha256() + ".bin");
+        byte[] damaged = "x".repeat(bytes.length).getBytes(StandardCharsets.UTF_8);
+        Files.write(poisoned, damaged);
+
+        HttpClient http = mock(HttpClient.class);
+        @SuppressWarnings("unchecked") HttpResponse<InputStream> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(java.util.Map.of(), (a,b) -> true));
+        when(response.body()).thenReturn(new ByteArrayInputStream(bytes));
+        when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
+
+        Path candidate = new JdkApplicationUpdateAdapter(new ObjectMapper(), http)
+                .downloadVerifiedCandidateSource(manifest);
+        assertThat(candidate).isNotEqualTo(poisoned);
+        assertThat(Files.readAllBytes(candidate)).containsExactly(bytes);
+        assertThat(Files.readAllBytes(poisoned)).containsExactly(damaged);
+        try (var listing = Files.list(dir)) {
+            assertThat(listing.filter(path -> path.getFileName().toString().endsWith(".part")).toList()).isEmpty();
+        }
+    }
+
+    @Test
+    void intactCachedCandidateIsReusedOnlyAfterDigestVerification() throws Exception {
+        System.setProperty("myhomelib.dataDir", temp.toString());
+        byte[] bytes = "complete-update".getBytes(StandardCharsets.UTF_8);
+        ReleaseManifest manifest = manifest(bytes);
+        Path dir = temp.resolve("cache/application-updates/8.1.0");
+        Files.createDirectories(dir);
+        Path cached = Files.write(dir.resolve("candidate-" + manifest.sha256() + ".bin"), bytes);
+
+        HttpClient http = mock(HttpClient.class);
+        @SuppressWarnings("unchecked") HttpResponse<InputStream> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(java.util.Map.of(), (a,b) -> true));
+        when(response.body()).thenReturn(new ByteArrayInputStream(bytes));
+        when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
+
+        Path result = new JdkApplicationUpdateAdapter(new ObjectMapper(), http)
+                .downloadVerifiedCandidateSource(manifest);
+        assertThat(result).isEqualTo(cached);
+        assertThat(Files.readAllBytes(result)).containsExactly(bytes);
+        try (var listing = Files.list(dir)) {
+            assertThat(listing.toList()).containsExactly(cached);
+        }
+    }
+
+    @Test
+    void sameLengthCorruptedResponseIsRejectedBeforePublishingCandidate() throws Exception {
+        System.setProperty("myhomelib.dataDir", temp.toString());
+        byte[] expected = "complete-update".getBytes(StandardCharsets.UTF_8);
+        ReleaseManifest manifest = manifest(expected);
+        HttpClient http = mock(HttpClient.class);
+        @SuppressWarnings("unchecked") HttpResponse<InputStream> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(java.util.Map.of(), (a,b) -> true));
+        when(response.body()).thenReturn(new ByteArrayInputStream("x".repeat(expected.length).getBytes(StandardCharsets.UTF_8)));
+        when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
+
+        assertThatThrownBy(() -> new JdkApplicationUpdateAdapter(new ObjectMapper(), http)
+                .downloadVerifiedCandidateSource(manifest))
+                .isInstanceOf(SecurityException.class).hasMessageContaining("SHA-256 mismatch");
+        Path dir = temp.resolve("cache/application-updates/8.1.0");
+        try (var listing = Files.list(dir)) {
+            assertThat(listing.toList()).isEmpty();
+        }
+    }
+
+    @Test
     void interruptedArtifactDownloadRemovesPartialStagingFile() throws Exception {
         System.setProperty("myhomelib.dataDir", temp.toString());
         byte[] bytes = "complete-update".getBytes(StandardCharsets.UTF_8);

@@ -36,7 +36,7 @@ class CollectionRuntimeStateResolverTest {
         center.fail(id, new IllegalStateException("index corrupted"));
         CollectionRuntimeStatus failed = CollectionRuntimeStateResolver.resolve("collection-1", center.snapshot());
         assertEquals(CollectionRuntimeState.ERROR, failed.state());
-        assertEquals(UiText.text("common.error.operation_failed"), failed.detail());
+        org.junit.jupiter.api.Assertions.assertTrue(failed.detail().contains(UiText.text("common.error.operation_failed")));
         assertFalse(failed.detail().contains("index corrupted"));
     }
 

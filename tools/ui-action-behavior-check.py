@@ -236,6 +236,12 @@ def validate(entries: list[dict]) -> None:
     prior = {e["key"]: e for e in saved.get("entries", [])}
     if set(current) != set(prior):
         raise AssertionError("action-specific behavior inventory drift; run reviewed --write")
+    changed = [
+        key for key, item in current.items()
+        if prior[key].get("implementation_fingerprint") != item.get("implementation_fingerprint")
+    ]
+    if changed:
+        raise AssertionError(f"UI action behavior changed without behavior-coverage review ({len(changed)}): " + ", ".join(changed))
     for key, item in current.items():
         old = prior[key]
         if old.get("implementation_fingerprint") != item.get("implementation_fingerprint"):

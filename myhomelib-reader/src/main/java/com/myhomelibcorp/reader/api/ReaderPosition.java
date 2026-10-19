@@ -63,7 +63,18 @@ public record ReaderPosition(
         if (other == null) {
             return 1;
         }
-        return Long.compare(this.textOffset, other.textOffset);
+        // Reader positions may share a character offset across chapters or
+        // paragraphs. Offset-only ordering incorrectly treated distinct values
+        // as the same key in TreeSet/TreeMap, silently discarding resume anchors.
+        // Keep text offset as the primary ordering dimension while ensuring
+        // compareTo == 0 if and only if all record components are equal.
+        int byOffset = Long.compare(textOffset, other.textOffset);
+        if (byOffset != 0) return byOffset;
+        int byChapter = Integer.compare(chapterIndex, other.chapterIndex);
+        if (byChapter != 0) return byChapter;
+        int byParagraph = Integer.compare(paragraphIndex, other.paragraphIndex);
+        if (byParagraph != 0) return byParagraph;
+        return Integer.compare(charOffset, other.charOffset);
     }
 
     public boolean isBefore(ReaderPosition other) {

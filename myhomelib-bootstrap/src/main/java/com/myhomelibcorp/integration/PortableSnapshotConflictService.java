@@ -8,10 +8,8 @@ import com.myhomelibcorp.application.sync.conflict.SyncConflictReviewSelection;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -155,27 +153,17 @@ final class PortableSnapshotConflictService {
         if (node == null || node.isMissingNode()) {
             return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.missing");
         }
-        byte[] canonical = node.toString().getBytes(StandardCharsets.UTF_8);
-        String hash = sha256(canonical);
         if (node.isArray()) {
-            return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.records", node.size(), hash);
+            return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.records", node.size());
         }
         if (node.isObject()) {
-            return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.fields", node.size(), hash);
+            return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.fields", node.size());
         }
         if (node.isNull()) {
-            return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.no_value", hash);
+            return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.no_value");
         }
         String text = node.asString();
         if (text.length() > 160) text = text.substring(0, DesktopIntegrationSupport.safeTextCut(text, 160)) + "…";
-        return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.value", text, hash);
-    }
-
-    private static String sha256(byte[] bytes) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-        } catch (Exception impossible) {
-            throw new IllegalStateException("SHA-256 недоступний", impossible);
-        }
+        return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.value", text);
     }
 }

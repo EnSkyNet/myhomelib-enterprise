@@ -14,6 +14,7 @@ import java.util.UUID;
 /** Shared race-aware file ownership and SHA-256 verification for organizer commit/rollback. */
 final class OrganizerFileIntegritySupport {
     private static final int HASH_BUFFER_BYTES = 64 * 1024;
+    private static final System.Logger LOG = System.getLogger(OrganizerFileIntegritySupport.class.getName());
 
     private OrganizerFileIntegritySupport() {}
 
@@ -27,14 +28,38 @@ final class OrganizerFileIntegritySupport {
     }
 
     static String sha256(Path path, java.util.function.BooleanSupplier cancelled) throws Exception {
+        return sha256(path, cancelled, bytes -> { });
+    }
+
+    static String sha256(Path path, java.util.function.BooleanSupplier cancelled,
+                         java.util.function.LongConsumer byteProgress) throws Exception {
         checkCancelled(cancelled);
+        java.util.Objects.requireNonNull(byteProgress, "byteProgress");
         Path safe = OrganizerPathSafety.canonicalExistingFile(path, "Organizer hash source");
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         byte[] buffer = new byte[HASH_BUFFER_BYTES];
+        long started = System.nanoTime();
+        long lastProgress = started;
+        long hashedBytes = 0L;
         try (InputStream input = Files.newInputStream(safe, LinkOption.NOFOLLOW_LINKS)) {
-            for (int read; (read = input.read(buffer)) >= 0;) {
+            while (true) {
                 checkCancelled(cancelled);
-                if (read > 0) digest.update(buffer, 0, read);
+                int read = input.read(buffer);
+                if (read < 0) break;
+                checkCancelled(cancelled);
+                if (read > 0) {
+                    digest.update(buffer, 0, read);
+                    hashedBytes += read;
+                    byteProgress.accept(hashedBytes);
+                }
+                long now = System.nanoTime();
+                if (now - lastProgress >= java.util.concurrent.TimeUnit.SECONDS.toNanos(5)) {
+                    LOG.log(System.Logger.Level.INFO,
+                            "ORGANIZER_HASH_PROGRESS file={0} hashedBytes={1} elapsedMs={2}",
+                            safe.getFileName(), hashedBytes,
+                            java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(now - started));
+                    lastProgress = now;
+                }
             }
         }
         return HexFormat.of().formatHex(digest.digest());
@@ -72,9 +97,22 @@ final class OrganizerFileIntegritySupport {
     }
 
     static void copyAndVerify(Path source, Path target, String expected) throws Exception {
-        verifyRequiredHash(source, expected, "Source hash mismatch before copy");
-        OrganizerPathSafety.copyFreshFile(source, target, "Organizer verified copy");
-        verifyRequiredHash(target, expected, "Staged hash mismatch");
+        copyAndVerify(source, target, expected, () -> false);
+    }
+
+    static void copyAndVerify(Path source, Path target, String expected,
+                              java.util.function.BooleanSupplier cancelled) throws Exception {
+        copyAndVerify(source, target, expected, cancelled, (stage, bytes) -> { });
+    }
+
+    static void copyAndVerify(Path source, Path target, String expected,
+                              java.util.function.BooleanSupplier cancelled,
+                              java.util.function.BiConsumer<String, Long> milestone) throws Exception {
+        checkCancelled(cancelled);
+        // Stream SHA-256, independent target SHA-256 and the final cancellation
+        // checkpoint now share the same CREATE_NEW ownership/cleanup scope.
+        OrganizerPathSafety.copyFreshFileVerified(source, target, "Organizer verified copy",
+                cancelled, expected, milestone);
     }
 
     static boolean removeOwnedFileIfPresent(Path path, String expectedHash, String role) throws Exception {

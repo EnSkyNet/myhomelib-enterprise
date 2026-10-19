@@ -1,19 +1,80 @@
+# Maven/generated output
 target/
 *.class
+/dist/
+/out/
+/build/
+/verification/
+.mvn/maven/
 
-# Runtime/generated data
+# Local application/library/test data (never source fixtures)
+/test-env/
+/data/
+/profile/
+/books/
+/libraries/
+/logs/
+/backups/
+/tmp/
+/cache/
+/caches/
 search-index/
-*.log
+content-index/
+.myhomelibcorp/
+.m2/
 *.db
+*.db-*
+*.db.*
 *.sqlite
+*.sqlite-*
+*.sqlite.*
 *.sqlite3
+*.sqlite3-*
+*.sqlite3.*
+*.log
+*.log.*
+*.jfr
+*.hprof
+*.bak
+*.tmp
+*.part
+myhomelib2.ini
 
-# IDE/local files
+# Local credentials; the localhost-only OPDS test certificate is intentional
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.aes256
+*.dpapi
+credential-secret-v1-*
+credentials*.json
+credentials*.properties
+secrets*.json
+secrets*.properties
+!myhomelib-opds/src/test/resources/tls/opds-test.p12
+.aws/
+.ssh/
+
+# IDE, assistant, Python and OS state
 .idea/
 *.iml
-
-# OS files
+.codex/
+.agents/
+__pycache__/
+.pytest_cache/
+*.py[cod]
 .DS_Store
 Thumbs.db
 
-.mvn/maven/
+# Intentionally retain reviewed source resources:
+# tools/ vendor JAR/EXE plus licenses and security manifests;
+# src/test/resources/ synthetic FB2/ZIP and localhost TLS fixture;
+# docs/ authored documents, baselines and historical validation evidence.
+# Do not ignore these resources solely by extension.

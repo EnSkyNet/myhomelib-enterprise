@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Collections;
 import java.util.ArrayList;
 import java.util.List;
+import com.github.benmanes.caffeine.cache.Cache;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -23,14 +24,21 @@ class SearchCacheMemoryBoundTest {
     }
 
     @Test
-    void boundedCacheEvictsEarlierResultSetsUnderPressure() {
+    void boundedCacheEvictsEarlierResultSetsUnderPressure() throws Exception {
         CaffeineSearchCache cache = new CaffeineSearchCache();
         BookId id = BookId.fromLong(2L);
         for (int i = 0; i < 25; i++) {
             cache.put("query-" + i, Collections.nCopies(2_000, id));
         }
-        // Caffeine eviction is asynchronous: exercise cleanup via bounded cache, not timing.
-        assertThat(cache.get("query-24")).isNotNull();
+        // Force completion of Caffeine's asynchronous maintenance before
+        // checking its memory-weight contract. Window TinyLFU may admit or
+        // reject any particular query, including the most recent one.
+        java.lang.reflect.Field cacheField = CaffeineSearchCache.class.getDeclaredField("cache");
+        cacheField.setAccessible(true);
+        Cache<?, ?> internal = (Cache<?, ?>) cacheField.get(cache);
+        internal.cleanUp();
+        long retainedWeight = internal.policy().eviction().orElseThrow().weightedSize().orElseThrow();
+        assertThat(retainedWeight).isBetween(1L, 20_000L);
     }
 
     @Test

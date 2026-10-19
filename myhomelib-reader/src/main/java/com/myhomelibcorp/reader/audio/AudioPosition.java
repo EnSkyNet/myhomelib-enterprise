@@ -21,7 +21,12 @@ public record AudioPosition(long millis, int trackIndex, int chapterIndex) {
         String[] p = value.split(":", -1);
         if (p.length != 4) return Optional.empty();
         try {
-            return Optional.of(new AudioPosition(Long.parseLong(p[1]), Integer.parseInt(p[2]), Integer.parseInt(p[3])));
+            long millis = Long.parseLong(p[1]);
+            int track = Integer.parseInt(p[2]);
+            int chapter = Integer.parseInt(p[3]);
+            // Negative stored anchors are corrupt; do not silently clamp them to the start.
+            if (millis < 0 || track < 0 || chapter < 0) return Optional.empty();
+            return Optional.of(new AudioPosition(millis, track, chapter));
         } catch (NumberFormatException invalid) {
             return Optional.empty();
         }

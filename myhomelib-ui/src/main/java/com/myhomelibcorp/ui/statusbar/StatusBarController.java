@@ -11,6 +11,10 @@ import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.operation.OperationCenterEntry;
 import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.operation.LibraryOperationUiText;
+import com.myhomelibcorp.ui.operation.OperationKind;
+import com.myhomelibcorp.application.progress.OperationStage;
+import javafx.animation.PauseTransition;
+import javafx.util.Duration;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.StatusBarViewModel;
@@ -47,6 +51,11 @@ public class StatusBarController {
     private volatile long lastStatisticsRefreshNanos;
     /** The index coordinator is separate from the operation-center UI journal. */
     private String mirroredIndexOperationId;
+    /** Tracks coordinator-only operations that run long enough to warrant a visible UI row. */
+    private String mirroredUntrackedOperationId;
+    private LibraryOperationType mirroredUntrackedOperationType;
+    private PauseTransition untrackedOperationDelay;
+
 
     @FXML private Label statusLabel;
     @FXML private Label operationsLabel;
@@ -67,14 +76,17 @@ public class StatusBarController {
             updateOperationsLabel(operationSnapshot);
             refreshBackgroundStatus(vm);
         }));
-        libraryOperations.addCompletionListener(completion -> {
-            if (completion.operation() == LibraryOperationType.INDEX) {
-                UiExecutor.runOnUiThread(() -> finishIndexHistory(completion));
-            }
-        });
+        untrackedOperationDelay = new PauseTransition(Duration.seconds(2));
+        untrackedOperationDelay.setOnFinished(event -> startUntrackedHistoryIfMissing(coordinatedOperation));
+        libraryOperations.addCompletionListener(completion -> UiExecutor.runOnUiThread(() -> {
+            if (completion.operation() == LibraryOperationType.INDEX) finishIndexHistory(completion);
+            else finishUntrackedHistory(completion);
+        }));
         libraryOperations.addListener(operation -> UiExecutor.runOnUiThread(() -> {
             coordinatedOperation = operation;
+            untrackedOperationDelay.stop();
             if (operation == LibraryOperationType.INDEX) startIndexHistoryIfMissing();
+            else if (operation != null) untrackedOperationDelay.playFromStart();
             refreshBackgroundStatus(vm);
         }));
 
@@ -161,6 +173,42 @@ public class StatusBarController {
             case COMPLETED -> operationCenter.complete(id, result.detail());
             case FAILED -> operationCenter.fail(id, result.detail());
             case CANCELLED -> operationCenter.cancel(id, result.detail());
+        }
+    }
+
+    /**
+     * Operations launched directly through LibraryOperationCoordinator have no UI row.
+     * Show them after two seconds, but do not flood the journal with fast navigation queries.
+     * Never override a more specific operation already published by its producer.
+     */
+    void startUntrackedHistoryIfMissing(LibraryOperationType operation) {
+        if (operation == null || operation == LibraryOperationType.INDEX
+                || libraryOperations.activeOperation() != operation) return;
+        if (mirroredUntrackedOperationId != null) return;
+        if (operationCenter.snapshot().stream().anyMatch(entry ->
+                LibraryOperationUiText.matches(operation, entry))) return;
+        OperationStage stage = operation == LibraryOperationType.QUERY
+                || operation == LibraryOperationType.READER_STATE
+                ? OperationStage.READING_CATALOG : OperationStage.VALIDATING;
+        mirroredUntrackedOperationId = "coordinator-" + java.util.UUID.randomUUID();
+        operationCenter.accept(LibraryOperationUiText.activeStatus(operation), currentCollectionId(),
+                operation == LibraryOperationType.ORGANIZE ? OperationKind.LIBRARY_ORGANIZATION : OperationKind.GENERIC,
+                com.myhomelibcorp.application.progress.OperationProgress.stage(
+                        mirroredUntrackedOperationId, stage, false));
+        mirroredUntrackedOperationType = operation;
+        log.info("COORDINATOR_OPERATION_VISIBLE operation={} uiOperation={}",
+                operation, mirroredUntrackedOperationId);
+    }
+
+    void finishUntrackedHistory(com.myhomelibcorp.application.operation.LibraryOperationCompletion completion) {
+        if (mirroredUntrackedOperationId == null || mirroredUntrackedOperationType != completion.operation()) return;
+        String id = mirroredUntrackedOperationId;
+        mirroredUntrackedOperationId = null;
+        mirroredUntrackedOperationType = null;
+        switch (completion.outcome()) {
+            case COMPLETED -> operationCenter.complete(id, completion.detail());
+            case FAILED -> operationCenter.fail(id, completion.detail());
+            case CANCELLED -> operationCenter.cancel(id, completion.detail());
         }
     }
 

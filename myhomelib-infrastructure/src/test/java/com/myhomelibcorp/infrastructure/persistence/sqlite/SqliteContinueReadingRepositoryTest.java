@@ -32,14 +32,17 @@ class SqliteContinueReadingRepositoryTest {
         SQLiteDataSource sqlite = new SQLiteDataSource();
         sqlite.setUrl("jdbc:sqlite::memory:");
         connection = sqlite.getConnection();
-        jdbc = new JdbcTemplate(new SingleConnectionDataSource(connection, true));
+        var datasource = new SingleConnectionDataSource(connection, true);
+        jdbc = new JdbcTemplate(datasource);
         jdbc.execute("CREATE TABLE books(id TEXT PRIMARY KEY,title TEXT,deleted INTEGER NOT NULL DEFAULT 0, progress INTEGER NOT NULL DEFAULT 0)");
         jdbc.execute("CREATE TABLE authors(id TEXT PRIMARY KEY,last_name TEXT,first_name TEXT,middle_name TEXT)");
         jdbc.execute("CREATE TABLE book_authors(book_id TEXT,author_id TEXT)");
         jdbc.execute("""
                 CREATE TABLE reading_progress(
-                    book_id TEXT PRIMARY KEY, anchor_id TEXT, paragraph_index INTEGER DEFAULT 0,
+                    book_id TEXT PRIMARY KEY, anchor_id TEXT, text_anchor_id TEXT, audio_anchor_id TEXT,
+                    paragraph_index INTEGER DEFAULT 0,
                     paragraph_id TEXT NOT NULL DEFAULT '', char_offset INTEGER NOT NULL DEFAULT 0,
+                    revision INTEGER NOT NULL DEFAULT 0,
                     percent REAL NOT NULL DEFAULT 0, chapter_title TEXT NOT NULL DEFAULT '',
                     chapter_id TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL,
                     reading_time_seconds INTEGER NOT NULL DEFAULT 0, last_device TEXT NOT NULL DEFAULT 'desktop')
@@ -53,6 +56,9 @@ class SqliteContinueReadingRepositoryTest {
         insertProgress("d", 50, "Hidden", "2026-09-12 14:00:00.000", "phone");
         manager = Mockito.mock(CollectionManager.class);
         when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);
+        // Production writes require a selected collection DataSource for the
+        // transaction spanning reading_progress and books.progress.
+        when(manager.getCurrentDataSource()).thenReturn(datasource);
         repository = new SqliteContinueReadingRepository(manager);
     }
 

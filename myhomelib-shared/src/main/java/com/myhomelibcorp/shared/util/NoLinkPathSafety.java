@@ -11,8 +11,14 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
+import java.util.function.BiConsumer;
 
 /**
  * Canonical fail-closed filesystem boundary for application-managed paths.
@@ -167,11 +173,61 @@ public final class NoLinkPathSafety {
             return Files.newOutputStream(absolute, StandardOpenOption.CREATE_NEW,
                     StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
         } catch (FileAlreadyExistsException race) {
-            throw new IOException(role + " appeared while opening a fresh output: " + absolute, race);
+            // A concurrent publisher won CREATE_NEW after the preflight check.
+            // Preserve the collision type: callers must be able to distinguish
+            // an occupied destination from I/O failures, without any overwrite.
+            throw race;
         }
     }
 
     public static Path copyFreshFile(Path source, Path target, String role) throws IOException {
+        return copyFreshFile(source, target, role, () -> false);
+    }
+
+    /**
+     * Cooperative cancellation of long-running, no-replace file copies.
+     * The caller can cancel between bounded I/O chunks without publishing an
+     * incomplete output. This cannot forcibly interrupt a blocked OS read/write.
+     */
+    public static Path copyFreshFile(Path source, Path target, String role,
+                                     BooleanSupplier cancelled) throws IOException {
+        return copyFreshFileInternal(source, target, role, cancelled, null, (stage, bytes) -> { });
+    }
+
+    /**
+     * Copies into a CREATE_NEW destination while hashing the same source bytes being
+     * copied. A stale expected digest is rejected before returning the result; the
+     * failure handler removes only the output owned by this invocation (when the
+     * filesystem exposes a reliable file key). This avoids a second, potentially
+     * expensive and racy read of the source immediately before the actual copy.
+     * Callers should independently verify destination bytes before publication.
+     */
+    public static Path copyFreshFileVerified(Path source, Path target, String role,
+                                             BooleanSupplier cancelled, String expectedSha256) throws IOException {
+        return copyFreshFileVerified(source, target, role, cancelled, expectedSha256, (stage, bytes) -> { });
+    }
+
+    /**
+     * The listener sees bounded milestones: OPENED, BYTES, STREAM_DONE,
+     * VERIFY_TARGET_START and VERIFY_TARGET_DONE. It must be quick and must not
+     * access or mutate the copied file. The verified destination SHA and the final
+     * cancellation checkpoint run inside the same ownership-aware cleanup scope.
+     */
+    public static Path copyFreshFileVerified(Path source, Path target, String role,
+                                             BooleanSupplier cancelled, String expectedSha256,
+                                             BiConsumer<String, Long> milestone) throws IOException {
+        if (expectedSha256 == null || !expectedSha256.matches("(?i)[a-f0-9]{64}")) {
+            throw new IllegalArgumentException("A validated SHA-256 is required for verified copy");
+        }
+        return copyFreshFileInternal(source, target, role, cancelled, expectedSha256, milestone);
+    }
+
+    private static Path copyFreshFileInternal(Path source, Path target, String role,
+                                              BooleanSupplier cancelled, String expectedSha256,
+                                              BiConsumer<String, Long> milestone) throws IOException {
+        Objects.requireNonNull(milestone, "milestone");
+        Objects.requireNonNull(cancelled, "cancelled");
+        checkCopyCancelled(cancelled);
         Path safeSource = requireRegularFile(source, role + " source");
         Path safeTarget = prepareTarget(target, role + " target");
         if (safeSource.equals(safeTarget)) {
@@ -182,27 +238,96 @@ public final class NoLinkPathSafety {
         // only its own incomplete artifact, never a file swapped in by another actor.
         Object createdFileKey = null;
         boolean targetOpened = false;
-        try (InputStream in = Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS);
-             OutputStream out = openFreshOutputStream(safeTarget, role + " target")) {
+        MessageDigest copiedDigest = null;
+        if (expectedSha256 != null) {
+            try {
+                copiedDigest = MessageDigest.getInstance("SHA-256");
+            } catch (NoSuchAlgorithmException unavailable) {
+                throw new IllegalStateException("SHA-256 unavailable", unavailable);
+            }
+        }
+        try {
+            long bytesCopied = 0L;
+            try (InputStream in = Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS);
+                 OutputStream out = openFreshOutputStream(safeTarget, role + " target")) {
             targetOpened = true;
             createdFileKey = Files.readAttributes(safeTarget, BasicFileAttributes.class,
                     LinkOption.NOFOLLOW_LINKS).fileKey();
+            milestone.accept("OPENED", 0L);
             byte[] buffer = new byte[COPY_BUFFER_BYTES];
-            for (int read; (read = in.read(buffer)) >= 0; ) {
-                if (read > 0) out.write(buffer, 0, read);
+            long start = System.nanoTime();
+            long lastProgress = start;
+            while (true) {
+                checkCopyCancelled(cancelled);
+                int read = in.read(buffer);
+                if (read < 0) break;
+                checkCopyCancelled(cancelled);
+                if (read > 0) {
+                    out.write(buffer, 0, read);
+                    if (copiedDigest != null) copiedDigest.update(buffer, 0, read);
+                    bytesCopied += read;
+                    milestone.accept("BYTES", bytesCopied);
+                }
+                long now = System.nanoTime();
+                if (now - lastProgress >= java.util.concurrent.TimeUnit.SECONDS.toNanos(5)) {
+                    System.getLogger(NoLinkPathSafety.class.getName()).log(System.Logger.Level.INFO,
+                            "FILE_COPY_PROGRESS role={0} copiedBytes={1} elapsedMs={2}",
+                            role, bytesCopied,
+                            java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(now - start));
+                    lastProgress = now;
+                }
             }
+            checkCopyCancelled(cancelled);
             out.flush();
+            if (copiedDigest != null && !expectedSha256.equalsIgnoreCase(
+                    HexFormat.of().formatHex(copiedDigest.digest()))) {
+                throw new IllegalStateException("Source hash mismatch before copy or during copy: " + safeSource);
+            }
+            }
+            milestone.accept("STREAM_DONE", bytesCopied);
+            if (expectedSha256 != null) {
+                // This second pass verifies bytes actually stored on the target, not
+                // only bytes passed to OutputStream.write. Keep verification AND the
+                // final cancellation check within the ownership-aware catch below.
+                milestone.accept("VERIFY_TARGET_START", bytesCopied);
+                MessageDigest targetDigest;
+                try {
+                    targetDigest = MessageDigest.getInstance("SHA-256");
+                } catch (NoSuchAlgorithmException unavailable) {
+                    throw new IllegalStateException("SHA-256 unavailable", unavailable);
+                }
+                byte[] verifyBuffer = new byte[COPY_BUFFER_BYTES];
+                try (InputStream targetIn = Files.newInputStream(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
+                    int read;
+                    while (true) {
+                        checkCopyCancelled(cancelled);
+                        read = targetIn.read(verifyBuffer);
+                        if (read < 0) break;
+                        if (read > 0) targetDigest.update(verifyBuffer, 0, read);
+                    }
+                }
+                if (!expectedSha256.equalsIgnoreCase(HexFormat.of().formatHex(targetDigest.digest()))) {
+                    throw new IllegalStateException("Staged hash mismatch: " + safeTarget);
+                }
+                milestone.accept("VERIFY_TARGET_DONE", bytesCopied);
+            }
+            checkCopyCancelled(cancelled);
         } catch (IOException | RuntimeException failure) {
             if (targetOpened) {
                 try {
                     // A null fileKey offers no reliable ownership proof: retain the
                     // incomplete artifact as diagnostic evidence rather than risk
                     // deleting somebody else's file.
-                    if (createdFileKey != null && Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
+                    if (Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
                         BasicFileAttributes current = Files.readAttributes(safeTarget,
                                 BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-                        if (current.isRegularFile() && createdFileKey.equals(current.fileKey())) {
+                        if (createdFileKey != null && current.isRegularFile()
+                                && createdFileKey.equals(current.fileKey())) {
                             Files.delete(safeTarget);
+                        } else {
+                            System.getLogger(NoLinkPathSafety.class.getName()).log(System.Logger.Level.WARNING,
+                                    "FILE_COPY_UNVERIFIABLE_ARTIFACT_RETAINED role={0} file={1}",
+                                    role, safeTarget.getFileName());
                         }
                     }
                 } catch (IOException cleanup) {
@@ -212,6 +337,12 @@ public final class NoLinkPathSafety {
             throw failure;
         }
         return requireRegularFile(safeTarget, role + " target");
+    }
+
+    private static void checkCopyCancelled(BooleanSupplier cancelled) {
+        if (Thread.currentThread().isInterrupted() || cancelled.getAsBoolean()) {
+            throw new CancellationException("Managed file copy cancelled");
+        }
     }
 
     public static Path moveNoReplace(Path source, Path target, String role) throws IOException {

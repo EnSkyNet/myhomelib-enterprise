@@ -109,12 +109,12 @@ def _metric_from_validation(text: str, label: str) -> int:
 
 
 def validate_current_validation(root: Path) -> Check:
-    """Validate the *current* release summary, not incidental historical tokens.
+    """Require an explicit *unverified* current candidate and an honest historical baseline.
 
-    CURRENT-VALIDATION intentionally contains historical checkpoints.  A token-only
-    search over the whole document can therefore pass even when the current header
-    or exact-current metrics are stale.  Bind the top-level candidate revision to
-    its detailed evidence document and compare the current Maven aggregate.
+    Historical R18 test counts can be cross-checked against their original report,
+    but must never be presented as exact-current validation of the active branch.
+    Passing this structural check only means the external evidence harness can run;
+    it is not a Maven/Windows/release acceptance verdict.
     """
     rel = "docs/release/CURRENT-VALIDATION.md"
     text = read(root, rel)
@@ -130,7 +130,8 @@ def validate_current_validation(root: Path) -> Check:
     status = re.search(r"\*\*Status:\*\*\s*\*\*(.+?)\*\*", header, re.IGNORECASE)
     need(status is not None, f"{rel}: current status line missing from header")
     status_text = status.group(1)
-    need("BUILD SUCCESS" in status_text, f"{rel}: current status must record BUILD SUCCESS")
+    need("CURRENT CANDIDATE NOT VERIFIED" in status_text.upper(),
+         f"{rel}: current candidate must remain explicitly unverified without exact-current root evidence")
     status_upper = status_text.upper()
     explicit_external_status = (
         "REMAIN EXTERNAL" in status_upper
@@ -140,16 +141,16 @@ def validate_current_validation(root: Path) -> Check:
     )
     need(explicit_external_status, f"{rel}: current status must explicitly keep live/platform acceptance external or required")
 
-    current_aggregate = re.search(
-        r"(?:current Maven baseline aggregate(?:[^:]*):|exact-current R\d+ root Maven `?clean verify`?:)"
-        r"\s*\*\*(\d+) tests / (\d+) failures / (\d+) errors / (\d+) skipped\*\*",
-        text, re.IGNORECASE,
+    historical_aggregate = re.search(
+        r"Historical R18 Maven baseline aggregate:\s*"
+        r"\*\*(\d+) tests / (\d+) failures / (\d+) errors / (\d+) skipped\*\*",
+        header, re.IGNORECASE,
     )
-    need(current_aggregate is not None, f"{rel}: current Maven baseline aggregate missing")
-    current_counts = tuple(int(current_aggregate.group(i)) for i in range(1, 5))
+    need(historical_aggregate is not None, f"{rel}: historical R18 Maven aggregate missing")
+    historical_counts = tuple(int(historical_aggregate.group(i)) for i in range(1, 5))
 
-    detailed = re.search(r"Detailed exact-current evidence:\s*`([^`]+)`", text)
-    need(detailed is not None, f"{rel}: detailed exact-current evidence path missing")
+    detailed = re.search(r"Detailed historical R18 evidence:\s*`([^`]+)`", header)
+    need(detailed is not None, f"{rel}: detailed historical R18 evidence path missing")
     detailed_rel = detailed.group(1)
     expected_fragment = f"POST-R{revision - 1}-R{revision}-VALIDATION-"
     need(expected_fragment in Path(detailed_rel).name,
@@ -161,18 +162,19 @@ def validate_current_validation(root: Path) -> Check:
         _metric_from_validation(detailed_text, "errors"),
         _metric_from_validation(detailed_text, "skipped"),
     )
-    need(current_counts == detailed_counts,
-         f"{rel}: current Maven aggregate {current_counts} does not match {detailed_rel} {detailed_counts}")
+    need(historical_counts == detailed_counts,
+         f"{rel}: historical Maven aggregate {historical_counts} does not match {detailed_rel} {detailed_counts}")
 
     return Check(
-        rel, "PASS", "current validation header and exact-current evidence are synchronized",
+        rel, "PASS", "current candidate explicitly unverified; historical R18 evidence synchronized",
         {
             "candidateRevision": revision,
             "date": date.group(1),
-            "currentEvidence": detailed_rel,
-            "mavenAggregate": {
-                "tests": current_counts[0], "failures": current_counts[1],
-                "errors": current_counts[2], "skipped": current_counts[3],
+            "evidenceStatus": "HISTORICAL_ONLY",
+            "historicalEvidence": detailed_rel,
+            "historicalMavenAggregate": {
+                "tests": historical_counts[0], "failures": historical_counts[1],
+                "errors": historical_counts[2], "skipped": historical_counts[3],
             },
         },
     )

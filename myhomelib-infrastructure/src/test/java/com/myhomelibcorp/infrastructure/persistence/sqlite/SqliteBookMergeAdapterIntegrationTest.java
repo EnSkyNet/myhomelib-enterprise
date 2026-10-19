@@ -78,6 +78,28 @@ class SqliteBookMergeAdapterIntegrationTest {
         assertThat(Files.exists(fileB)).isTrue();
     }
 
+    @Test
+    void mergeKeepsShelfProjectionAlignedWithChosenMostRecentReadingPosition() throws Exception {
+        var ds = new DriverManagerDataSource("jdbc:sqlite:" + tempDir.resolve("merge-progress.db"));
+        JdbcTemplate jdbc = new JdbcTemplate(ds);
+        Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+        TestCollectionManager manager = new TestCollectionManager(jdbc);
+        manager.setCurrentDataSource(ds);
+        manager.setCurrentJdbcTemplate(jdbc);
+        SqliteBookMergeAdapter adapter = new SqliteBookMergeAdapter(manager, new ObjectMapper(), new BookCache(manager));
+        seed(jdbc, Files.writeString(tempDir.resolve("a.epub"), "a"),
+                Files.writeString(tempDir.resolve("b.pdf"), "b"));
+        // The survivor was read more recently, though the duplicate once reached 70%.
+        jdbc.update("UPDATE reading_progress SET updated_at='2026-09-03 12:00:00', percent=35 WHERE book_id=?", A);
+        jdbc.update("UPDATE books SET progress=35 WHERE id=?", A);
+        adapter.merge(new BookMergePlan(BookId.fromString(A), BookId.fromString(B), BookId.fromString(A)));
+        assertThat(jdbc.queryForObject("SELECT percent FROM reading_progress WHERE book_id=?", Double.class, A))
+                .isEqualTo(35.0);
+        assertThat(jdbc.queryForObject("SELECT progress FROM books WHERE id=?", Integer.class, A))
+                .as("the shelf must agree with the chosen most recent reader position")
+                .isEqualTo(35);
+    }
+
     private void seed(JdbcTemplate jdbc, Path fileA, Path fileB) {
         jdbc.update("INSERT INTO authors(id,first_name,middle_name,last_name) VALUES ('author-a','Alice','','Author')");
         jdbc.update("INSERT INTO authors(id,first_name,middle_name,last_name) VALUES ('author-b','Bob','','Writer')");

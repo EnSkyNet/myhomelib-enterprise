@@ -2,8 +2,8 @@
 
 Цей реєстр є строгішим доповненням до `UI-ACTION-COVERAGE.json`: generic controller-level test не рахується. Для кожної дії потрібен exact handler/callback/delegate/control token у JUnit-тесті з observable assertion/Mockito verification, або вузький documented exclusion.
 
-- Inventory: **486**
-- Automated action-specific: **485**
+- Inventory: **489**
+- Automated action-specific: **488**
 - Justified exclusions: **1**
 - Missing: **0**
 
@@ -432,6 +432,9 @@
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/opds/OpdsUiService.java` | `tokenCreate.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `OpdsProgrammaticActionBehaviorContractTest.java`<br>`OpdsTokenUiContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/opds/OpdsUiService.java` | `tokenRefresh.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `OpdsProgrammaticActionBehaviorContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/opds/OpdsUiService.java` | `tokenRevoke.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `OpdsTokenUiContractTest.java` |
+| `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java` | `authorBatchButton.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `LibraryOrganizerUiServiceActionBehaviorContractTest.java` |
+| `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java` | `authorPreviewButton.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `LibraryOrganizerUiServiceActionBehaviorContractTest.java` |
+| `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java` | `authorSelectionButton.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `LibraryOrganizerUiServiceActionBehaviorContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java` | `backButton.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `LibraryOrganizerUiServiceActionBehaviorContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java` | `chooseDestination.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `LibraryOrganizerUiServiceActionBehaviorContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/organizer/LibraryOrganizerUiService.java` | `chooseSource.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `LibraryOrganizerUiServiceActionBehaviorContractTest.java` |

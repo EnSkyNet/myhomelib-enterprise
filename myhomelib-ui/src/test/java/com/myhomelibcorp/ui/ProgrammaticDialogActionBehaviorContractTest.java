@@ -150,6 +150,8 @@ class ProgrammaticDialogActionBehaviorContractTest {
         when(backend.plugins()).thenReturn(List.of(plugin));
         when(backend.installPlugin(jar.toPath())).thenReturn(IntegrationBackend.Result.ok("common.success"));
         when(backend.disablePlugin("plugin-1")).thenReturn(IntegrationBackend.Result.ok("common.success"));
+        when(backend.enablePlugin("plugin-1", true)).thenReturn(IntegrationBackend.Result.ok("common.success"));
+        when(dialogs.showConfirmation(anyString(), anyString(), anyString())).thenReturn(false, true);
         when(chooser.chooseFile(isNull(), anyString(), anyList())).thenReturn(jar);
         IntegrationCenterDialog service = new IntegrationCenterDialog(backend, background, dialogs, i18n, localMetadata, chooser);
 
@@ -158,9 +160,14 @@ class ProgrammaticDialogActionBehaviorContractTest {
                 .filter(Button.class::isInstance).map(Button.class::cast).toList());
         assertThat(pluginButtons).hasSizeGreaterThanOrEqualTo(6);
         Button install = pluginButtons.get(0);
+        Button enable = pluginButtons.get(1);
         Button disable = pluginButtons.get(2);
-        UiActionTestSupport.fx(() -> { install.fire(); disable.fire(); return null; });
+        UiActionTestSupport.fx(() -> { enable.fire(); return null; });
+        verify(backend, never()).enablePlugin("plugin-1", true);
+        UiActionTestSupport.fx(() -> { enable.fire(); install.fire(); disable.fire(); return null; });
 
+        verify(dialogs, times(2)).showConfirmation(anyString(), anyString(), anyString());
+        verify(backend).enablePlugin("plugin-1", true);
         verify(backend).installPlugin(jar.toPath());
         verify(backend).disablePlugin("plugin-1");
         verify(backend, atLeast(3)).plugins();

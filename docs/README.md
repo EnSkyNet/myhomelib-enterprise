@@ -2,6 +2,8 @@
 
 ## Поточний контракт
 
+Актуальний практичний аудит спрощення: [current/SIMPLIFICATION-AUDIT-UA.md](current/SIMPLIFICATION-AUDIT-UA.md).
+
 У корені репозиторію навмисно залишаються лише два Markdown entry points:
 
 - `README.md` — старт, build/run, актуальний validation boundary;
@@ -45,3 +47,5 @@
 Plugin SDK: `plugin-sdk/README.md`, `plugin-sdk/COMPATIBILITY.md`, `plugin-sdk/SAMPLES.md`.  
 Performance references: `performance-baseline.json`, `current/SMART-COLLECTIONS-PERFORMANCE.md`.  
 Runtime F1 help (`myhomelib-ui/src/main/resources/help/`) є частиною продукту, а не project documentation archive. Runtime language JSON лежить у `Lang/`, а його project documentation — у `current/LANGUAGE-PACKS.md`.
+
+Додатковий звіт: [Перевірка папок авторів за структурованими полями SQLite](current/AUTHOR-FOLDER-CATALOG-AUDIT-UA.md).

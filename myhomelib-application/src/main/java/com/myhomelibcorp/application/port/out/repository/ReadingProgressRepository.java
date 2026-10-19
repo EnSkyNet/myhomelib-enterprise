@@ -12,6 +12,15 @@ public interface ReadingProgressRepository {
     Optional<ReadingProgressDto> findByBookId(String bookId);
     void deleteByBookId(String bookId);
 
+    /**
+     * Snapshot token for an absent progress row. The default covers in-memory/test
+     * repositories; SQLite overrides it to include the durable delete generation.
+     * An insert using the token must still compare it atomically during the write.
+     */
+    default long revisionWhenAbsent(String bookId) {
+        return -1L;
+    }
+
     default Map<String, ReadingProgressDto> findByBookIds(Collection<String> bookIds) {
         Map<String, ReadingProgressDto> result = new LinkedHashMap<>();
         if (bookIds == null) return result;

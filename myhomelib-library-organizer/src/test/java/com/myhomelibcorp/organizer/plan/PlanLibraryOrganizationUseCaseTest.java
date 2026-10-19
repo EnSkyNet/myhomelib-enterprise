@@ -102,6 +102,46 @@ class PlanLibraryOrganizationUseCaseTest {
         });
     }
 
+    @Test
+    void uncertainSurnameBoundaryIsNotMovedIntoAProbablyWrongAuthorFolder() {
+        var base = item(temp.resolve("source/book.fb2"), "", "0123456789abcdef", DuplicateDecision.none());
+        var uncertain = new OrganizerAnalysisItem(base.sourcePath(), base.sourceEntry(),
+                base.detectedFormat(), base.extractedMetadata(),
+                new NormalizedBookIdentity("Назва",
+                        List.of(new NormalizedAuthor("Амбер Фиона", "", "", "", false)),
+                        "Серія", BigDecimal.ONE, "uk", "", 85,
+                        List.of(new com.myhomelibcorp.organizer.metadata.NormalizationIssue(
+                                "AUTHOR_UNSTRUCTURED", "Потрібно перевірити автора"))),
+                base.fingerprint(), base.formatDecision(), base.proposedRelativePath(),
+                base.duplicate(), List.of());
+        var result = useCase.plan(new OrganizationAnalysis(temp.resolve("source"),
+                temp.resolve("library"), Instant.now(), List.of(uncertain), List.of()),
+                profile(OrganizerDuplicatePolicy.KEEP_ALL)).actions().getFirst();
+        assertThat(result.action()).isEqualTo(OrganizationAction.KEEP_AS_IS);
+        assertThat(result.targetPath()).isNull();
+        assertThat(result.issues()).extracting(PlanIssue::code).contains("AUTHOR_ORDER_REVIEW");
+    }
+
+    @Test
+    void inferredSurnameFromDictionaryRequiresReviewBeforeAnyMove() {
+        var base = item(temp.resolve("source/uncertain.epub"), "", "b234567890123456", DuplicateDecision.none());
+        var inferred = new OrganizerAnalysisItem(base.sourcePath(), base.sourceEntry(),
+                base.detectedFormat(), base.extractedMetadata(),
+                new NormalizedBookIdentity("Книга",
+                        List.of(new NormalizedAuthor("Васильева Алёна", "Алёна", "", "Васильева", true)),
+                        "", null, "ru", "", 85,
+                        List.of(new com.myhomelibcorp.organizer.metadata.NormalizationIssue(
+                                "AUTHOR_ORDER_INFERRED", "Не підтверджено"))),
+                base.fingerprint(), base.formatDecision(), base.proposedRelativePath(),
+                base.duplicate(), List.of());
+        var planned = useCase.plan(new OrganizationAnalysis(temp.resolve("source"),
+                temp.resolve("library"), Instant.now(), List.of(inferred), List.of()),
+                profile(OrganizerDuplicatePolicy.KEEP_ALL)).actions().getFirst();
+        assertThat(planned.action()).isEqualTo(OrganizationAction.KEEP_AS_IS);
+        assertThat(planned.targetPath()).isNull();
+        assertThat(planned.issues()).extracting(PlanIssue::code).contains("AUTHOR_ORDER_REVIEW");
+    }
+
     private OrganizerAnalysisItem item(Path source, String sourceEntry, String sha, DuplicateDecision duplicate) {
         DetectedBookFormat format = new DetectedBookFormat(
                 "fb2", "application/x-fictionbook+xml", DetectionConfidence.CERTAIN, "fb2", false, "XML root");

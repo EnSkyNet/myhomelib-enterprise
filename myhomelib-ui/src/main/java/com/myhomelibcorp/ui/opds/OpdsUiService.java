@@ -145,7 +145,7 @@ public class OpdsUiService {
                 regenerate.setDisable(true);
                 return;
             }
-            fingerprint.setText(info.fingerprintSha256());
+            fingerprint.clear();
             certificateDetails.setText(i18n.format("ui.opds.certificate.details", info.subject(),
                     CERT_DATE.format(info.notBefore()), CERT_DATE.format(info.notAfter())));
             trustWarning.setText(info.selfSigned()

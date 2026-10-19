@@ -480,6 +480,13 @@ def validate(current: list[dict]) -> None:
     old = {e["key"]: e for e in saved.get("entries", [])}; now = {e["key"]: e for e in current}
     missing = sorted(set(now) - set(old)); stale = sorted(set(old) - set(now))
     if missing or stale: raise AssertionError(f"UI action inventory drift: missing coverage={missing[:10]}, stale coverage={stale[:10]}")
+    changed = [
+        key for key, entry in now.items()
+        if old[key].get("handler_body_sha256" if entry["kind"] == "FXML" else "callback_sha256")
+        != entry.get("handler_body_sha256" if entry["kind"] == "FXML" else "callback_sha256")
+    ]
+    if changed:
+        raise AssertionError(f"UI action behavior changed without coverage review ({len(changed)}): " + ", ".join(changed))
     for key, entry in now.items():
         saved_entry = old[key]
         fingerprint = "handler_body_sha256" if entry["kind"] == "FXML" else "callback_sha256"

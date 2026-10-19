@@ -24,7 +24,12 @@ public final class LibraryOperationUiText {
             case SYNC -> UiText.text("ui.java.library_operation_ui_text.43d605d3a8");
             case DOWNLOAD -> UiText.text("ui.java.library_operation_ui_text.a3c6cfd395");
             case CONVERSION -> UiText.text("ui.java.library_operation_ui_text.273d78eda4");
-            case EDIT, ANNOTATION, COPY, EXPORT, QUERY, READER_STATE -> UiText.text("ui.java.library_operation_ui_text.7d12d8cbba");
+            case EDIT -> UiText.text("ui.operation.coordinator.edit");
+            case QUERY -> UiText.text("ui.operation.coordinator.query");
+            case READER_STATE -> UiText.text("ui.operation.coordinator.reader_state");
+            case ANNOTATION -> UiText.text("ui.operation.coordinator.annotation");
+            case COPY -> UiText.text("ui.operation.coordinator.copy");
+            case EXPORT -> UiText.text("ui.operation.coordinator.export");
             case INTEGRITY_AUDIT -> UiText.text("ui.java.library_operation_ui_text.c1ece3ee06");
             case ORGANIZE -> UiText.text("ui.organizer.title");
         };
@@ -38,6 +43,9 @@ public final class LibraryOperationUiText {
 
     public static String entryStatus(OperationCenterEntry entry) {
         if (entry == null) return UiText.text("ui.java.library_operation_ui_text.7d12d8cbba");
+        // Coordinator-only background work has no dedicated progress stage. Preserve
+        // its specific operation title rather than saying only "Checking" or "Working".
+        if (entry.operationId().startsWith("coordinator-")) return entry.title();
         String base = switch (entry.stage()) {
             case CHECKING_SERVER -> UiText.text("ui.java.library_operation_ui_text.c0edea5d0a");
             case DOWNLOADING -> UiText.text("ui.java.library_operation_ui_text.d6556511fd");
@@ -68,11 +76,7 @@ public final class LibraryOperationUiText {
             int percent = (int) Math.round(fraction * 100.0);
             return base + " " + percent + "%";
         }
-        if (entry.currentItem() != null && !entry.currentItem().isBlank()
-                && entry.currentItem().length() <= 80
-                && entry.stage() != OperationStage.UPDATING_SEARCH_INDEX) {
-            return base + " " + entry.currentItem();
-        }
+        // Do not append producer-supplied internal paths, JSON or identifiers to the status bar.
         return base;
     }
 
@@ -89,7 +93,8 @@ public final class LibraryOperationUiText {
             case INTEGRITY_AUDIT -> entry.kind() == OperationKind.INTEGRITY_CHECK;
             case DOWNLOAD -> entry.kind() == OperationKind.BOOK_DOWNLOAD;
             case CONVERSION -> entry.kind() == OperationKind.BOOK_CONVERSION;
-            case VACUUM, SYNC, SWITCH, ORGANIZE, EDIT, ANNOTATION, COPY, EXPORT, QUERY, READER_STATE ->
+            case ORGANIZE -> entry.kind() == OperationKind.LIBRARY_ORGANIZATION;
+            case VACUUM, SYNC, SWITCH, EDIT, ANNOTATION, COPY, EXPORT, QUERY, READER_STATE ->
                     entry.kind() == OperationKind.MAINTENANCE || entry.kind() == OperationKind.GENERIC;
         };
     }

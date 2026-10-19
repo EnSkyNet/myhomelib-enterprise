@@ -29,7 +29,7 @@ class ConversionProjectionRepairV68Test {
         Flyway flyway = Flyway.configure().dataSource(ds).locations("classpath:db/migration").load();
         flyway.migrate();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("70");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("73");
         assertThat(jdbc.queryForObject(
                 "SELECT preferred_artifact_id FROM book_artifact_preferences WHERE book_id='book-no-pref'",
                 String.class)).isEqualTo("z-original");

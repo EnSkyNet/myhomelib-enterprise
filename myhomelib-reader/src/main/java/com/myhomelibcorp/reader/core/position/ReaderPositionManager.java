@@ -4,12 +4,16 @@ import com.myhomelibcorp.reader.api.ReaderDocument;
 import com.myhomelibcorp.reader.api.ReaderPosition;
 
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 public class ReaderPositionManager {
 
-    private final ConcurrentMap<String, ReaderPosition> positions = new ConcurrentHashMap<>();
+    private static final int DEFAULT_MAX_CACHED_POSITIONS = 512;
+    // Access-order LRU prevents one long-lived reader session from retaining an entry for every
+    // book ever opened. The optional provider remains authoritative for evicted positions.
+    private final Map<String, ReaderPosition> positions;
     private final PositionProvider provider;
 
     public interface PositionProvider {
@@ -18,11 +22,25 @@ public class ReaderPositionManager {
     }
 
     public ReaderPositionManager() {
-        this.provider = null;
+        this(null, DEFAULT_MAX_CACHED_POSITIONS);
     }
 
     public ReaderPositionManager(PositionProvider provider) {
+        this(provider, DEFAULT_MAX_CACHED_POSITIONS);
+    }
+
+    ReaderPositionManager(PositionProvider provider, int maxCachedPositions) {
+        if (maxCachedPositions < 1) {
+            throw new IllegalArgumentException("maxCachedPositions must be positive");
+        }
         this.provider = provider;
+        this.positions = Collections.synchronizedMap(new LinkedHashMap<String, ReaderPosition>(
+                Math.min(128, maxCachedPositions), 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, ReaderPosition> eldest) {
+                return size() > maxCachedPositions;
+            }
+        });
     }
 
     public Optional<ReaderPosition> loadPosition(String documentId) {

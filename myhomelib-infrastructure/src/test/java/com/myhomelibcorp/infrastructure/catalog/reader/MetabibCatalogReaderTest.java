@@ -24,6 +24,34 @@ class MetabibCatalogReaderTest {
     private final MetabibCatalogReader reader = new MetabibCatalogReader(new ObjectMapper());
 
     @Test
+    void headerFailuresReleaseAllContainerHandles() throws Exception {
+        for (String header : new String[]{"{invalid-json", "{\"schema\":\"wrong\"}", ""}) {
+            for (String suffix : new String[]{".jsonl", ".jsonl.gz", ".jsonl.zst", ".zip"}) {
+                Path source = temp.resolve("invalid" + suffix);
+                byte[] bytes = header.getBytes(StandardCharsets.UTF_8);
+                if (suffix.equals(".zip")) {
+                    try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(source))) {
+                        out.putNextEntry(new ZipEntry("dataset.jsonl"));
+                        out.write(bytes);
+                        out.closeEntry();
+                    }
+                } else {
+                    try (OutputStream raw = Files.newOutputStream(source);
+                         OutputStream out = suffix.endsWith(".gz") ? new GZIPOutputStream(raw)
+                                 : suffix.endsWith(".zst") ? new ZstdOutputStream(raw) : raw) {
+                        out.write(bytes);
+                    }
+                }
+                assertThatThrownBy(() -> reader.open(source)).isInstanceOf(RuntimeException.class);
+                Files.delete(source);
+                // On Windows an unclosed handle may leave the name delete-pending.
+                Files.writeString(source, "released", java.nio.file.StandardOpenOption.CREATE_NEW);
+                Files.delete(source);
+            }
+        }
+    }
+
+    @Test
     void readsJsonlGzipZstdAndZipStreamingContainers() throws Exception {
         String data = dataset();
         Path jsonl = temp.resolve("books.jsonl");

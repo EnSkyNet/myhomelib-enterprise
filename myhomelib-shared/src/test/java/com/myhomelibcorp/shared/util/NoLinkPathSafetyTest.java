@@ -60,12 +60,54 @@ class NoLinkPathSafetyTest {
     }
 
     @Test
+    void freshOutputCollisionRetainsFileAlreadyExistsSignal() throws Exception {
+        Path target = Files.writeString(tempDir.resolve("published.fb2"), "original");
+        assertThatThrownBy(() -> NoLinkPathSafety.openFreshOutputStream(target, "publish"))
+                .isInstanceOf(java.nio.file.FileAlreadyExistsException.class);
+        assertThat(Files.readString(target)).isEqualTo("original");
+    }
+
+    @Test
     void freshCopyCreatesCompleteIndependentFile() throws Exception {
         Path source = Files.writeString(tempDir.resolve("source.fb2"), "original data");
         Path target = tempDir.resolve("target.fb2");
         assertThat(NoLinkPathSafety.copyFreshFile(source, target, "book copy")).isEqualTo(target);
         Files.writeString(source, "changed afterwards");
         assertThat(Files.readString(target)).isEqualTo("original data");
+    }
+
+    @Test
+    void cancelledCopyRetainsPartialTargetOnlyWithoutFileIdentity() throws Exception {
+        Path source = tempDir.resolve("large-source.fb2");
+        byte[] chunk = new byte[1024 * 1024];
+        try (var out = Files.newOutputStream(source)) {
+            for (int i = 0; i < 12; i++) out.write(chunk);
+        }
+        Path destination = tempDir.resolve("cancelled-target.fb2");
+        var polls = new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(() -> NoLinkPathSafety.copyFreshFile(source, destination,
+                "large copy", () -> polls.incrementAndGet() >= 5))
+                .isInstanceOf(java.util.concurrent.CancellationException.class);
+        assertThat(polls.get()).isGreaterThanOrEqualTo(5);
+        assertThat(Files.size(source)).isEqualTo(12L * 1024 * 1024);
+        if (Files.exists(destination, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            var attrs = Files.readAttributes(destination, java.nio.file.attribute.BasicFileAttributes.class,
+                    java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            assertThat(attrs.isRegularFile()).isTrue();
+            assertThat(attrs.fileKey()).as("Only unprovable ownership permits retained partial bytes").isNull();
+            assertThat(attrs.size()).isLessThan(Files.size(source));
+        }
+    }
+
+    @Test
+    void cancellationBeforeCopyNeverCreatesDestination() throws Exception {
+        Path source = Files.writeString(tempDir.resolve("source-cancel.fb2"), "original");
+        Path destination = tempDir.resolve("destination-cancel.fb2");
+        assertThatThrownBy(() -> NoLinkPathSafety.copyFreshFile(source, destination,
+                "cancelled", () -> true))
+                .isInstanceOf(java.util.concurrent.CancellationException.class);
+        assertThat(destination).doesNotExist();
+        assertThat(Files.readString(source)).isEqualTo("original");
     }
 
     @Test

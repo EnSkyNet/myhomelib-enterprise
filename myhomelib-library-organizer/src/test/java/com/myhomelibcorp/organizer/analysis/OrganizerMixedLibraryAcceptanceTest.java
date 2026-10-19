@@ -113,8 +113,13 @@ class OrganizerMixedLibraryAcceptanceTest {
 
         OrganizationPlan plan = new PlanLibraryOrganizationUseCase(new CanonicalBookPathService()).plan(analysis, profile);
         assertThat(plan.actions()).hasSize(analysis.items().size());
-        Set<Path> targets = plan.actions().stream().map(action -> action.targetPath().toAbsolutePath().normalize()).collect(Collectors.toSet());
-        assertThat(targets).hasSize(plan.actions().size());
+        // Metadata from ODT/PDF/MOBI has no authoritative surname boundary. The planner
+        // must keep those three originals in place, not write guessed author folders.
+        assertThat(plan.actions()).filteredOn(a -> a.action() == com.myhomelibcorp.organizer.plan.OrganizationAction.KEEP_AS_IS)
+                .hasSize(3);
+        Set<Path> targets = plan.actions().stream().filter(action -> action.targetPath() != null)
+                .map(action -> action.targetPath().toAbsolutePath().normalize()).collect(Collectors.toSet());
+        assertThat(targets).hasSize(4);
         assertThat(plan.actions()).noneSatisfy(action -> assertThat(action.targetPath()).isEqualTo(occupied));
         assertThat(plan.actions()).anySatisfy(action -> {
             if (action.sourcePath().getFileName().toString().equals("first.fb2")) {
@@ -147,10 +152,16 @@ class OrganizerMixedLibraryAcceptanceTest {
 
         ApplyResult result = applyUseCase(journal, List.of()).apply(plan, () -> false);
 
-        assertThat(result.committed()).isEqualTo(plan.actions().size());
+        assertThat(result.committed()).isEqualTo(4);
+        assertThat(result.skipped()).isEqualTo(3);
         assertThat(journal.operation(plan.operationId()).state()).isEqualTo(OrganizationOperationState.COMPLETED);
-        assertThat(journal.items(plan.operationId())).allSatisfy(item -> assertThat(item.state()).isEqualTo(OrganizationItemState.COMMITTED));
+        assertThat(journal.items(plan.operationId())).filteredOn(item -> item.state() == OrganizationItemState.COMMITTED)
+                .hasSize(4);
         for (var action : plan.actions()) {
+            if (action.action() == com.myhomelibcorp.organizer.plan.OrganizationAction.KEEP_AS_IS) {
+                assertThat(Files.exists(action.sourcePath())).isTrue();
+                continue;
+            }
             assertThat(Files.isRegularFile(action.targetPath())).as("published target %s", action.targetPath()).isTrue();
             if (action.sourceEntry() == null || action.sourceEntry().isBlank()) {
                 assertThat(Files.exists(action.sourcePath())).as("moved source %s", action.sourcePath()).isFalse();
@@ -158,9 +169,12 @@ class OrganizerMixedLibraryAcceptanceTest {
         }
         assertThat(Files.isRegularFile(archive)).isTrue();
         assertThat(Files.isRegularFile(destination.resolve("One Author/Saga/01 - First.fb2"))).isTrue();
-        assertThat(Files.isRegularFile(destination.resolve("ODT Author/ODT Book.odt"))).isTrue();
-        assertThat(Files.isRegularFile(destination.resolve("PDF Author/PDF Book.pdf"))).isTrue();
-        assertThat(Files.isRegularFile(destination.resolve("MOBI Author/MOBI Book.mobi"))).isTrue();
+        assertThat(Files.exists(destination.resolve("ODT Author/ODT Book.odt"))).isFalse();
+        assertThat(Files.exists(destination.resolve("PDF Author/PDF Book.pdf"))).isFalse();
+        assertThat(Files.exists(destination.resolve("MOBI Author/MOBI Book.mobi"))).isFalse();
+        assertThat(Files.isRegularFile(source.resolve("nested/b/book.odt"))).isTrue();
+        assertThat(Files.isRegularFile(source.resolve("nested/c/book.pdf"))).isTrue();
+        assertThat(Files.isRegularFile(source.resolve("nested/d/book.mobi"))).isTrue();
         assertThat(Files.isRegularFile(destination.resolve("_Невідомий автор/Loose notes.txt"))).isTrue();
     }
 

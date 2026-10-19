@@ -15,5 +15,8 @@ class AudioPositionTest {
         assertThat(AudioPosition.parse("0:100:2:0")).isEmpty();
         assertThat(AudioPosition.parse("audio:oops:1:2")).isEmpty();
         assertThat(AudioPosition.parse(null)).isEmpty();
+        assertThat(AudioPosition.parse("audio:-100:1:2")).isEmpty();
+        assertThat(AudioPosition.parse("audio:100:-1:2")).isEmpty();
+        assertThat(AudioPosition.parse("audio:100:1:-2")).isEmpty();
     }
 }

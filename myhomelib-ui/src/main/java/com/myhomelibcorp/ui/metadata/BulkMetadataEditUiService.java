@@ -273,7 +273,7 @@ public class BulkMetadataEditUiService {
         for (var item : preview.sample()) {
             if (item.changedFields().isEmpty()) continue;
             changedSample++;
-            text.append(item.bookId()).append("\n");
+            text.append(i18n.format("ui.bulkedit.preview_book", changedSample)).append("\n");
             for (BatchMetadataEditField field : item.changedFields()) {
                 text.append("  ").append(fieldLabel(field)).append(": ")
                         .append(value(item.before(), field)).append(" → ")

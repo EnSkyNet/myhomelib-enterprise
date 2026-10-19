@@ -57,6 +57,37 @@ class ReaderPositionManagerTest {
                 .isEqualTo(new ReaderPosition(1, 99, 0, 0));
     }
 
+    @Test
+    void evictsLeastRecentlyUsedPositionsButRetainsMostRecent() {
+        ReaderPositionManager bounded = new ReaderPositionManager(null, 3);
+        bounded.savePosition("a", ReaderPosition.start());
+        bounded.savePosition("b", new ReaderPosition(0, 2, 0, 0));
+        bounded.savePosition("c", new ReaderPosition(0, 3, 0, 0));
+        assertThat(bounded.loadPosition("a")).isPresent(); // refresh access order
+        bounded.savePosition("d", new ReaderPosition(0, 4, 0, 0));
+        assertThat(bounded.getCurrentPosition("b")).isEmpty();
+        assertThat(bounded.getCurrentPosition("a")).isPresent();
+        assertThat(bounded.getCurrentPosition("c")).isPresent();
+        assertThat(bounded.getCurrentPosition("d")).isPresent();
+    }
+
+    @Test
+    void reloadsEvictedPositionsFromPersistentProvider() {
+        java.util.Map<String, ReaderPosition> persistent = new java.util.HashMap<>();
+        ReaderPositionManager.PositionProvider provider = new ReaderPositionManager.PositionProvider() {
+            public java.util.Optional<ReaderPosition> load(String id) {
+                return java.util.Optional.ofNullable(persistent.get(id));
+            }
+            public void save(String id, ReaderPosition pos) { persistent.put(id, pos); }
+        };
+        ReaderPositionManager bounded = new ReaderPositionManager(provider, 1);
+        ReaderPosition saved = new ReaderPosition(0, 89, 1, 0);
+        bounded.savePosition("book-a", saved);
+        bounded.savePosition("book-b", ReaderPosition.start());
+        assertThat(bounded.getCurrentPosition("book-a")).isEmpty();
+        assertThat(bounded.loadPosition("book-a")).contains(saved);
+    }
+
     private static CompactReaderDocument document(long textLength, List<ChapterIndex> chapters) {
         return CompactReaderDocument.builder()
                 .chapters(chapters)

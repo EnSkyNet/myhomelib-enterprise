@@ -464,7 +464,8 @@
                                     <suppressionFiles>
                                         <suppressionFile>${maven.multiModuleProjectDirectory}/security/dependency-check-suppressions.xml</suppressionFile>
                                     </suppressionFiles>
-                                    <nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>
+                                    <dataDirectory>${user.home}/.m2/dependency-check-data-v12</dataDirectory>
+                                    <nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
                                     <skipTestScope>true</skipTestScope>
                                     <ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
                                 </configuration>

@@ -3,6 +3,7 @@ package com.myhomelibcorp.ui.collection;
 import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.ui.operation.OperationCenterEntry;
 import com.myhomelibcorp.ui.operation.OperationKind;
+import com.myhomelibcorp.ui.service.UiText;
 
 import java.util.Comparator;
 import java.util.List;
@@ -31,8 +32,8 @@ public final class CollectionRuntimeStateResolver {
 
         OperationCenterEntry latest = relevant.getFirst();
         if (latest.stage() == OperationStage.FAILED) {
-            String detail = !latest.errorMessage().isBlank() ? latest.errorMessage() : latest.currentItem();
-            return new CollectionRuntimeStatus(CollectionRuntimeState.ERROR, -1.0, detail);
+            return new CollectionRuntimeStatus(CollectionRuntimeState.ERROR, -1.0,
+                    UiText.text("common.error.operation_failed") + " " + UiText.text("common.error.details_in_log"));
         }
         return CollectionRuntimeStatus.ready();
     }
@@ -56,7 +57,7 @@ public final class CollectionRuntimeStateResolver {
                 default -> CollectionRuntimeState.READY;
             };
         }
-        return new CollectionRuntimeStatus(state, entry.fraction(), entry.currentItem());
+        return new CollectionRuntimeStatus(state, entry.fraction(), "");
     }
 
     private static boolean affectsCollectionState(OperationCenterEntry entry) {

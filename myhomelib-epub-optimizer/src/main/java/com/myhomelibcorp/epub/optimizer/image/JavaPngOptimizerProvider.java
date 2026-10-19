@@ -71,7 +71,9 @@ public final class JavaPngOptimizerProvider implements ImageOptimizerProvider {
         Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName("png");
         if (!writers.hasNext()) return Optional.empty();
         ImageWriter writer = writers.next();
-        try (ImageOutputStream output = ImageIO.createImageOutputStream(EpubPathSafety.openFreshOutputStream(candidate, "PNG optimization candidate"))) {
+        // ImageOutputStream does not own/close the supplied OutputStream.
+        try (var raw = EpubPathSafety.openFreshOutputStream(candidate, "PNG optimization candidate");
+             ImageOutputStream output = ImageIO.createImageOutputStream(raw)) {
             if (output == null) return Optional.empty();
             writer.setOutput(output);
             ImageWriteParam param = writer.getDefaultWriteParam();

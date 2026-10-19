@@ -40,6 +40,29 @@ public final class GetLibraryOrganizationStatusUseCase {
         this.manifestReader=Objects.requireNonNull(manifestReader,"manifestReader");
     }
 
+    /**
+     * Lightweight recovery overview for the organizer wizard.
+     *
+     * This is NOT an authorization for rollback: it intentionally never checks
+     * individual source/target/backup files or their hashes. Full classify()
+     * must be called when the user explicitly requests recovery.
+     */
+    public List<LibraryOrganizationStatus> incompleteOverview() {
+        List<OrganizationJournalOperation> database = journal.incompleteOperations();
+        List<LibraryOrganizationStatus> result = new ArrayList<>();
+        Set<UUID> knownIds = new HashSet<>();
+        for (OrganizationJournalOperation operation : database) {
+            knownIds.add(operation.operationId());
+            result.add(new LibraryOrganizationStatus(operation, List.of(), false, true,
+                    RecoveryDisposition.MANUAL_REVIEW, 0, 0, 0, false));
+        }
+        // Orphan manifests have no authoritative DB journal; they remain review-only.
+        result.addAll(orphanManifestStatuses(knownIds));
+        result.sort(Comparator.comparing((LibraryOrganizationStatus status) -> status.operation().startedAt(),
+                Comparator.nullsLast(Comparator.naturalOrder())).reversed());
+        return List.copyOf(result);
+    }
+
     public List<LibraryOrganizationStatus> incomplete(){
         List<LibraryOrganizationStatus> result = new ArrayList<>();
         List<OrganizationJournalOperation> database = journal.incompleteOperations();
@@ -129,7 +152,13 @@ public final class GetLibraryOrganizationStatusUseCase {
         int ambiguous = 0;
         for (OrganizationJournalItem item : items) {
             switch (item.state()) {
-                case COMMITTED -> committed++;
+                // A COMMITTED journal flag proves only that Apply once finished;
+                // the files can have changed after a crash or across a restart.
+                // Never offer Undo without validating the current physical state.
+                case COMMITTED -> {
+                    if (rollbackIsDeterministic(item)) committed++;
+                    else ambiguous++;
+                }
                 case PLANNED, STAGING -> {
                     if (untouchedOrOnlyStaged(item)) recoverablePending++;
                     else ambiguous++;
@@ -158,66 +187,13 @@ public final class GetLibraryOrganizationStatusUseCase {
                 disposition, committed, recoverablePending, ambiguous, manifest);
     }
 
-    private boolean manifestConsistent(OrganizationJournalOperation operation, List<OrganizationJournalItem> items, Path manifestPath) {
+    private boolean manifestConsistent(OrganizationJournalOperation operation,
+                                       List<OrganizationJournalItem> items, Path manifestPath) {
         try {
-            LibraryOperationCrashSnapshot snapshot = manifestReader.read(manifestPath);
-            if (!operation.operationId().equals(snapshot.operationId())) return false;
-            if (!samePath(operation.sourceRoot(), snapshot.sourceRoot()) || !samePath(operation.destinationRoot(), snapshot.destinationRoot())) return false;
-            if (!safe(operation.profileId()).equals(safe(snapshot.profileId()))) return false;
-            if (!operationStateCanLag(operation.state(), snapshot.state())) return false;
-            if (snapshot.items().size() != items.size()) return false;
-            Map<UUID, LibraryOperationCrashSnapshot.Item> byId = new HashMap<>();
-            for (LibraryOperationCrashSnapshot.Item item : snapshot.items()) {
-                if (byId.put(item.itemId(), item) != null) return false;
-            }
-            for (OrganizationJournalItem item : items) {
-                LibraryOperationCrashSnapshot.Item fs = byId.get(item.itemId());
-                if (fs == null || !itemConsistent(item, fs)) return false;
-            }
-            return true;
+            return OrganizerManifestJournalConsistency.matches(operation, items, manifestReader.read(manifestPath));
         } catch (Exception invalidManifest) {
             return false;
         }
-    }
-
-    /** The DB item is written first, then the filesystem manifest; therefore the manifest may lag, never lead. */
-    private boolean itemConsistent(OrganizationJournalItem db, LibraryOperationCrashSnapshot.Item fs) {
-        if (!safe(db.action()).equals(safe(fs.action()))) return false;
-        if (!samePath(db.sourcePath(), fs.sourcePath()) || !safe(db.sourceEntry()).equals(safe(fs.sourceEntry()))
-                || !samePath(db.targetPath(), fs.targetPath())) return false;
-        if (!fieldCanLag(db.sourceSha256(), fs.sourceSha256()) || !fieldCanLag(db.targetSha256(), fs.targetSha256())) return false;
-        if (fs.backupPath() != null && !samePath(db.backupPath(), fs.backupPath())) return false;
-        return itemStateCanLag(db.state(), fs.state());
-    }
-
-    private boolean fieldCanLag(String db, String fs) {
-        String persisted = safe(db), manifest = safe(fs);
-        return manifest.isBlank() || (!persisted.isBlank() && persisted.equalsIgnoreCase(manifest));
-    }
-
-    private boolean itemStateCanLag(OrganizationItemState db, OrganizationItemState fs) {
-        if (db == fs) return true;
-        return switch (db) {
-            case PLANNED -> false;
-            case STAGING -> fs == OrganizationItemState.PLANNED;
-            case VALIDATED -> fs == OrganizationItemState.PLANNED || fs == OrganizationItemState.STAGING;
-            case COMMITTED -> fs == OrganizationItemState.PLANNED || fs == OrganizationItemState.STAGING || fs == OrganizationItemState.VALIDATED;
-            case SKIPPED -> fs == OrganizationItemState.PLANNED;
-            case FAILED -> fs == OrganizationItemState.PLANNED || fs == OrganizationItemState.STAGING || fs == OrganizationItemState.VALIDATED;
-            case ROLLED_BACK -> fs != OrganizationItemState.ROLLED_BACK;
-        };
-    }
-
-    private boolean operationStateCanLag(OrganizationOperationState db, OrganizationOperationState fs) {
-        if (db == fs) return true;
-        return switch (db) {
-            case PLANNED -> false;
-            case APPLYING -> fs == OrganizationOperationState.PLANNED;
-            case COMPLETED -> fs == OrganizationOperationState.PLANNED || fs == OrganizationOperationState.APPLYING;
-            case FAILED -> fs == OrganizationOperationState.PLANNED || fs == OrganizationOperationState.APPLYING;
-            case CANCELLED -> fs == OrganizationOperationState.PLANNED || fs == OrganizationOperationState.APPLYING;
-            case ROLLED_BACK -> fs != OrganizationOperationState.ROLLED_BACK;
-        };
     }
 
     private boolean samePath(Path left, Path right) {
@@ -225,7 +201,6 @@ public final class GetLibraryOrganizationStatusUseCase {
         return left.toAbsolutePath().normalize().equals(right.toAbsolutePath().normalize());
     }
 
-    private String safe(String value) { return value == null ? "" : value; }
 
     private boolean untouchedOrOnlyStaged(OrganizationJournalItem item) {
         boolean originalStillPresent = sourceMatches(item);
@@ -253,7 +228,12 @@ public final class GetLibraryOrganizationStatusUseCase {
         if (backup && !matches(item.backupPath(), item.sourceSha256())) return false;
 
         return switch (action) {
-            case RENAME, MOVE, MOVE_AND_RENAME -> target || source;
+            // A crash/restart may leave two identical copies at the old and new paths.
+            // Undo deliberately refuses to overwrite an existing source, so do not
+            // advertise automatic rollback for this ambiguous two-file state.
+            // For an already-restored move, the verified source alone is sufficient.
+            case RENAME, MOVE, MOVE_AND_RENAME ->
+                    !sameSourceTarget && ((target && !source) || (source && !targetFile));
             case EXTRACT -> (!target || hasHash(item.targetSha256())) && source;
             case CONVERT, CONVERT_AND_MOVE -> {
                 // Archive-entry sources are never removed; ordinary sources may require a verified recovery backup.

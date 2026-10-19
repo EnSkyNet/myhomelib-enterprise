@@ -9,6 +9,8 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -20,6 +22,7 @@ import java.util.HexFormat;
  */
 public final class SafeFilePrimitives {
     private static final AtomicLong HARDLINK_FALLBACKS = new AtomicLong();
+    private static final UnsupportedHardLinkVolumes UNSUPPORTED_VOLUMES = new UnsupportedHardLinkVolumes();
 
     private SafeFilePrimitives() { }
 
@@ -57,7 +60,13 @@ public final class SafeFilePrimitives {
      * @return true for atomic hard-link publication; false for the safe copy fallback
      */
     public static boolean publishFreshNoReplace(Path prepared, Path target, String role) throws IOException {
-        return publishFreshNoReplace(prepared, target, role, Files::createLink);
+        return publishFreshNoReplace(prepared, target, role, () -> false);
+    }
+
+    /** Cancellation-aware publication; on unsupported-hardlink volumes copy only to a fresh path. */
+    public static boolean publishFreshNoReplace(Path prepared, Path target, String role,
+            java.util.function.BooleanSupplier cancelled) throws IOException {
+        return publishFreshNoReplace(prepared, target, role, Files::createLink, UNSUPPORTED_VOLUMES, cancelled);
     }
 
     @FunctionalInterface
@@ -68,24 +77,83 @@ public final class SafeFilePrimitives {
     // Package-scoped seam lets tests reproduce Windows' ERROR_INVALID_FUNCTION on Linux.
     static boolean publishFreshNoReplace(Path prepared, Path target, String role,
                                          HardLinkCreator hardLinkCreator) throws IOException {
+        return publishFreshNoReplace(prepared, target, role, hardLinkCreator, null);
+    }
+
+    /**
+     * Cache only verified unsupported-hardlink errors for the same mounted volume.
+     * A changed FileStore name/type produces a new key. Cache misses and file-store
+     * inspection failures always take the usual checked hard-link path; they never
+     * turn an access-denied or other unexpected filesystem error into success.
+     */
+    static final class UnsupportedHardLinkVolumes {
+        private static final int MAX_VOLUMES = 64;
+        private final Set<VolumeKey> unsupported = ConcurrentHashMap.newKeySet();
+
+        boolean isUnsupported(VolumeKey key) {
+            return key != null && unsupported.contains(key);
+        }
+
+        void remember(VolumeKey key) {
+            if (key == null) return;
+            if (unsupported.size() >= MAX_VOLUMES) unsupported.clear();
+            unsupported.add(key);
+        }
+    }
+
+    private record VolumeKey(String root, String storeName, String storeType) { }
+
+    private static VolumeKey volumeKey(Path target) {
+        try {
+            Path absolute = target.toAbsolutePath().normalize();
+            Path parent = absolute.getParent();
+            if (parent == null) return null;
+            var store = Files.getFileStore(parent);
+            // The root separates Windows drive letters, and FileStore separates
+            // mounted filesystems on Unix when multiple mounts share a root.
+            return new VolumeKey(String.valueOf(absolute.getRoot()), store.name(), store.type());
+        } catch (IOException | SecurityException error) {
+            return null; // fail open to the original hard-link check, not to publication
+        }
+    }
+
+    static boolean publishFreshNoReplace(Path prepared, Path target, String role,
+                                         HardLinkCreator hardLinkCreator,
+                                         UnsupportedHardLinkVolumes knownUnsupported) throws IOException {
+        return publishFreshNoReplace(prepared, target, role, hardLinkCreator, knownUnsupported, () -> false);
+    }
+
+    static boolean publishFreshNoReplace(Path prepared, Path target, String role,
+                                         HardLinkCreator hardLinkCreator,
+                                         UnsupportedHardLinkVolumes knownUnsupported,
+                                         java.util.function.BooleanSupplier cancelled) throws IOException {
+        java.util.Objects.requireNonNull(cancelled, "cancelled");
+        if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+            throw new java.util.concurrent.CancellationException("File publication cancelled");
+        }
         if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             throw new FileAlreadyExistsException(target.toString());
         }
-        try {
-            hardLinkCreator.create(target, prepared);
-            return true;
-        } catch (FileSystemException error) {
-            if (!isUnsupportedHardLink(error)) throw error;
-            logHardLinkFallback(role, target, error.getReason());
-        } catch (UnsupportedOperationException error) {
-            logHardLinkFallback(role, target, error.getClass().getSimpleName());
+        VolumeKey volume = knownUnsupported == null ? null : volumeKey(target);
+        if (knownUnsupported == null || !knownUnsupported.isUnsupported(volume)) {
+            try {
+                hardLinkCreator.create(target, prepared);
+                return true;
+            } catch (FileSystemException error) {
+                if (!isUnsupportedHardLink(error)) throw error;
+                if (knownUnsupported != null) knownUnsupported.remember(volume);
+                logHardLinkFallback(role, target, error.getReason());
+            } catch (UnsupportedOperationException error) {
+                if (knownUnsupported != null) knownUnsupported.remember(volume);
+                logHardLinkFallback(role, target, error.getClass().getSimpleName());
+            }
         }
         // Without REPLACE_EXISTING, Files.copy creates a new destination and refuses
         // an occupied path. A normal Files.move could replace a racing destination
         // on some platforms, which is unacceptable for an organizer's book library.
         // This deliberately chooses integrity over atomic visibility on volumes
         // where hard links are unsupported.
-        Files.copy(prepared, target, LinkOption.NOFOLLOW_LINKS);
+        NoLinkPathSafety.copyFreshFile(prepared, target, role + " fallback", cancelled);
         return false;
     }
 

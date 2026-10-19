@@ -122,6 +122,138 @@ class ContentIndexingQueueServiceTest {
     }
 
     @Test
+    void duplicateTaskIdIsIdempotentAndNeverCreatesTwoPendingEntries() throws Exception {
+        CountDownLatch processed = new CountDownLatch(1);
+        AtomicInteger calls = new AtomicInteger();
+        ContentIndexingQueueService queue = queue((task, control) -> {
+            calls.incrementAndGet();
+            processed.countDown();
+            return ContentIndexingOutcome.completed();
+        }, new MemoryCheckpoint(), () -> false, IndexingResourceProfile.ECO, 2);
+        queue.pause();
+
+        ContentIndexingTask task = task("same-id", ContentIndexingPriority.NORMAL);
+        queue.enqueue(task);
+        queue.enqueue(task);
+
+        assertThat(queue.snapshot().pending()).isEqualTo(1);
+        queue.resume();
+        assertThat(processed.await(3, TimeUnit.SECONDS)).isTrue();
+        await(() -> queue.outstandingTasks().isEmpty());
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void duplicateTaskIdWithDifferentPayloadIsRejectedWithoutMutatingQueue() {
+        ContentIndexingQueueService queue = queue((task, control) -> ContentIndexingOutcome.completed(),
+                new MemoryCheckpoint(), () -> false, IndexingResourceProfile.ECO, 2);
+        queue.pause();
+
+        ContentIndexingTask original = task("same-id", ContentIndexingPriority.NORMAL);
+        ContentIndexingTask conflicting = new ContentIndexingTask(
+                "same-id", "c1", "different-book", "different-artifact",
+                "/tmp/different.txt", "txt", ContentIndexingPriority.HIGH, Instant.parse("2026-09-12T13:00:00Z"));
+        queue.enqueue(original);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> queue.enqueue(conflicting))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("task ID");
+
+        assertThat(queue.snapshot().pending()).isEqualTo(1);
+        assertThat(queue.outstandingTasks()).containsExactly(original);
+    }
+
+    @Test
+    void enqueueAllRejectsConflictingTaskIdsBeforePublishingAnyTask() {
+        ContentIndexingQueueService queue = queue((task, control) -> ContentIndexingOutcome.completed(),
+                new MemoryCheckpoint(), () -> false, IndexingResourceProfile.ECO, 2);
+        queue.pause();
+
+        ContentIndexingTask first = task("batch-id", ContentIndexingPriority.NORMAL);
+        ContentIndexingTask conflicting = new ContentIndexingTask(
+                "batch-id", "c1", "another-book", "another-artifact",
+                "/tmp/another.txt", "txt", ContentIndexingPriority.HIGH, Instant.parse("2026-09-12T15:00:00Z"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> queue.enqueueAll(List.of(first, conflicting)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("conflicting task ID");
+
+        assertThat(queue.snapshot().pending()).isZero();
+        assertThat(queue.outstandingTasks()).isEmpty();
+    }
+
+    @Test
+    void restoreRejectsDuplicateTaskIdsAndDuplicateArtifactWork() {
+        MemoryCheckpoint checkpoint = new MemoryCheckpoint();
+        ContentIndexingTask first = task("one", ContentIndexingPriority.NORMAL);
+        ContentIndexingTask sameId = task("one", ContentIndexingPriority.HIGH);
+        ContentIndexingTask sameArtifact = new ContentIndexingTask(
+                "two", "c1", "book-one", "artifact-one",
+                "/tmp/two.txt", "txt", ContentIndexingPriority.NORMAL, Instant.parse("2026-09-12T13:00:00Z"));
+
+        checkpoint.states.put("c1", new ContentIndexQueueCheckpoint("c1", true, false, List.of(first, sameId)));
+        ContentIndexingQueueService queue = queue((task, control) -> ContentIndexingOutcome.completed(),
+                checkpoint, () -> false, IndexingResourceProfile.ECO, 2);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> queue.restore("c1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("duplicate task ID");
+
+        checkpoint.states.put("c2", new ContentIndexQueueCheckpoint("c2", true, false,
+                List.of(new ContentIndexingTask("three", "c2", "book-two", "artifact-two",
+                                "/tmp/three.txt", "txt", ContentIndexingPriority.NORMAL, Instant.parse("2026-09-12T13:00:00Z")),
+                        new ContentIndexingTask("four", "c2", "book-two", "artifact-two",
+                                "/tmp/four.txt", "txt", ContentIndexingPriority.NORMAL, Instant.parse("2026-09-12T14:00:00Z")))));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> queue.restore("c2"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("duplicate artifact work");
+    }
+
+    @org.junit.jupiter.api.RepeatedTest(10)
+    void freshnessCheckpointCannotClearWhileOlderAsyncSnapshotIsStillWriting() throws Exception {
+        OrderingCheckpoint checkpoint = new OrderingCheckpoint();
+        CountDownLatch processed = new CountDownLatch(1);
+        var worker = new java.util.concurrent.atomic.AtomicReference<Thread>();
+        ContentIndexingQueueService queue = queue((task, control) -> {
+            worker.set(Thread.currentThread());
+            processed.countDown();
+            return ContentIndexingOutcome.completed();
+        }, checkpoint, () -> false, IndexingResourceProfile.ECO, 2);
+        queue.pause();
+
+        try (var caller = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+            try {
+                queue.enqueue(task("checkpoint-race", ContentIndexingPriority.NORMAL));
+                assertThat(checkpoint.nonEmptySaveStarted.await(2, TimeUnit.SECONDS)).isTrue();
+                // resume() dispatches synchronously as well as waking the coordinator.
+                // It can wait for enqueueLock held by a worker finalizing against our
+                // blocked checkpoint. The test thread must remain free to release it.
+                var resumed = caller.submit(queue::resume);
+                assertThat(processed.await(2, TimeUnit.SECONDS)).isTrue();
+                var threads = java.lang.management.ManagementFactory.getThreadMXBean();
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                java.lang.management.ThreadInfo info;
+                do {
+                    info = threads.getThreadInfo(worker.get().threadId(), 20);
+                    if (info != null && info.getThreadState() == Thread.State.BLOCKED
+                            && info.getLockOwnerId() == checkpoint.writer.threadId()) break;
+                    java.util.concurrent.locks.LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
+                } while (System.nanoTime() < deadline);
+                assertThat(info).as("Worker must reach the checkpoint barrier").isNotNull();
+                assertThat(info.getThreadState()).isEqualTo(Thread.State.BLOCKED);
+                assertThat(info.getLockOwnerId()).isEqualTo(checkpoint.writer.threadId());
+                assertThat(checkpoint.clearObserved.getCount()).isEqualTo(1);
+                checkpoint.releaseNonEmptySave.countDown();
+                resumed.get(2, TimeUnit.SECONDS);
+                assertThat(checkpoint.clearObserved.await(2, TimeUnit.SECONDS)).isTrue();
+                assertThat(checkpoint.nonEmptySaveAfterClear).isFalse();
+                assertThat(checkpoint.writes).startsWith("save-start", "save-end", "clear");
+            } finally {
+                checkpoint.releaseNonEmptySave.countDown();
+            }
+        }
+    }
+
+    @Test
     void cancelSignalsActiveProcessorAndRemovesTask() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch observedCancel = new CountDownLatch(1);
@@ -234,7 +366,7 @@ class ContentIndexingQueueServiceTest {
         release.countDown();
     }
 
-    private ContentIndexingQueueService queue(ContentIndexingTaskProcessor processor, MemoryCheckpoint checkpoint,
+    private ContentIndexingQueueService queue(ContentIndexingTaskProcessor processor, ContentIndexQueueCheckpointPort checkpoint,
                                                PowerStatePort power, IndexingResourceProfile profile, int processors) {
         MemorySettings settings = new MemorySettings();
         IndexingPerformanceSettingsService settingsService = new IndexingPerformanceSettingsService(settings);
@@ -281,6 +413,42 @@ class ContentIndexingQueueServiceTest {
         }
         @Override public void markStale(String collectionId) { state = ContentIndexHealth.State.STALE; }
         @Override public void markFresh(String collectionId) { state = ContentIndexHealth.State.READY; }
+    }
+
+    static final class OrderingCheckpoint implements ContentIndexQueueCheckpointPort {
+        final CountDownLatch nonEmptySaveStarted = new CountDownLatch(1);
+        final CountDownLatch releaseNonEmptySave = new CountDownLatch(1);
+        final CountDownLatch clearObserved = new CountDownLatch(1);
+        volatile boolean nonEmptySaveAfterClear;
+        volatile Thread writer;
+        final List<String> writes = new CopyOnWriteArrayList<>();
+
+        @Override
+        public Optional<ContentIndexQueueCheckpoint> load(String collectionId) { return Optional.empty(); }
+
+        @Override
+        public void save(ContentIndexQueueCheckpoint checkpoint) {
+            boolean nonEmpty = checkpoint != null && !checkpoint.tasks().isEmpty();
+            if (nonEmpty) {
+                writer = Thread.currentThread();
+                writes.add("save-start");
+                if (clearObserved.getCount() == 0) nonEmptySaveAfterClear = true;
+                nonEmptySaveStarted.countDown();
+                try {
+                    releaseNonEmptySave.await(); // Always released by the test's finally block.
+                    writes.add("save-end");
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(interrupted);
+                }
+            }
+        }
+
+        @Override
+        public void clear(String collectionId) {
+            writes.add("clear");
+            clearObserved.countDown();
+        }
     }
 
     static final class MemoryCheckpoint implements ContentIndexQueueCheckpointPort {

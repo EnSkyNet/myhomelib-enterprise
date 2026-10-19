@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.settings.ApplicationSettingsQueryService;
 import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import com.myhomelibcorp.epub.optimizer.EpubOptimizationProfile;
 import com.myhomelibcorp.organizer.analysis.AnalyzeLibraryOrganizationUseCase;
+import com.myhomelibcorp.organizer.analysis.AuthorFolderPreviewPort;
 import com.myhomelibcorp.organizer.analysis.OrganizationAnalysis;
 import com.myhomelibcorp.organizer.analysis.OrganizationAnalysisProgress;
 import com.myhomelibcorp.organizer.analysis.OrganizerAnalysisItem;
@@ -80,6 +81,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -96,6 +98,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class LibraryOrganizerUiService {
     private final ApplicationState appState;
+    private final AuthorFolderPreviewPort authorFolderPreview;
     private final AnalyzeLibraryOrganizationUseCase analyzer;
     private final PlanLibraryOrganizationUseCase planner;
     private final ApplyLibraryOrganizationUseCase applyUseCase;
@@ -110,13 +113,24 @@ public class LibraryOrganizerUiService {
     // Multiple organizer windows share at most one expensive recovery scan.
     private final Object recoveryScanMonitor = new Object();
     private CompletableFuture<List<LibraryOrganizationStatus>> sharedRecoveryScan;
+    private CompletableFuture<List<LibraryOrganizationStatus>> sharedDetailedRecoveryScan;
 
     private CompletableFuture<List<LibraryOrganizationStatus>> scanRecoveryOffFx() {
         synchronized (recoveryScanMonitor) {
             if (sharedRecoveryScan != null && !sharedRecoveryScan.isDone()) return sharedRecoveryScan;
             sharedRecoveryScan = background.submitCollectionScopedOperation(
-                    com.myhomelibcorp.application.operation.LibraryOperationType.QUERY, statusUseCase::incomplete);
+                    com.myhomelibcorp.application.operation.LibraryOperationType.QUERY, statusUseCase::incompleteOverview);
             return sharedRecoveryScan;
+        }
+    }
+
+    /** Full content-integrity checks only when the user chooses to inspect recovery. */
+    private CompletableFuture<List<LibraryOrganizationStatus>> scanRecoveryDetailsOffFx() {
+        synchronized (recoveryScanMonitor) {
+            if (sharedDetailedRecoveryScan != null && !sharedDetailedRecoveryScan.isDone()) return sharedDetailedRecoveryScan;
+            sharedDetailedRecoveryScan = background.submitCollectionScopedOperation(
+                    com.myhomelibcorp.application.operation.LibraryOperationType.QUERY, statusUseCase::incomplete);
+            return sharedDetailedRecoveryScan;
         }
     }
 
@@ -142,6 +156,12 @@ public class LibraryOrganizerUiService {
         private final TextField destinationField = new TextField();
         private final Label recoveryBanner = new Label();
         private final Button recoveryButton = new Button(UiText.text("ui.organizer.recovery.review"));
+        private final Button authorPreviewButton = new Button(UiText.text("ui.organizer.author_preview.button"));
+        private final Button authorBatchButton = new Button(UiText.text("ui.organizer.author_batch.button"));
+        private final Button authorSelectionButton = new Button(UiText.text("ui.organizer.author_selection.button"));
+        private final OrganizerAuthorFolderActions authorFolderActions = new OrganizerAuthorFolderActions(
+                appState, authorFolderPreview, background, dialogs, fileChooserService,
+                stage, currentCollectionSource, authorPreviewButton, authorBatchButton, authorSelectionButton);
         private List<LibraryOrganizationStatus> incompleteOperations = List.of();
         private long recoveryRequestVersion;
         private boolean recoveryLoading;
@@ -288,14 +308,19 @@ public class LibraryOrganizerUiService {
 
             VBox box = pageBox();
             Label intro = wrap(UiText.text("ui.organizer.source.info"));
+            authorPreviewButton.setOnAction(event -> authorFolderActions.previewAuthorFolder());
+            authorBatchButton.setOnAction(event -> authorFolderActions.auditAuthorFolders());
+            authorSelectionButton.setOnAction(event -> authorFolderActions.prepareOfflineAuthorRepair());
             box.getChildren().addAll(intro, recovery, currentCollectionSource, externalFolderSource, new Separator(),
+                    authorBatchButton, authorSelectionButton,
                     row(UiText.text("ui.organizer.source.root"), fieldWithButton(sourceField, chooseSource)),
                     row(UiText.text("ui.organizer.source.destination"), fieldWithButton(destinationField, chooseDestination)),
-                    wrap(UiText.text("ui.organizer.source.safety")));
+                    authorPreviewButton, wrap(UiText.text("ui.organizer.source.safety")));
             pages.add(scroll(box));
             refreshRecoveryState();
         }
 
+        /** Optional, read-only inspection of a single folder: all SQL and disk access is off JavaFX. */
         private void configureRulesPage() {
             for (OrganizerProfile profile : OrganizerProfiles.builtIns()) {
                 profileBox.getItems().add(new ProfileChoice(profile, profileLabel(profile.id())));
@@ -447,6 +472,7 @@ public class LibraryOrganizerUiService {
         }
 
         private void refreshRecoveryState() {
+            // Fast overview avoids per-book file checks; full verification happens on explicit review.
             // Classifying a crash journal performs Files.exists/readAttributes and hashes on
             // potentially unavailable Windows volumes. NEVER call incomplete() on JavaFX.
             long generation = ++recoveryRequestVersion;
@@ -457,9 +483,9 @@ public class LibraryOrganizerUiService {
             recoveryButton.setVisible(false);
             recoveryButton.setManaged(false);
             long started = System.nanoTime();
-            log.info("ORGANIZER_RECOVERY_SCAN_START");
+            log.info("ORGANIZER_RECOVERY_OVERVIEW_START");
             scanRecoveryOffFx().whenComplete((result, failure) -> UiExecutor.runOnUiThread(() -> {
-                        log.info("ORGANIZER_RECOVERY_SCAN_FINISH durationMs={} count={} success={}",
+                        log.info("ORGANIZER_RECOVERY_OVERVIEW_FINISH durationMs={} count={} success={}",
                                 java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started),
                                 result == null ? 0 : result.size(), failure == null);
                         if (generation != recoveryRequestVersion) return;
@@ -484,22 +510,54 @@ public class LibraryOrganizerUiService {
 
         private void reviewRecovery() {
             if (recoveryLoading || incompleteOperations.isEmpty() || busy) return;
-            LibraryOrganizationStatus selected = dialogs.showChoiceDialog(incompleteOperations, incompleteOperations.getFirst(),
+            recoveryLoading = true;
+            recoveryButton.setDisable(true);
+            recoveryBanner.setText(UiText.text("ui.fxml.book_workspace.loading"));
+            long generation = ++recoveryRequestVersion;
+            long started = System.nanoTime();
+            log.info("ORGANIZER_RECOVERY_DETAILED_SCAN_START");
+            scanRecoveryDetailsOffFx().whenComplete((statuses, failure) -> UiExecutor.runOnUiThread(() -> {
+                log.info("ORGANIZER_RECOVERY_DETAILED_SCAN_FINISH durationMs={} count={} success={}",
+                        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started),
+                        statuses == null ? 0 : statuses.size(), failure == null);
+                if (generation != recoveryRequestVersion) return;
+                recoveryLoading = false;
+                if (failure != null) {
+                    log.warn("ORGANIZER_RECOVERY_DETAILED_SCAN_FAILED", failure);
+                    recoveryBanner.setText(UiText.text("ui.organizer.recovery.read_failed") + " "
+                            + UiExceptionSupport.message(failure));
+                    recoveryButton.setDisable(false);
+                    return;
+                }
+                incompleteOperations = statuses == null ? List.of() : statuses;
+                boolean present = !incompleteOperations.isEmpty();
+                recoveryBanner.setText(present
+                        ? UiText.format("ui.organizer.recovery.found", incompleteOperations.size())
+                        : UiText.text("ui.organizer.recovery.none"));
+                recoveryButton.setVisible(present);
+                recoveryButton.setManaged(present);
+                recoveryButton.setDisable(!present);
+                if (present) showRecoveryChoice(incompleteOperations);
+            }));
+        }
+
+        private void showRecoveryChoice(List<LibraryOrganizationStatus> verifiedStatuses) {
+            LibraryOrganizationStatus selected = dialogs.showChoiceDialog(verifiedStatuses, verifiedStatuses.getFirst(),
                     UiText.text("ui.organizer.recovery.title"), null, UiText.text("ui.organizer.recovery.choose"),
                     this::recoveryLabel).orElse(null);
             if (selected == null) return;
             if (selected.needsManualReview()) {
                 dialogs.showWarning(UiText.text("ui.organizer.recovery.title"),
-                        UiText.format("ui.organizer.recovery.manual", selected.operation().operationId(), recoveryStateLabel(selected.operation().state())));
+                        UiText.format("ui.organizer.recovery.manual", recoveryStateLabel(selected.operation().state())));
                 return;
             }
             if (!selected.canRollback()) {
                 dialogs.showInfo(UiText.text("ui.organizer.recovery.title"),
-                        UiText.format("ui.organizer.recovery.no_committed", selected.operation().operationId(), recoveryStateLabel(selected.operation().state())));
+                        UiText.format("ui.organizer.recovery.no_committed", recoveryStateLabel(selected.operation().state())));
                 return;
             }
             if (!dialogs.showConfirmation(UiText.text("ui.organizer.recovery.rollback_title"), null,
-                    UiText.format("ui.organizer.recovery.rollback_confirm", selected.operation().operationId()))) return;
+                    UiText.text("ui.organizer.recovery.rollback_confirm"))) return;
             busy = true; updateNavigation();
             background.submit(() -> undoUseCase.undo(selected.operation().operationId(), selected.operation().collectionId()))
                     .whenComplete((restored, error) -> UiExecutor.runOnUiThread(() -> {
@@ -514,8 +572,11 @@ public class LibraryOrganizerUiService {
         }
 
         private String recoveryLabel(LibraryOrganizationStatus status) {
-            return UiText.format("ui.organizer.recovery.item", status.operation().startedAt(), recoveryStateLabel(status.operation().state()),
-                    status.operation().operationId());
+            return UiText.format("ui.organizer.recovery.item",
+                    java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
+                            .withZone(java.time.ZoneId.systemDefault())
+                            .format(status.operation().startedAt()),
+                    recoveryStateLabel(status.operation().state()));
         }
 
         private String recoveryStateLabel(com.myhomelibcorp.organizer.journal.OrganizationOperationState state) {
@@ -650,7 +711,7 @@ public class LibraryOrganizerUiService {
             updateNavigation();
 
             String operationTitle = UiText.text("ui.organizer.title") + " — " + UiText.text("ui.organizer.page.analysis");
-            String operationId = operationCenter.start(operationTitle, expectedCollectionId, OperationKind.GENERIC,
+            String operationId = operationCenter.start(operationTitle, expectedCollectionId, OperationKind.LIBRARY_ORGANIZATION,
                     OperationStage.VALIDATING, true, () -> cancelRequested.set(true));
             analysisUiProgress.clear();
             analysisOperationId = operationId;
@@ -730,7 +791,7 @@ public class LibraryOrganizerUiService {
                 OperationProgress telemetry = OperationProgress.stage(analysisOperationId, OperationStage.VALIDATING, true)
                         .withProgress(progress.filesProcessed(), progress.filesDiscovered())
                         .withCurrentItem(progress.currentPath() == null ? "" : progress.currentPath().toString());
-                operationCenter.accept(analysisOperationTitle, analysisCollectionId, OperationKind.GENERIC, telemetry);
+                operationCenter.accept(analysisOperationTitle, analysisCollectionId, OperationKind.LIBRARY_ORGANIZATION, telemetry);
             }
         }
 
@@ -862,22 +923,27 @@ public class LibraryOrganizerUiService {
                         busy = false;
                         if (error != null) {
                             Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                            applyStatus.setText(UiText.text("ui.organizer.apply.failed") + " " + UiExceptionSupport.message(cause));
-                            resultSummary.setText(UiText.text("ui.organizer.result.failed"));
-                            log.error("ORGANIZER_UI_APPLY_FAILED operationId=" + selectedPlan.operationId(), cause);
+                            boolean cancelled = cause instanceof CancellationException;
+                            applyStatus.setText(UiText.text(cancelled ? "ui.organizer.apply.cancelled" : "ui.organizer.apply.failed")
+                                    + " " + UiExceptionSupport.message(cause));
+                            resultSummary.setText(UiText.text(cancelled ? "ui.organizer.result.cancelled" : "ui.organizer.result.failed"));
+                            if (cancelled) log.info("ORGANIZER_UI_APPLY_CANCELLED operationId={}", selectedPlan.operationId());
+                            else log.error("ORGANIZER_UI_APPLY_FAILED operationId=" + selectedPlan.operationId(), cause);
                             resultDetails.setText(UiExceptionSupport.message(cause) + "\n\n"
-                                    + UiText.format("ui.organizer.result.failure_help", selectedPlan.operationId()));
+                                    + UiText.text("ui.organizer.result.failure_help") + "\n"
+                                    + UiText.format("ui.organizer.result.operation_id", selectedPlan.operationId()));
                             undoButton.setDisable(true);
                             showPage(5);
                             return;
                         }
                         applyResult = value;
                         applyProgress.setProgress(1);
-                        applyStatus.setText(value.cancelled() ? UiText.text("ui.organizer.apply.cancelled") : UiText.text("ui.organizer.apply.completed"));
+                        applyStatus.setText(UiText.text(value.cancelled() ? "ui.organizer.apply.cancelled"
+                                : value.failed() > 0 ? "ui.organizer.apply.failed" : "ui.organizer.apply.completed"));
                         populateResult(value);
                         undoButton.setDisable(value.committed() <= 0);
                         events.publishEvent(new NavigationRefreshEvent());
-                        updateNavigation();
+                        showPage(5);
                     }));
         }
 
@@ -899,17 +965,17 @@ public class LibraryOrganizerUiService {
         }
 
         private void populateResult(ApplyResult result) {
-            resultSummary.setText(result.cancelled() ? UiText.text("ui.organizer.result.cancelled") : UiText.text("ui.organizer.result.completed"));
-            String operationId = result.operationId() == null ? "" : result.operationId().toString();
-            String details = UiText.format("ui.organizer.result.details", operationId,
+            resultSummary.setText(UiText.text(result.cancelled() ? "ui.organizer.result.cancelled"
+                    : result.failed() > 0 ? "ui.organizer.result.failed" : "ui.organizer.result.completed"));
+            String details = UiText.format("ui.organizer.result.details",
                     result.committed(), result.converted(), result.moved(), result.skipped(), result.conflicts(), result.failed(),
-                    String.join("\n", result.warnings()));
+                    result.warnings().size());
             if (result.optimizedEpubs() > 0) {
                 details += "\n" + UiText.format("ui.organizer.result.optimization", result.optimizedEpubs(),
                         humanBytes(result.optimizationSourceBytes()), humanBytes(result.optimizationResultBytes()),
                         humanBytes(result.optimizationSavedBytes()), String.format(Locale.ROOT, "%.2f%%", result.optimizationSavedPercent()));
             }
-            resultDetails.setText(details);
+            resultDetails.setText(details + "\n" + UiText.format("ui.organizer.result.operation_id", result.operationId()));
         }
 
         private void undoOperation() {

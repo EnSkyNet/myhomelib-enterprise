@@ -57,7 +57,7 @@ class LegacyRemoteArtifactMigrationV70Test {
                 .load();
         flyway.migrate();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("70");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("73");
         assertThat(jdbc.queryForObject(
                 "SELECT source_id FROM book_artifacts WHERE artifact_id=?", String.class, "legacy:" + bookId))
                 .isEqualTo(sourceId);

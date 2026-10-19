@@ -30,6 +30,9 @@ import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -37,6 +40,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 @Slf4j
 public class BookDownloadCoordinator {
+    private static final int MAX_BATCH_ERROR_DETAILS = 100;
+    private static final long PROGRESS_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(150);
     private final DownloadBookUseCase downloadBookUseCase;
     private final RemoveLocalBookCopyUseCase removeLocalBookCopyUseCase;
     private final LoadBookByIdUseCase loadBookByIdUseCase;
@@ -187,44 +192,47 @@ public class BookDownloadCoordinator {
         progressDialog.show();
         progressDialog.update(0, ids.size(), 0, 0, 0, UiText.text("ui.java.book_download_coordinator.0f720c36df"));
 
-        java.util.concurrent.atomic.AtomicInteger completed = new java.util.concurrent.atomic.AtomicInteger();
-        java.util.concurrent.atomic.AtomicInteger downloaded = new java.util.concurrent.atomic.AtomicInteger();
-        java.util.concurrent.atomic.AtomicInteger alreadyLocal = new java.util.concurrent.atomic.AtomicInteger();
-        java.util.concurrent.atomic.AtomicInteger failed = new java.util.concurrent.atomic.AtomicInteger();
-        java.util.List<String> errors = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AtomicInteger completed = new AtomicInteger();
+        AtomicInteger downloaded = new AtomicInteger();
+        AtomicInteger alreadyLocal = new AtomicInteger();
+        AtomicInteger failed = new AtomicInteger();
+        AtomicInteger recordedErrors = new AtomicInteger();
+        java.util.Queue<String> errors = new ConcurrentLinkedQueue<>();
+        AtomicLong nextProgressNanos = new AtomicLong();
 
-        // Do not enqueue the whole selection at once. UiBackgroundExecutor intentionally has a
-        // bounded queue, and collection-scoped tasks acquire their lifecycle lease before enqueue.
-        // Fan-out of hundreds of books can therefore overflow the queue and, before the download
-        // scope fix above, created QUERY -> DOWNLOAD conflicts. Keep only the configured number of
-        // download workflows in flight; each lane schedules its next book only after the previous one
-        // has reached a terminal state.
+        // An earlier implementation built an entire CompletableFuture chain for every selected
+        // book before the first download. Even with only a few active downloads, large selections
+        // retained one callback/future per book and could consume excessive heap. This runner
+        // keeps exactly one active asynchronous workflow per lane, including for immediate results.
         int lanesCount = Math.max(1, Math.min(maxParallelDownloads, ids.size()));
-        CompletableFuture<?>[] lanes = new CompletableFuture<?>[lanesCount];
-        for (int laneIndex = 0; laneIndex < lanesCount; laneIndex++) {
-            CompletableFuture<Void> lane = CompletableFuture.completedFuture(null);
-            for (int index = laneIndex; index < ids.size(); index += lanesCount) {
-                BookId id = ids.get(index);
-                lane = lane.thenCompose(ignored -> ensureLocalWithStatus(id, false, expectedCollectionId)
-                        .handle((outcome, error) -> {
-                            if (error != null) {
-                                failed.incrementAndGet();
-                                errors.add(id + ": " + compactError(unwrap(error)));
-                            } else if (outcome.alreadyLocal()) {
-                                alreadyLocal.incrementAndGet();
-                            } else {
-                                downloaded.incrementAndGet();
-                            }
-                            int done = completed.incrementAndGet();
-                            Platform.runLater(() -> progressDialog.update(done, ids.size(), downloaded.get(), alreadyLocal.get(), failed.get(),
-                                    UiText.text("ui.java.book_download_coordinator.ae22229ad2")));
-                            return null;
-                        }));
-            }
-            lanes[laneIndex] = lane;
-        }
+        CompletableFuture<Void> batch = AsyncBatchLaneRunner.run(ids.size(), lanesCount,
+                index -> ensureLocalWithStatus(ids.get(index), false, expectedCollectionId),
+                (index, outcome) -> {
+                    if (outcome.failure() != null) {
+                        failed.incrementAndGet();
+                        // Only the first few failure details are shown. The failed counter stays
+                        // exact; retaining every exception message for a huge offline batch is
+                        // unnecessary and can exhaust heap memory.
+                        if (recordedErrors.getAndIncrement() < MAX_BATCH_ERROR_DETAILS) {
+                            errors.add(ids.get(index) + ": " + compactError(unwrap(outcome.failure())));
+                        }
+                    } else if (outcome.value().alreadyLocal()) {
+                        alreadyLocal.incrementAndGet();
+                    } else {
+                        downloaded.incrementAndGet();
+                    }
+                    int done = completed.incrementAndGet();
+                    long now = System.nanoTime();
+                    long next = nextProgressNanos.get();
+                    if (done == ids.size() || (now - next >= 0L
+                            && nextProgressNanos.compareAndSet(next, now + PROGRESS_INTERVAL_NANOS))) {
+                        Platform.runLater(() -> progressDialog.update(completed.get(), ids.size(),
+                                downloaded.get(), alreadyLocal.get(), failed.get(),
+                                UiText.text("ui.java.book_download_coordinator.ae22229ad2")));
+                    }
+                });
 
-        return CompletableFuture.allOf(lanes).thenApply(ignored -> {
+        return batch.thenApply(ignored -> {
             BatchDownloadResult result = new BatchDownloadResult(ids.size(), downloaded.get(), alreadyLocal.get(), failed.get(), List.copyOf(errors));
             Platform.runLater(() -> {
                 progressDialog.complete(ids.size(), result.downloaded(), result.alreadyLocal(), result.failed());

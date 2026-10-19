@@ -191,7 +191,11 @@ class UiBackgroundExecutorCollectionScopeTest {
         LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
         UiBackgroundExecutor executor = new UiBackgroundExecutor(coordinator);
         AtomicReference<LibraryOperationOutcome> outcome = new AtomicReference<>();
-        coordinator.addCompletionListener(completion -> outcome.set(completion.outcome()));
+        CountDownLatch completionDelivered = new CountDownLatch(1);
+        coordinator.addCompletionListener(completion -> {
+            outcome.set(completion.outcome());
+            completionDelivered.countDown();
+        });
         try {
             var future = executor.submitCollectionScoped(LibraryOperationType.CONVERSION, () -> {
                 try (var inner = coordinator.acquireDetachedShared(LibraryOperationType.CONVERSION)) {
@@ -201,6 +205,9 @@ class UiBackgroundExecutorCollectionScopeTest {
             });
 
             assertThrows(CancellationException.class, () -> future.get(2, TimeUnit.SECONDS));
+            // FutureTask can become done just before run() releases the collection lease.
+            // Wait for the root lifecycle completion notification rather than racing it.
+            assertTrue(completionDelivered.await(2, TimeUnit.SECONDS));
             assertEquals(LibraryOperationOutcome.CANCELLED, outcome.get());
             assertFalse(coordinator.isBusy());
         } finally {
@@ -213,7 +220,11 @@ class UiBackgroundExecutorCollectionScopeTest {
         LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
         UiBackgroundExecutor executor = new UiBackgroundExecutor(coordinator);
         AtomicReference<LibraryOperationOutcome> outcome = new AtomicReference<>();
-        coordinator.addCompletionListener(completion -> outcome.set(completion.outcome()));
+        CountDownLatch completionDelivered = new CountDownLatch(1);
+        coordinator.addCompletionListener(completion -> {
+            outcome.set(completion.outcome());
+            completionDelivered.countDown();
+        });
         try {
             var future = executor.submitCollectionScopedCancellable(LibraryOperationType.QUERY, () -> {
                 throw new CancellationException("cancelled cooperatively");
@@ -222,6 +233,9 @@ class UiBackgroundExecutorCollectionScopeTest {
             var failure = assertThrows(java.util.concurrent.ExecutionException.class,
                     () -> future.get(2, TimeUnit.SECONDS));
             assertInstanceOf(CancellationException.class, failure.getCause());
+            // FutureTask can become done just before run() releases the collection lease.
+            // Wait for the root lifecycle completion notification rather than racing it.
+            assertTrue(completionDelivered.await(2, TimeUnit.SECONDS));
             assertEquals(LibraryOperationOutcome.CANCELLED, outcome.get());
             assertFalse(coordinator.isBusy());
         } finally {

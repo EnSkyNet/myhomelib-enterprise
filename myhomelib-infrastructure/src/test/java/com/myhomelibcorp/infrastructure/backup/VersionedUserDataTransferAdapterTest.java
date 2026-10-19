@@ -38,6 +38,7 @@ class VersionedUserDataTransferAdapterTest {
         createSchema(source.jdbc());
         source.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('old-1','L100',8,42,'great')");
         source.jdbc().update("INSERT INTO reading_progress(book_id,paragraph_id,char_offset,percent,updated_at,anchor_id,paragraph_index) VALUES('old-1','p1',12,42.5,'2026-08-25T10:00:00Z','a1',3)");
+        source.jdbc().update("UPDATE reading_progress SET text_anchor_id='1:500:2:3', audio_anchor_id='audio:12000:1:2' WHERE book_id='old-1'");
         source.jdbc().update("INSERT INTO reading_history(book_id,last_opened_at,open_count) VALUES('old-1','2026-08-25T11:00:00Z',4)");
         source.jdbc().update("INSERT INTO reading_stats(book_id,first_read_at,last_read_at,total_reading_seconds,reading_sessions,start_percent,end_percent,current_percent,completed_at) VALUES('old-1','a','b',120,2,0,42,42,NULL)");
         source.jdbc().update("INSERT INTO bookmarks(id,book_id,paragraph_id,char_offset,position,chapter_title,context,created_at) VALUES('bm1','old-1','p1',9,0.4,'Ch','ctx','2026-08-25T12:00:00Z')");
@@ -60,6 +61,8 @@ class VersionedUserDataTransferAdapterTest {
         var manifest = mapper.readTree(exported.toFile());
         assertThat(manifest.path("bookState").size()).isEqualTo(1);
         assertThat(manifest.path("readingProgress").size()).isEqualTo(1);
+        assertThat(manifest.path("readingProgress").get(0).path("textAnchorId").asText()).isEqualTo("1:500:2:3");
+        assertThat(manifest.path("readingProgress").get(0).path("audioAnchorId").asText()).isEqualTo("audio:12000:1:2");
         assertThat(manifest.path("readingHistory").size()).isEqualTo(1);
         assertThat(manifest.path("readingStats").size()).isEqualTo(1);
         assertThat(manifest.path("bookmarks").size()).isEqualTo(1);
@@ -87,6 +90,8 @@ class VersionedUserDataTransferAdapterTest {
         assertThat(target.jdbc().queryForMap("SELECT rate,progress,review FROM books WHERE id='new-77'"))
                 .containsEntry("rate", 8).containsEntry("progress", 42).containsEntry("review", "great");
         assertThat(target.jdbc().queryForObject("SELECT book_id FROM bookmarks WHERE id='bm1'", String.class)).isEqualTo("new-77");
+        assertThat(target.jdbc().queryForObject("SELECT text_anchor_id FROM reading_progress WHERE book_id='new-77'", String.class)).isEqualTo("1:500:2:3");
+        assertThat(target.jdbc().queryForObject("SELECT audio_anchor_id FROM reading_progress WHERE book_id='new-77'", String.class)).isEqualTo("audio:12000:1:2");
         assertThat(target.jdbc().queryForObject("SELECT open_count FROM reading_history WHERE book_id='new-77'", Integer.class)).isEqualTo(4);
         assertThat(target.jdbc().queryForObject("SELECT COUNT(*) FROM book_groups bg JOIN groups g ON g.id=bg.group_id WHERE bg.book_id='new-77' AND g.name='Favorites'", Integer.class)).isEqualTo(1);
         assertThat(target.jdbc().queryForObject("SELECT query FROM saved_searches WHERE name='SciFi'", String.class)).isEqualTo("space");
@@ -567,7 +572,7 @@ class VersionedUserDataTransferAdapterTest {
     private static void createSchema(JdbcTemplate j) {
         j.execute("CREATE TABLE books(id TEXT PRIMARY KEY, lib_id TEXT, rate INTEGER DEFAULT 0, progress INTEGER DEFAULT 0, review TEXT)");
         j.execute("CREATE INDEX idx_books_lib_id ON books(lib_id)");
-        j.execute("CREATE TABLE reading_progress(book_id TEXT PRIMARY KEY, paragraph_id TEXT NOT NULL, char_offset INTEGER NOT NULL, percent REAL NOT NULL, updated_at TEXT NOT NULL, anchor_id TEXT, paragraph_index INTEGER DEFAULT 0, last_device TEXT NOT NULL DEFAULT 'desktop')");
+        j.execute("CREATE TABLE reading_progress(book_id TEXT PRIMARY KEY, paragraph_id TEXT NOT NULL, char_offset INTEGER NOT NULL, percent REAL NOT NULL, updated_at TEXT NOT NULL, anchor_id TEXT, text_anchor_id TEXT, audio_anchor_id TEXT, paragraph_index INTEGER DEFAULT 0, last_device TEXT NOT NULL DEFAULT 'desktop', revision INTEGER NOT NULL DEFAULT 0)");
         j.execute("CREATE TABLE reading_history(book_id TEXT PRIMARY KEY,last_opened_at TEXT NOT NULL,open_count INTEGER NOT NULL DEFAULT 1)");
         j.execute("CREATE TABLE reading_stats(id INTEGER PRIMARY KEY AUTOINCREMENT,book_id TEXT NOT NULL UNIQUE,first_read_at TEXT NOT NULL,last_read_at TEXT NOT NULL,total_reading_seconds INTEGER DEFAULT 0,reading_sessions INTEGER DEFAULT 0,start_percent INTEGER DEFAULT 0,end_percent INTEGER DEFAULT 0,current_percent INTEGER DEFAULT 0,completed_at TEXT)");
         j.execute("CREATE TABLE bookmarks(id TEXT PRIMARY KEY,book_id TEXT NOT NULL,paragraph_id TEXT NOT NULL,char_offset INTEGER DEFAULT 0,position REAL DEFAULT 0,chapter_title TEXT,context TEXT,created_at TEXT NOT NULL)");

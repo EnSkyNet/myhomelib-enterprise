@@ -32,6 +32,23 @@ public final class PlanLibraryOrganizationUseCase {
         List<PlanIssue> issues=new ArrayList<>();List<String>warnings=new ArrayList<>(item.warnings());
         String sourceFormat=item.detectedFormat().format(),targetFormat=item.formatDecision().targetFormat();
         if(!item.formatDecision().supported()) return item(item,null,sourceFormat,targetFormat,OrganizationAction.SKIP_UNSUPPORTED,false,warnings,List.of(new PlanIssue("UNSUPPORTED",item.formatDecision().reason(),false)));
+        // A creator without an established family/given boundary must not be silently
+        // published under an arbitrary first-name-first folder. The source stays intact.
+        // Users can correct the metadata and run the dry-run preview again.
+        boolean authorInPath = profile.directoryTemplate().contains("{Author}")
+                || profile.directoryTemplate().contains("{FirstAuthor}")
+                || profile.directoryTemplate().contains("{Authors}")
+                || profile.filenameTemplate().contains("{Author}")
+                || profile.filenameTemplate().contains("{FirstAuthor}")
+                || profile.filenameTemplate().contains("{Authors}");
+        boolean ambiguousAuthor = item.identity().issues().stream()
+                .anyMatch(issue -> "AUTHOR_UNSTRUCTURED".equals(issue.code())
+                        || "AUTHOR_ORDER_INFERRED".equals(issue.code()));
+        if (authorInPath && ambiguousAuthor) {
+            warnings.add("Порядок прізвища та імені не підтверджено джерелом. Книгу не переміщено; перевірте метадані автора.");
+            issues.add(new PlanIssue("AUTHOR_ORDER_REVIEW", "Потрібно перевірити прізвище автора", false));
+            return item(item, null, sourceFormat, targetFormat, OrganizationAction.KEEP_AS_IS, false, warnings, issues);
+        }
         DuplicateKind duplicate=item.duplicate().kind();
         if (duplicate != DuplicateKind.NONE) {
             switch (profile.duplicatePolicy()) {

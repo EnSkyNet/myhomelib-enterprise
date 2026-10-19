@@ -52,7 +52,7 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
         Collection collection = mock(Collection.class);
         when(collection.getRootFolder()).thenReturn(tempDir);
         when(appState.getCurrentLibraryCollection()).thenReturn(collection);
-        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incomplete()).thenReturn(List.of());
+        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incompleteOverview()).thenReturn(List.of());
 
         Object wizard = newWizard(fixture.instance());
         RadioButton currentCollectionSource = field(wizard, "currentCollectionSource", RadioButton.class);
@@ -85,7 +85,7 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
     @Test
     void backButton_externalFolderSource_chooseSource_chooseDestination_selectVisible_clearVisibleHaveObservableEffects() throws Exception {
         var fixture = UiActionTestSupport.constructWithMocks(LibraryOrganizerUiService.class);
-        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incomplete()).thenReturn(List.of());
+        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incompleteOverview()).thenReturn(List.of());
         FileChooserService chooser = fixture.dependency(FileChooserService.class);
         Path source = Files.createDirectory(tempDir.resolve("source"));
         Path destination = Files.createDirectory(tempDir.resolve("destination"));
@@ -115,8 +115,8 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
         Parent sourcePage = pageRoot(pages.get(0));
         List<Button> sourceButtons = descendants(sourcePage).stream().filter(Button.class::isInstance).map(Button.class::cast).toList();
         assertThat(sourceButtons).hasSizeGreaterThanOrEqualTo(3);
-        Button chooseSource = sourceButtons.get(sourceButtons.size() - 2);
-        Button chooseDestination = sourceButtons.get(sourceButtons.size() - 1);
+        Button chooseSource = sourceButtons.get(sourceButtons.size() - 3);
+        Button chooseDestination = sourceButtons.get(sourceButtons.size() - 2);
         UiActionTestSupport.fx(() -> { chooseSource.fire(); chooseDestination.fire(); return null; });
         String chosenSourceText = UiActionTestSupport.fx(() -> sourceField.getText());
         String chosenDestinationText = UiActionTestSupport.fx(() -> destinationField.getText());
@@ -140,6 +140,94 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
         assertThat(rowIncluded(row)).isFalse();
 
         verify(chooser, times(3)).chooseDirectory(any(Stage.class), anyString(), nullable(java.io.File.class));
+        UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });
+    }
+
+    @Test
+    void authorPreviewButtonExplainsMissingCollectionWithoutStartingRepair() throws Exception {
+        var fixture = UiActionTestSupport.constructWithMocks(LibraryOrganizerUiService.class);
+        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incompleteOverview())
+                .thenReturn(List.of());
+        Object wizard = newWizard(fixture.instance());
+        Button authorPreviewButton = field(wizard, "authorPreviewButton", Button.class);
+        UiActionTestSupport.fx(() -> { authorPreviewButton.fire(); return null; });
+        verify(fixture.dependency(DialogService.class)).showWarning(anyString(), anyString());
+        verify(fixture.dependency(DialogService.class), never()).showTextInput(anyString(), anyString(), anyString(), anyString());
+        UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });
+    }
+
+    @Test
+    void authorPreviewRejectsInvalidDatabasePathBeforeSubmittingWork() throws Exception {
+        var fixture = UiActionTestSupport.constructWithMocks(LibraryOrganizerUiService.class);
+        ApplicationState state = fixture.dependency(ApplicationState.class);
+        Collection collection = mock(Collection.class);
+        when(collection.getRootFolder()).thenReturn(tempDir);
+        when(collection.getDbFile()).thenReturn("invalid\u0000path");
+        when(state.getCurrentLibraryCollection()).thenReturn(collection);
+        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incompleteOverview())
+                .thenReturn(List.of());
+
+        when(fixture.dependency(DialogService.class).showTextInput(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(Optional.of("Example Author"));
+        Object wizard = newWizard(fixture.instance());
+        RadioButton current = field(wizard, "currentCollectionSource", RadioButton.class);
+        Button button = field(wizard, "authorPreviewButton", Button.class);
+        UiActionTestSupport.fx(() -> { current.setSelected(true); button.fire(); return null; });
+        verify(fixture.dependency(DialogService.class)).showError(anyString(), anyString());
+        verify(fixture.dependency(DialogService.class)).showTextInput(anyString(), anyString(), anyString(), anyString());
+        verifyNoInteractions(fixture.dependency(com.myhomelibcorp.organizer.analysis.AuthorFolderPreviewPort.class));
+        UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });
+    }
+
+    @Test
+    void authorBatchExportRejectsOutputInsideLibraryBeforeSchedulingWrite() throws Exception {
+        var fixture = UiActionTestSupport.constructWithMocks(LibraryOrganizerUiService.class);
+        ApplicationState state = fixture.dependency(ApplicationState.class);
+        Collection collection = mock(Collection.class);
+        when(collection.getRootFolder()).thenReturn(tempDir);
+        when(collection.getDbFile()).thenReturn(tempDir.resolve("Flib.db").toString());
+        when(state.getCurrentLibraryCollection()).thenReturn(collection);
+        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incompleteOverview())
+                .thenReturn(List.of());
+        Path unsafeOutput = tempDir.resolve("author-audit.csv");
+        when(fixture.dependency(FileChooserService.class).chooseFileToSave(
+                any(Window.class), anyString(), anyString(), anyList()))
+                .thenReturn(unsafeOutput.toFile());
+
+        Object wizard = newWizard(fixture.instance());
+        RadioButton current = field(wizard, "currentCollectionSource", RadioButton.class);
+        Button button = field(wizard, "authorBatchButton", Button.class);
+        UiActionTestSupport.fx(() -> { current.setSelected(true); button.fire(); return null; });
+        verify(fixture.dependency(DialogService.class)).showWarning(anyString(), anyString());
+        assertThat(Files.exists(unsafeOutput)).isFalse();
+        verifyNoInteractions(fixture.dependency(com.myhomelibcorp.organizer.analysis.AuthorFolderPreviewPort.class));
+        UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });
+    }
+
+    @Test
+    void authorSelectionButtonDoesNotStartOfflineRepairWhileNoCollectionIsSelected() throws Exception {
+        var fixture = UiActionTestSupport.constructWithMocks(LibraryOrganizerUiService.class);
+        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incompleteOverview())
+                .thenReturn(List.of());
+        Object wizard = newWizard(fixture.instance());
+        Button authorSelectionButton = field(wizard, "authorSelectionButton", Button.class);
+        UiActionTestSupport.fx(() -> { authorSelectionButton.fire(); return null; });
+        verify(fixture.dependency(DialogService.class)).showWarning(anyString(), anyString());
+        verify(fixture.dependency(FileChooserService.class), never()).chooseFileToSave(
+                any(Window.class), anyString(), anyString(), anyList());
+        UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });
+    }
+
+    @Test
+    void authorBatchButtonRejectsMissingCollectionBeforeFileDialog() throws Exception {
+        var fixture = UiActionTestSupport.constructWithMocks(LibraryOrganizerUiService.class);
+        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incompleteOverview()).thenReturn(List.of());
+        Object wizard = newWizard(fixture.instance());
+        Button authorBatchButton = field(wizard, "authorBatchButton", Button.class);
+        UiActionTestSupport.fx(() -> { authorBatchButton.fire(); return null; });
+        verify(fixture.dependency(DialogService.class)).showWarning(anyString(), anyString());
+        verify(fixture.dependency(FileChooserService.class), never()).chooseFileToSave(
+                any(Window.class), anyString(), anyString(), anyList());
         UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });
     }
 
@@ -180,12 +268,12 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
     @Test
     void analysisIsPublishedToOperationCenterBeforeBackgroundScanningStarts() throws Exception {
         var fixture = UiActionTestSupport.constructWithMocks(LibraryOrganizerUiService.class);
-        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incomplete()).thenReturn(List.of());
+        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incompleteOverview()).thenReturn(List.of());
         UiBackgroundExecutor background = fixture.dependency(UiBackgroundExecutor.class);
         when(background.submit(any(java.util.concurrent.Callable.class)))
                 .thenReturn(new java.util.concurrent.CompletableFuture<>());
         OperationCenterService operations = fixture.dependency(OperationCenterService.class);
-        when(operations.start(anyString(), nullable(String.class), eq(OperationKind.GENERIC), any(), eq(true), any()))
+        when(operations.start(anyString(), nullable(String.class), eq(OperationKind.LIBRARY_ORGANIZATION), any(), eq(true), any()))
                 .thenReturn("organizer-analysis-1");
 
         Path source = Files.createDirectory(tempDir.resolve("analysis-source"));
@@ -201,7 +289,7 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
 
         UiActionTestSupport.invoke(wizard, "startAnalysis");
 
-        verify(operations).start(anyString(), nullable(String.class), eq(OperationKind.GENERIC), any(), eq(true), any());
+        verify(operations).start(anyString(), nullable(String.class), eq(OperationKind.LIBRARY_ORGANIZATION), any(), eq(true), any());
         verify(background).submit(any(java.util.concurrent.Callable.class));
         UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });
     }
@@ -212,6 +300,7 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
         OrganizationJournalOperation operation = mock(OrganizationJournalOperation.class);
         LibraryOrganizationStatus status = new LibraryOrganizationStatus(
                 operation, List.of(), false, false, RecoveryDisposition.NOTHING_TO_ROLLBACK, 0, 0, 0, false);
+        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incompleteOverview()).thenReturn(List.of(status));
         when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incomplete()).thenReturn(List.of(status));
         DialogService dialogs = fixture.dependency(DialogService.class);
         when(dialogs.showChoiceDialog(anyList(), any(), anyString(), nullable(String.class), anyString(), any()))
@@ -239,7 +328,7 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
     @Test
     void undoButtonRollsBackAppliedOrganizerOperation() throws Exception {
         var fixture = UiActionTestSupport.constructWithMocks(LibraryOrganizerUiService.class);
-        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incomplete()).thenReturn(List.of());
+        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incompleteOverview()).thenReturn(List.of());
         when(fixture.dependency(DialogService.class).showConfirmation(anyString(), nullable(String.class), anyString())).thenReturn(true);
         UiBackgroundExecutor background = fixture.dependency(UiBackgroundExecutor.class);
         when(background.submit(any(java.util.concurrent.Callable.class))).thenAnswer(inv -> {
@@ -267,10 +356,11 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
         UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });
     }
 
-    @Test
-    void failedApplyLeavesProgressPageAndShowsOperationId() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"success", "cancelled", "partial", "failed", "cancel-exception"})
+    void terminalApplyLeavesProgressPageAndShowsOperationId(String outcome) throws Exception {
         var fixture = UiActionTestSupport.constructWithMocks(LibraryOrganizerUiService.class);
-        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incomplete()).thenReturn(List.of());
+        when(fixture.dependency(GetLibraryOrganizationStatusUseCase.class).incompleteOverview()).thenReturn(List.of());
         when(fixture.dependency(DialogService.class).showConfirmation(anyString(), nullable(String.class), anyString())).thenReturn(true);
         java.util.concurrent.CompletableFuture<ApplyResult> future = new java.util.concurrent.CompletableFuture<>();
         when(fixture.dependency(UiBackgroundExecutor.class).submit(any(java.util.concurrent.Callable.class))).thenReturn((java.util.concurrent.CompletableFuture) future);
@@ -290,13 +380,27 @@ class LibraryOrganizerUiServiceActionBehaviorContractTest {
                 (javafx.collections.ObservableList<Object>) UiActionTestSupport.getField(wizard, "previewRows");
         UiActionTestSupport.fx(() -> { rows.add(row); UiActionTestSupport.invoke(wizard, "startApply"); return null; });
         assertThat(UiActionTestSupport.getField(wizard, "pageIndex")).isEqualTo(4);
-        UiActionTestSupport.fx(() -> { future.completeExceptionally(new java.io.IOException("copy failed")); return null; });
+        UiActionTestSupport.fx(() -> {
+            switch (outcome) {
+                case "failed" -> future.completeExceptionally(new java.io.IOException("copy failed"));
+                case "cancel-exception" -> future.completeExceptionally(new java.util.concurrent.CancellationException("cancelled"));
+                default -> future.complete(new ApplyResult(id, 1, 0, 1, 0, 0,
+                        outcome.equals("partial") ? 1 : 0, outcome.equals("cancelled"), 0, 0, 0, 0, List.of()));
+            }
+            return null;
+        });
         UiActionTestSupport.fx(() -> null);
         assertThat(UiActionTestSupport.getField(wizard, "pageIndex")).isEqualTo(5);
         assertThat(UiActionTestSupport.getField(wizard, "busy")).isEqualTo(false);
         var details = field(wizard, "resultDetails", javafx.scene.control.TextArea.class);
         String detailText = UiActionTestSupport.fx(details::getText);
-        assertThat(detailText).contains(id.toString(), "myhomelib.log").doesNotContain("ui.organizer.result.failure_help");
+        assertThat(detailText).contains(id.toString()).doesNotContain("ui.organizer.result.");
+        String status = outcome.startsWith("cancel") ? "cancelled"
+                : outcome.equals("failed") || outcome.equals("partial") ? "failed" : "completed";
+        assertThat(UiActionTestSupport.fx(field(wizard, "resultSummary", javafx.scene.control.Label.class)::getText))
+                .isEqualTo(com.myhomelibcorp.ui.service.UiText.text("ui.organizer.result." + status));
+        assertThat(UiActionTestSupport.fx(field(wizard, "undoButton", Button.class)::isDisabled))
+                .isEqualTo(outcome.equals("failed") || outcome.equals("cancel-exception"));
         assertThat(UiActionTestSupport.fx(field(wizard, "nextButton", Button.class)::isDisabled)).isFalse();
         assertThat(UiActionTestSupport.fx(field(wizard, "backButton", Button.class)::isDisabled)).isTrue();
         UiActionTestSupport.fx(() -> { field(wizard, "stage", Stage.class).close(); return null; });

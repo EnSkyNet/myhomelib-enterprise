@@ -107,10 +107,10 @@ public final class ApplyLibraryOrganizationUseCase {
         // the collection that was active when Analyze/Preview started; validating it while this lease is held
         // closes the queued-worker race where a SWITCH could otherwise redirect catalog writes to another DB.
         LibraryOperationCoordinator.Lease lease = operations.acquireDetached(LibraryOperationType.ORGANIZE);
-        try {
+        try (OrganizerIoStallMonitor ioMonitor = new OrganizerIoStallMonitor(plan.operationId(), log::warn)) {
             log.info("ORGANIZER_APPLY_START operationId={} actions={}", plan.operationId(), plan.actions().size());
             requireExpectedCollection(plan);
-            ApplyResult result = applyUnderLease(plan, cancelled, progress, lease);
+            ApplyResult result = applyUnderLease(plan, cancelled, progress, lease, ioMonitor);
             log.info("ORGANIZER_APPLY_DONE operationId={} cancelled={} committed={} failed={}",
                     plan.operationId(), result.cancelled(), result.committed(), result.failed());
             return result;
@@ -130,16 +130,20 @@ public final class ApplyLibraryOrganizationUseCase {
     private ApplyResult applyUnderLease(OrganizationPlan plan,
                                         BooleanSupplier cancelled,
                                         Consumer<OrganizationApplyProgress> progress,
-                                        LibraryOperationCoordinator.Lease lease) throws Exception {
+                                        LibraryOperationCoordinator.Lease lease,
+                                        OrganizerIoStallMonitor ioMonitor) throws Exception {
         BooleanSupplier cancellation = cancelled == null ? () -> false : cancelled;
         Consumer<OrganizationApplyProgress> progressSink = progress == null ? ignored -> { } : progress;
         long preflightStarted = System.nanoTime();
         log.info("ORGANIZER_APPLY_PREFLIGHT_START actions={}", plan.actions().size());
-        preflight(plan, cancellation, progressSink);
+        ioMonitor.mark(null, "PREFLIGHT_START");
+        preflight(plan, cancellation, progressSink, ioMonitor);
         checkCancelled(cancellation);
         log.info("ORGANIZER_APPLY_PREFLIGHT_DONE actions={} durationMs={}", plan.actions().size(),
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - preflightStarted));
+        ioMonitor.mark(null, "PREFLIGHT_DONE");
         emit(progressSink, OrganizationApplyProgress.preparing(plan.actions().size(), plan.actions().size(), null, OrganizationApplyProgress.Phase.JOURNAL));
+        ioMonitor.mark(null, "JOURNAL_START");
         long journalStarted = System.nanoTime();
         var journalItems = plan.actions().stream()
                 .map(item -> journalItem(plan.operationId(), item, OrganizationItemState.PLANNED, item.expectedSourceSha256(), null, null))
@@ -161,12 +165,15 @@ public final class ApplyLibraryOrganizationUseCase {
         long optimizationSourceBytes = 0L, optimizationResultBytes = 0L, optimizationSavedBytes = 0L;
         boolean wasCancelled = false;
         List<OrganizationPlanItem> pendingSkips = new ArrayList<>(SKIP_JOURNAL_BATCH_SIZE);
+        ioMonitor.mark(null, "JOURNAL_DONE");
         emit(progressSink, OrganizationApplyProgress.preparing(plan.actions().size(), plan.actions().size(), null, OrganizationApplyProgress.Phase.RECOVERY));
+        ioMonitor.mark(null, "RECOVERY_START");
         long recoveryStarted = System.nanoTime();
         LibraryOperationWorkspace workspace = LibraryOperationWorkspace.create(plan.operationId());
         LibraryOperationCrashManifest crashManifest = LibraryOperationCrashManifest.create(plan, workspace.manifestPath());
         log.info("ORGANIZER_APPLY_RECOVERY_INITIALIZED actions={} durationMs={}", plan.actions().size(),
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - recoveryStarted));
+        ioMonitor.mark(null, "RECOVERY_DONE");
         emit(progressSink, new OrganizationApplyProgress(plan.actions().size(), 0, 0, 0, 0, 0, 0, 0, null));
         long applyItemsStarted = System.nanoTime();
         try (workspace) {
@@ -175,6 +182,7 @@ public final class ApplyLibraryOrganizationUseCase {
             try (ParallelStaging staging = startParallelStaging(plan, workspace, crashManifest, cancellation)) {
                 for (OrganizationPlanItem item : plan.actions()) {
                     long itemStarted = System.nanoTime();
+                    ioMonitor.mark(item.itemId(), "ITEM_START");
                     log.info("ORGANIZER_APPLY_ITEM_START operationId={} itemId={} action={} item={} total={}",
                             plan.operationId(), item.itemId(), item.action(), processed + 1, plan.actions().size());
                     if (cancellation.getAsBoolean()) {
@@ -206,7 +214,7 @@ public final class ApplyLibraryOrganizationUseCase {
                                 committed++; moved++;
                             }
                             case RENAME, MOVE, MOVE_AND_RENAME -> {
-                                commitExisting(item, plan, workspace, crashManifest, attemptedSourceHash);
+                                commitExisting(item, plan, workspace, crashManifest, attemptedSourceHash, cancellation, ioMonitor);
                                 committed++; moved++;
                             }
                             case EXTRACT -> {
@@ -819,25 +827,56 @@ public final class ApplyLibraryOrganizationUseCase {
         }
     }
 
-    private void commitExisting(OrganizationPlanItem item,OrganizationPlan plan,LibraryOperationWorkspace workspace,LibraryOperationCrashManifest manifest,String sourceHash)throws Exception {
+    private void commitExisting(OrganizationPlanItem item,OrganizationPlan plan,LibraryOperationWorkspace workspace,LibraryOperationCrashManifest manifest,String sourceHash,BooleanSupplier cancelled,OrganizerIoStallMonitor ioMonitor)throws Exception {
         transition(manifest,item,journalItem(plan.operationId(),item,OrganizationItemState.STAGING,sourceHash,null,null));
         Path staged=workspace.staged(item.itemId(),extension(item.targetPath()));
+        ioMonitor.mark(item.itemId(), "COPY_START");
         log.info("ORGANIZER_STAGE operationId={} itemId={} stage=COPY_START", plan.operationId(), item.itemId());
-        copyAndVerify(item.sourcePath(),staged,sourceHash);
+        long copyStarted = System.nanoTime();
+        final long[] lastCopyLog = {copyStarted};
+        final boolean[] firstChunkLogged = {false};
+        try {
+            copyAndVerify(item.sourcePath(), staged, sourceHash, cancelled, (stage, bytes) -> {
+                ioMonitor.mark(item.itemId(), "COPY_" + stage, bytes);
+                if ("BYTES".equals(stage)) {
+                    long now = System.nanoTime();
+                    if (!firstChunkLogged[0] || now - lastCopyLog[0] >= TimeUnit.SECONDS.toNanos(5)) {
+                        log.info("ORGANIZER_COPY operationId={} itemId={} stage=BYTES bytesCopied={} elapsedMs={}",
+                                plan.operationId(), item.itemId(), bytes,
+                                TimeUnit.NANOSECONDS.toMillis(now - copyStarted));
+                        firstChunkLogged[0] = true;
+                        lastCopyLog[0] = now;
+                    }
+                } else {
+                    log.info("ORGANIZER_COPY operationId={} itemId={} stage={} bytesCopied={} elapsedMs={}",
+                            plan.operationId(), item.itemId(), stage, bytes,
+                            TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - copyStarted));
+                }
+            });
+        } catch (Exception copyFailure) {
+            log.warn("ORGANIZER_COPY_FAILED operationId={} itemId={} elapsedMs={}",
+                    plan.operationId(), item.itemId(),
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - copyStarted), copyFailure);
+            throw copyFailure;
+        }
         log.info("ORGANIZER_STAGE operationId={} itemId={} stage=COPY_VERIFIED", plan.operationId(), item.itemId());
         // copyAndVerify already validated the staged bytes against sourceHash; the publisher
         // verifies both the destination temporary copy and the final target before returning.
         transition(manifest,item,journalItem(plan.operationId(),item,OrganizationItemState.VALIDATED,sourceHash,sourceHash,null));
+        checkCancelled(cancelled);
+        ioMonitor.mark(item.itemId(), "PUBLISH_START");
         log.info("ORGANIZER_STAGE operationId={} itemId={} stage=PUBLISH_START", plan.operationId(), item.itemId());
-        targetPublisher.publish(staged,item.targetPath(),sourceHash);
+        targetPublisher.publish(staged,item.targetPath(),sourceHash,cancelled);
         log.info("ORGANIZER_STAGE operationId={} itemId={} stage=PUBLISH_VERIFIED", plan.operationId(), item.itemId());
         String targetHash=sourceHash;
         try {
+            ioMonitor.mark(item.itemId(), "CATALOG_START");
             log.info("ORGANIZER_STAGE operationId={} itemId={} stage=CATALOG_START", plan.operationId(), item.itemId());
             applyCatalog(item);
             log.info("ORGANIZER_STAGE operationId={} itemId={} stage=CATALOG_DONE", plan.operationId(), item.itemId());
             if(!same(item.sourcePath(),item.targetPath())) {
                 ensureSourceUnchanged(item, sourceHash);
+                ioMonitor.mark(item.itemId(), "SOURCE_REMOVE_START");
                 log.info("ORGANIZER_STAGE operationId={} itemId={} stage=SOURCE_REMOVE_START", plan.operationId(), item.itemId());
                 removeOwnedFile(item.sourcePath(), sourceHash, "Organizer source removal after move");
                 log.info("ORGANIZER_STAGE operationId={} itemId={} stage=SOURCE_REMOVE_DONE", plan.operationId(), item.itemId());
@@ -900,8 +939,15 @@ public final class ApplyLibraryOrganizationUseCase {
     }
 
     private String sha256Source(OrganizationPlanItem item, BooleanSupplier cancelled) throws Exception {
+        return sha256Source(item, cancelled, bytes -> { });
+    }
+
+    private String sha256Source(OrganizationPlanItem item, BooleanSupplier cancelled,
+                                java.util.function.LongConsumer byteProgress) throws Exception {
         requireSafeRegularFile(item.sourcePath(), "Organizer source is unsafe");
-        return item.archiveEntry() ? OrganizerArchiveSupport.sha256(item.sourcePath(), item.sourceEntry(), cancelled) : sha256(item.sourcePath(), cancelled);
+        return item.archiveEntry()
+                ? OrganizerArchiveSupport.sha256(item.sourcePath(), item.sourceEntry(), cancelled)
+                : sha256(item.sourcePath(), cancelled, byteProgress);
     }
 
     private long sourceSize(OrganizationPlanItem item) throws Exception {
@@ -1018,7 +1064,8 @@ public final class ApplyLibraryOrganizationUseCase {
         verifyRequiredHash(source,expectedHash,"Source changed while recovery backup was created");
         return target;
     }
-    private void preflight(OrganizationPlan plan, BooleanSupplier cancelled, Consumer<OrganizationApplyProgress> progress)throws Exception{
+    private void preflight(OrganizationPlan plan, BooleanSupplier cancelled, Consumer<OrganizationApplyProgress> progress,
+                           OrganizerIoStallMonitor ioMonitor)throws Exception{
         checkCancelled(cancelled);
         int checked = 0;
         long lastLog = System.nanoTime();
@@ -1046,8 +1093,41 @@ public final class ApplyLibraryOrganizationUseCase {
                 // avoid hashing entire libraries solely to record a SKIPPED journal state.
                 continue;
             }
-            verifyExpectedSource(item, cancelled);
+            // Validate managed-catalog updates BEFORE staging, journal creation or file publication.
+            // An adapter that cannot track a move must reject it rather than allowing
+            // the filesystem to diverge silently from the SQLite catalog.
+            for (OrganizerCatalogPort catalog : catalogs) {
+                catalog.validateBeforeFilesystemCommit(item);
+            }
+            // During the first large book SHA pass there are no per-item commits yet.
+            // Emit a durable milestone before potentially slow disk I/O so an operator
+            // can tell preflight hashing from an actual copy-stage stall.
+            boolean diagnosticCheckpoint = checked == 1 || checked % 1000 == 0;
+            if (diagnosticCheckpoint) {
+                log.info("ORGANIZER_PREFLIGHT_SOURCE_START operationId={} item={} total={} action={}",
+                        plan.operationId(), checked, plan.actions().size(), item.action());
+            }
+            ioMonitor.mark(item.itemId(), item.archiveEntry() ? "PREFLIGHT_ARCHIVE_HASH_START" : "PREFLIGHT_HASH_START");
+            long hashStarted = System.nanoTime();
+            final long[] lastHashLog = {hashStarted};
+            final boolean[] firstHashLogged = {false};
+            verifyExpectedSource(item, cancelled, bytes -> {
+                ioMonitor.mark(item.itemId(), "PREFLIGHT_HASH_BYTES", bytes);
+                long now = System.nanoTime();
+                if (!firstHashLogged[0] || now - lastHashLog[0] >= TimeUnit.SECONDS.toNanos(5)) {
+                    log.info("ORGANIZER_PREFLIGHT_HASH operationId={} itemId={} bytesHashed={} elapsedMs={}",
+                            plan.operationId(), item.itemId(), bytes,
+                            TimeUnit.NANOSECONDS.toMillis(now - hashStarted));
+                    firstHashLogged[0] = true;
+                    lastHashLog[0] = now;
+                }
+            });
+            ioMonitor.mark(item.itemId(), "PREFLIGHT_HASH_DONE");
             long sourceBytes = sourceSize(item);
+            if (diagnosticCheckpoint) {
+                log.info("ORGANIZER_PREFLIGHT_SOURCE_VERIFIED operationId={} item={} sizeBytes={}",
+                        plan.operationId(), checked, sourceBytes);
+            }
 
             if (writesTarget(item.action()) && item.targetPath() != null) {
                 Path target = item.targetPath().toAbsolutePath().normalize();
@@ -1179,11 +1259,7 @@ public final class ApplyLibraryOrganizationUseCase {
                 .filter(existing -> existing.itemId().equals(item.itemId()))
                 .findFirst().orElse(null);
         if (previous == null) return journalItem(operationId, item, OrganizationItemState.FAILED, sourceHash, null, null, "APPLY_FAILED", rootMessage(failure));
-        return new OrganizationJournalItem(previous.operationId(), previous.itemId(), previous.sourcePath(), previous.sourceEntry(), previous.targetPath(),
-                previous.sourceSha256() == null || previous.sourceSha256().isBlank() ? sourceHash : previous.sourceSha256(), previous.targetSha256(), previous.action(),
-                OrganizationItemState.FAILED, previous.backupPath(), previous.optimizationProfile(), previous.sizeBefore(),
-                previous.sizeAfter(), previous.bytesSaved(), previous.percentSaved(), previous.optimizationSummaryJson(),
-                previous.targetStandard(), previous.deviceProfile(), previous.compressionBackend(), previous.validationStatus(),
+        return previous.withOutcome(OrganizationItemState.FAILED, sourceHash,
                 "APPLY_FAILED", rootMessage(failure));
     }
 
@@ -1219,7 +1295,13 @@ public final class ApplyLibraryOrganizationUseCase {
             throw new IllegalStateException("Source changed since Analyze/Preview: "+sourceLabel(i));
         return actual;
     }
-    private void verifyExpectedSource(OrganizationPlanItem i, BooleanSupplier cancelled)throws Exception{itemSourceHash(i, cancelled);}
+    private void verifyExpectedSource(OrganizationPlanItem i, BooleanSupplier cancelled,
+                                      java.util.function.LongConsumer byteProgress)throws Exception{
+        String actual = sha256Source(i, cancelled, byteProgress);
+        String expected = i.expectedSourceSha256();
+        if (expected != null && !expected.isBlank() && !expected.equalsIgnoreCase(actual))
+            throw new IllegalStateException("Source changed since Analyze/Preview: " + sourceLabel(i));
+    }
     /**
      * Preflight has already compared the entire source with the Analyze/Preview fingerprint.
      * Subsequent file-changing actions verify the bytes again at their commit boundary;
