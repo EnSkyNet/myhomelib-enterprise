@@ -146,11 +146,16 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
      */
     private void loadMissingDocumentAnnotation(BookId bookId, UiAsyncRequestToken requestToken, BookDto book) {
         if (book == null || (book.getAnnotation() != null && !book.getAnnotation().isBlank())) return;
-        if (!book.isLocal() && book.getArtifacts().stream().noneMatch(artifact -> artifact != null && artifact.isLocal())) {
-            return; // Remote-only books must not initiate document download/inspection.
-        }
         UiBackgroundExecutor.CancellableSubmission<String> task =
                 backgroundExecutor.submitInteractiveCancellable(() -> {
+                    // Details already probes the active collection root before treating a stale
+                    // remote catalogue flag as authoritative. Match that behavior here too, on
+                    // the worker thread: local-file reconciliation never performs an HTTP request.
+                    boolean claimedLocal = book.isLocal() || book.getArtifacts().stream()
+                            .anyMatch(artifact -> artifact != null && artifact.isLocal());
+                    if (!claimedLocal && !bookDownloadCoordinator.reconcileLocalClaim(book)) {
+                        return ""; // Genuine remote-only book: do not inspect or download.
+                    }
                     try (RichBookDetailsSession session = detailsAnalysisService.analyze(book.getId())) {
                         return session.inspection().annotation();
                     }
