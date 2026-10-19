@@ -60,7 +60,7 @@ jobs:
         run: >-
           ./tools/invoke-maven.sh -B -ntp
           -pl myhomelib-infrastructure -am
-          -Dtest=DatabaseMigrationMatrixTest,DatabaseMigrationAdapterLegacyGuardIntegrationTest,LegacyMigrationDataGuardTest,OnlineHttpPolicyTest,SqliteCollectionRepositoryCredentialsV7Test,ArchiveImportSupportTest,ZipArchiveReaderTransparencyTest,LocalCopyDeletionRecoveryStoreTest,SimpleEventBusTest,AsyncConfigTest,MemoryMonitorTest,FolderSyncAsyncExecutorTest,SpringExecutorAdapterTest,EditBookTransactionalConsistencyTest,PlatformSecretStoreProviderTest
+          -Dtest=DatabaseMigrationMatrixTest,DatabaseMigrationAdapterLegacyGuardIntegrationTest,LegacyMigrationDataGuardTest,OnlineHttpPolicyTest,SqliteCollectionRepositoryCredentialsV7Test,ArchiveImportSupportTest,ZipArchiveReaderTransparencyTest,LocalCopyDeletionRecoveryStoreTest,SimpleEventBusTest,AsyncConfigTest,MemoryMonitorTest,FolderSyncAsyncExecutorTest,SpringExecutorAdapterTest,EditBookTransactionalConsistencyTest,PlatformSecretStoreProviderTest,JdkApplicationUpdateAdapterTest
           -Dsurefire.failIfNoSpecifiedTests=false
           test
 
