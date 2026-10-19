@@ -9,6 +9,7 @@ import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.shared.util.ExecutablePathSafety;
 import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
+import com.myhomelibcorp.shared.util.NoLinkPathSafety;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import lombok.extern.slf4j.Slf4j;
 
@@ -184,7 +185,7 @@ public final class CalibreCliBookConverter implements BookConverter {
                     processOutput, normalizedTarget, null, outputSnapshot.sha256(), "Calibre converter publication");
         } finally {
             try {
-                SafeFilePublication.cleanupPrivateWorkspace(workspace);
+                NoLinkPathSafety.cleanupPrivateWorkspaceAfterProcess(workspace, "Calibre converter cleanup");
             } catch (IOException cleanupFailure) {
                 log.warn("Cannot remove temporary calibre workspace {}", workspace, cleanupFailure);
             }

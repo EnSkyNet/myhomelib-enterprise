@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.FileVisitResult;
@@ -13,10 +14,12 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.BiConsumer;
 
@@ -94,6 +97,41 @@ public final class NoLinkPathSafety {
                 return FileVisitResult.CONTINUE;
             }
         });
+    }
+
+    /**
+     * Cleans an operation-private converter workspace after its process tree has been stopped.
+     * Windows may briefly retain native file handles after process exit. Retry only filesystem
+     * failures, within one two-second budget for the entire workspace. Each attempt repeats the
+     * no-link path validation and streamed traversal; permanent failures still reach the caller.
+     * Retries stop when the budget expires, including when conversion was interrupted; the
+     * interrupt status is restored. Ordinary cleanup retains its fail-fast behaviour.
+     */
+    public static void cleanupPrivateWorkspaceAfterProcess(Path workspace, String role) throws IOException {
+        if (!System.getProperty("os.name", "").startsWith("Windows")) {
+            cleanupPrivateWorkspace(workspace, role);
+            return;
+        }
+        long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+        boolean interrupted = Thread.interrupted();
+        try {
+            while (true) {
+                try {
+                    cleanupPrivateWorkspace(workspace, role);
+                    return;
+                } catch (FileSystemException failure) {
+                    long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0) throw failure;
+                    try {
+                        TimeUnit.NANOSECONDS.sleep(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(25)));
+                    } catch (InterruptedException ignored) {
+                        interrupted = true;
+                    }
+                }
+            }
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
+        }
     }
 
     /** Validates an existing prefix without creating missing suffix components. */
