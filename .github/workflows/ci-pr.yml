@@ -332,7 +332,8 @@ jobs:
     needs: source-integrity
     name: Dependency vulnerability scan
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Cold NVD database sync can exceed 20 minutes (410k+ vulnerability records).
+    timeout-minutes: 75
     permissions:
       contents: read
 
