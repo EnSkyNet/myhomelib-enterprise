@@ -1,0 +1,60 @@
+name: Windows isolated full verify
+
+on:
+  pull_request:
+    branches:
+      - release/v34-sync
+    paths:
+      - .github/workflows/windows-full-verify.yml
+      - tools/windows-isolated.ps1
+      - tools/windows-test-isolation/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-full-verify:
+    name: Full root Maven clean verify (isolated Windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact candidate code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up JDK 21 with Maven dependency cache
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Record Windows build tool versions
+        shell: pwsh
+        run: |
+          java -version
+          mvn.cmd -version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run isolated full root clean verify
+        shell: pwsh
+        timeout-minutes: 75
+        run: |
+          $runRoot = Join-Path $env:RUNNER_TEMP ("mhl-full-verify-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          .\tools\windows-isolated.ps1 -RunRoot $runRoot -Mode Maven -Maven 'mvn.cmd' -MavenArguments @('-B', '-ntp', 'clean', 'verify')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload full test and isolation diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-full-verify-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/mhl-full-verify-${{ github.run_id }}-${{ github.run_attempt }}/maven.log
+            ${{ runner.temp }}/mhl-full-verify-${{ github.run_id }}-${{ github.run_attempt }}/probe.log
+            ${{ runner.temp }}/mhl-full-verify-${{ github.run_id }}-${{ github.run_attempt }}/result.txt
+            ${{ runner.temp }}/mhl-full-verify-${{ github.run_id }}-${{ github.run_attempt }}/reports/**
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
