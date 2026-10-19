@@ -2826,6 +2826,7 @@
       "status": "AUTOMATED_ACTION_SPECIFIC",
       "evidence": [
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/AsyncWorkspaceControllerContractTest.java",
+        "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/book/BookWorkspaceAnnotationFxTest.java",
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/service/UserVisibleObjectRenderingContractTest.java"
       ]
     },
@@ -2870,6 +2871,7 @@
       "status": "AUTOMATED_ACTION_SPECIFIC",
       "evidence": [
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/AsyncWorkspaceControllerContractTest.java",
+        "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/book/BookWorkspaceAnnotationFxTest.java",
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/book/BookWorkspaceControllerAsyncTest.java"
       ]
     },
@@ -2896,6 +2898,7 @@
       "status": "AUTOMATED_ACTION_SPECIFIC",
       "evidence": [
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/AsyncWorkspaceControllerContractTest.java",
+        "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/book/BookWorkspaceAnnotationFxTest.java",
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/book/BookWorkspaceControllerAsyncTest.java"
       ]
     },
@@ -2917,6 +2920,7 @@
       "status": "AUTOMATED_ACTION_SPECIFIC",
       "evidence": [
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/AsyncWorkspaceControllerContractTest.java",
+        "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/book/BookWorkspaceAnnotationFxTest.java",
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/book/BookWorkspaceControllerAsyncTest.java"
       ]
     },
