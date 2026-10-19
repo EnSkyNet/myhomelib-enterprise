@@ -69,7 +69,8 @@ class BookWorkspaceControllerAsyncTest {
                 mock(BookSaver.class),
                 mock(ClassicLibraryActionsService.class),
                 executor,
-                appState);
+                appState,
+                mock(com.myhomelibcorp.ui.details.BookDetailsAnalysisService.class));
 
         BookDto first = BookDto.builder().id("11111111-1111-1111-1111-111111111111").title("A").build();
         setField(controller, "currentBook", first);

@@ -153,11 +153,11 @@
 | `view/book-table.fxml` | `openGlobalFilters` | `AUTOMATED_ACTION_SPECIFIC` | `BookTableActionBehaviorContractTest.java` |
 | `view/book-table.fxml` | `resetTableProfile` | `AUTOMATED_ACTION_SPECIFIC` | `BookTableActionBehaviorContractTest.java` |
 | `view/book-table.fxml` | `showColumnChooser` | `AUTOMATED_ACTION_SPECIFIC` | `BookTableActionBehaviorContractTest.java` |
-| `view/book-workspace.fxml` | `onAddToCollection` | `AUTOMATED_ACTION_SPECIFIC` | `AsyncWorkspaceControllerContractTest.java`<br>`UserVisibleObjectRenderingContractTest.java` |
+| `view/book-workspace.fxml` | `onAddToCollection` | `AUTOMATED_ACTION_SPECIFIC` | `AsyncWorkspaceControllerContractTest.java`<br>`BookWorkspaceAnnotationFxTest.java`<br>`UserVisibleObjectRenderingContractTest.java` |
 | `view/book-workspace.fxml` | `onBack` | `AUTOMATED_ACTION_SPECIFIC` | `RemainingFxmlActionBehaviorContractTest.java` |
-| `view/book-workspace.fxml` | `onDeleteBook` | `AUTOMATED_ACTION_SPECIFIC` | `AsyncWorkspaceControllerContractTest.java`<br>`BookWorkspaceControllerAsyncTest.java` |
-| `view/book-workspace.fxml` | `onDownload` | `AUTOMATED_ACTION_SPECIFIC` | `AsyncWorkspaceControllerContractTest.java`<br>`BookWorkspaceControllerAsyncTest.java` |
-| `view/book-workspace.fxml` | `onEdit` | `AUTOMATED_ACTION_SPECIFIC` | `AsyncWorkspaceControllerContractTest.java`<br>`BookWorkspaceControllerAsyncTest.java` |
+| `view/book-workspace.fxml` | `onDeleteBook` | `AUTOMATED_ACTION_SPECIFIC` | `AsyncWorkspaceControllerContractTest.java`<br>`BookWorkspaceAnnotationFxTest.java`<br>`BookWorkspaceControllerAsyncTest.java` |
+| `view/book-workspace.fxml` | `onDownload` | `AUTOMATED_ACTION_SPECIFIC` | `AsyncWorkspaceControllerContractTest.java`<br>`BookWorkspaceAnnotationFxTest.java`<br>`BookWorkspaceControllerAsyncTest.java` |
+| `view/book-workspace.fxml` | `onEdit` | `AUTOMATED_ACTION_SPECIFIC` | `AsyncWorkspaceControllerContractTest.java`<br>`BookWorkspaceAnnotationFxTest.java`<br>`BookWorkspaceControllerAsyncTest.java` |
 | `view/book-workspace.fxml` | `onOpenFolder` | `AUTOMATED_ACTION_SPECIFIC` | `RemainingFxmlActionBehaviorContractTest.java` |
 | `view/book-workspace.fxml` | `onOpen` | `AUTOMATED_ACTION_SPECIFIC` | `RemainingFxmlActionBehaviorContractTest.java` |
 | `view/book-workspace.fxml` | `onRead` | `AUTOMATED_ACTION_SPECIFIC` | `RemainingFxmlActionBehaviorContractTest.java` |
