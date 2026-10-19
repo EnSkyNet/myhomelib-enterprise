@@ -20,6 +20,45 @@ class OrganizerTargetPublisherTest {
     @TempDir Path temp;
 
     @Test
+    void cancellationRetainsReplacedTemporaryFile() throws Exception {
+        assertReplacedTemporaryRetained(true);
+    }
+
+    @Test
+    void hashFailureRetainsReplacedTemporaryFile() throws Exception {
+        assertReplacedTemporaryRetained(false);
+    }
+
+    private void assertReplacedTemporaryRetained(boolean cancel) throws Exception {
+        Path staged = Files.writeString(temp.resolve("source.fb2"), "owned source");
+        Path directory = Files.createDirectory(temp.resolve("destination"));
+        Path target = directory.resolve("book.fb2");
+        var replaced = new java.util.concurrent.atomic.AtomicReference<Path>();
+        String digest = OrganizerFileIntegritySupport.sha256(staged);
+        java.util.function.BooleanSupplier race = () -> {
+            if (replaced.get() != null) return cancel;
+            try (var files = Files.list(directory)) {
+                Path candidate = files.filter(p -> p.getFileName().toString().startsWith(".mhl-tmp-"))
+                        .findFirst().orElse(null);
+                if (candidate != null && Files.size(candidate) == Files.size(staged)) {
+                    Files.move(candidate, directory.resolve("detached-owned-copy"));
+                    Files.writeString(candidate, "foreign replacement", java.nio.file.StandardOpenOption.CREATE_NEW);
+                    replaced.set(candidate);
+                    return cancel;
+                }
+                return false;
+            } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
+        };
+        assertThatThrownBy(() -> new OrganizerTargetPublisher().publish(staged, target, digest, race))
+                .isInstanceOf(cancel ? java.util.concurrent.CancellationException.class : IllegalStateException.class);
+        assertThat(replaced.get()).as("The replacement race must actually execute").isNotNull();
+        assertThat(replaced.get()).exists();
+        assertThat(Files.readString(replaced.get())).isEqualTo("foreign replacement");
+        assertThat(Files.readString(staged)).isEqualTo("owned source");
+        assertThat(target).doesNotExist();
+    }
+
+    @Test
     void cancelledPublicationNeverExposesACompletedTargetOrUnownedPartialCopy() throws Exception {
         Path staged = temp.resolve("large-stage.fb2");
         byte[] block = new byte[1024 * 1024];
@@ -37,8 +76,7 @@ class OrganizerTargetPublisherTest {
         assertThat(target).doesNotExist();
         assertThat(staged).exists();
         try (var stagedFiles = Files.list(target.getParent())) {
-            assertThat(stagedFiles.map(path -> path.getFileName().toString()).toList())
-                    .noneMatch(name -> name.startsWith(".mhl-tmp-"));
+            for (Path path : stagedFiles.toList()) assertCleanedOrRetainedWithoutFileIdentity(path);
         }
     }
 
@@ -156,8 +194,10 @@ class OrganizerTargetPublisherTest {
         assertThat(Files.readString(target, StandardCharsets.UTF_8)).isEqualTo("verified payload");
         assertThat(staged).exists();
         try (var children = Files.list(target.getParent())) {
-            assertThat(children.map(path -> path.getFileName().toString()).toList())
-                    .noneMatch(name -> name.contains(".mhl-tmp-"));
+            for (Path path : children.filter(p -> !p.equals(target)).toList()) {
+                assertCleanedOrRetainedWithoutFileIdentity(path);
+                assertThat(Files.readString(path)).isEqualTo("verified payload");
+            }
         }
     }
 
@@ -182,12 +222,12 @@ class OrganizerTargetPublisherTest {
 
         assertThatThrownBy(() -> new OrganizerTargetPublisher().publish(staged, target, previouslyValidated))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Destination temporary copy hash mismatch");
+                .hasMessageContaining("Source hash mismatch");
 
         assertThat(target).doesNotExist();
         assertThat(Files.readString(staged)).isEqualTo("after");
         try (var children = Files.list(target.getParent())) {
-            assertThat(children.toList()).isEmpty();
+            for (Path path : children.toList()) assertCleanedOrRetainedWithoutFileIdentity(path);
         }
     }
 

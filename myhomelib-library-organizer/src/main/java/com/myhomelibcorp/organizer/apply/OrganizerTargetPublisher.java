@@ -61,13 +61,18 @@ final class OrganizerTargetPublisher {
         }
 
         Path temp = safeTarget.resolveSibling(".mhl-tmp-" + UUID.randomUUID());
+        Object[] createdKey = new Object[1];
         boolean published = false;
         try {
-            OrganizerPathSafety.copyFreshFile(safeStaged, temp, "Organizer destination temporary copy", cancelled);
-            OrganizerFileIntegritySupport.checkCancelled(cancelled);
-            if (!expectedHash.equalsIgnoreCase(OrganizerFileIntegritySupport.sha256(temp, cancelled))) {
-                throw new IllegalStateException("Destination temporary copy hash mismatch: " + temp);
-            }
+            OrganizerPathSafety.copyFreshFileVerified(safeStaged, temp, "Organizer destination temporary copy",
+                    cancelled, expectedHash, (stage, bytes) -> {
+                        if ("OPENED".equals(stage)) {
+                            try {
+                                createdKey[0] = Files.readAttributes(temp, java.nio.file.attribute.BasicFileAttributes.class,
+                                        LinkOption.NOFOLLOW_LINKS).fileKey();
+                            } catch (IOException failure) { throw new java.io.UncheckedIOException(failure); }
+                        }
+                    });
             OrganizerFileIntegritySupport.checkCancelled(cancelled);
             // Prefer atomic hard-link publication. FAT/exFAT and some other Windows
             // volumes reject it with ERROR_INVALID_FUNCTION; fall back to a fresh
@@ -80,11 +85,6 @@ final class OrganizerTargetPublisher {
             }
             OrganizerFileIntegritySupport.checkCancelled(cancelled);
         } catch (Exception failure) {
-            try {
-                Files.deleteIfExists(temp);
-            } catch (Exception cleanup) {
-                failure.addSuppressed(cleanup);
-            }
             if (published) {
                 if (matchesRequiredHash(safeTarget, expectedHash)) {
                     try {
@@ -100,12 +100,41 @@ final class OrganizerTargetPublisher {
             throw failure;
         } finally {
             try {
-                Files.deleteIfExists(temp);
+                cleanupTemporary(temp, createdKey[0], expectedHash);
             } catch (Exception cleanup) {
                 LOG.log(System.Logger.Level.WARNING, "ORGANIZER_PUBLICATION_CLEANUP_FAILED temporary={0} error={1}",
                         temp.getFileName(), cleanup.getClass().getSimpleName());
             }
         }
+    }
+
+    private static void cleanupTemporary(Path temp, Object createdKey, String expectedHash) throws Exception {
+        if (!Files.exists(temp, LinkOption.NOFOLLOW_LINKS)) return;
+        var attributes = Files.readAttributes(temp, java.nio.file.attribute.BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS);
+        if (createdKey == null || !attributes.isRegularFile() || !createdKey.equals(attributes.fileKey())) {
+            LOG.log(System.Logger.Level.WARNING, "ORGANIZER_TEMP_IDENTITY_UNPROVEN_RETAINED temporary={0}", temp.getFileName());
+            return;
+        }
+        verifyRequiredHash(temp, expectedHash, "Organizer temporary cleanup");
+        // Revalidate the detached object as well: a replacement between the first
+        // identity check and move must be restored/retained, never deleted.
+        Path detached = temp.resolveSibling(".mhl-remove-" + UUID.randomUUID() + ".tmp");
+        Files.move(temp, detached);
+        try {
+            var moved = Files.readAttributes(detached, java.nio.file.attribute.BasicFileAttributes.class,
+                    LinkOption.NOFOLLOW_LINKS);
+            if (!moved.isRegularFile() || !createdKey.equals(moved.fileKey())) {
+                throw new IllegalStateException("Organizer temporary identity changed during cleanup");
+            }
+            verifyRequiredHash(detached, expectedHash, "Organizer detached temporary cleanup");
+        } catch (Exception changed) {
+            try {
+                if (!Files.exists(temp, LinkOption.NOFOLLOW_LINKS)) Files.move(detached, temp);
+            } catch (Exception restore) { changed.addSuppressed(restore); }
+            throw changed;
+        }
+        Files.delete(detached);
     }
 
     private static void recordRetainedTarget(Exception failure, Path target, Exception cleanup) {
