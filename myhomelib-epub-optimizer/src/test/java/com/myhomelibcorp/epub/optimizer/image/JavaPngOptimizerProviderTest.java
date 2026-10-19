@@ -47,6 +47,14 @@ class JavaPngOptimizerProviderTest {
         assertThat(candidate.lossless()).isTrue();
         assertThat(candidate.byteSize()).isLessThan(sourceSize);
         assertThat(new EpubImageAnalyzer().decodedPixelsEqual(source, candidate.file(), ImageCodec.PNG)).isTrue();
+        // Deletion alone can merely mark an open Windows file for deletion. Recreating
+        // the same name and removing its directory proves that no handle remains open.
+        Files.delete(candidate.file());
+        Files.writeString(candidate.file(), "released", StandardOpenOption.CREATE_NEW);
+        Files.delete(candidate.file());
+        Files.delete(candidate.file().getParent());
+        Files.delete(source);
+        Files.writeString(source, "released", StandardOpenOption.CREATE_NEW);
     }
 
     @Test
@@ -75,8 +83,8 @@ class JavaPngOptimizerProviderTest {
         Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName("png");
         assertThat(writers.hasNext()).isTrue();
         ImageWriter writer = writers.next();
-        try (ImageOutputStream output = ImageIO.createImageOutputStream(Files.newOutputStream(target,
-                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE))) {
+        try (var raw = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+             ImageOutputStream output = ImageIO.createImageOutputStream(raw)) {
             writer.setOutput(output);
             ImageWriteParam param = writer.getDefaultWriteParam();
             if (param.canWriteCompressed()) {

@@ -70,20 +70,26 @@ public class MetabibCatalogReader implements CatalogReader {
             }
             Path safeSource = SafeFilePublication.requireSafeRegularFile(source, "Metabib source");
             OpenedInput opened = openInput(safeSource);
-            BufferedReader reader = new BufferedReader(new InputStreamReader(opened.stream(), StandardCharsets.UTF_8), 128 * 1024);
-            String headerLine = readNonBlank(reader);
-            if (headerLine == null) {
-                opened.close();
-                throw new IllegalArgumentException("Empty metabib dataset: " + source);
+            try {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(opened.stream(), StandardCharsets.UTF_8), 128 * 1024);
+                String headerLine = readNonBlank(reader);
+                if (headerLine == null) {
+                    throw new IllegalArgumentException("Empty metabib dataset: " + source);
+                }
+                headerLine = stripBom(headerLine);
+                JsonNode header = objectMapper.readTree(headerLine);
+                MetabibDatasetValidator.Context validation = MetabibDatasetValidator.validateHeader(header, source);
+                CatalogDatasetInfo info = new CatalogDatasetInfo(
+                        text(header, "schema"), text(header, "record_schema"), text(header, "id"), text(header, "library"),
+                        header.has("records") && header.get("records").canConvertToLong() ? header.get("records").asLong() : null,
+                        datasetMetadata(header));
+                return new Session(reader, opened, info, source, validation);
+                } catch (IOException | RuntimeException | Error failure) {
+                // Ownership transfers only after Session (including its initial read)
+                // has been constructed successfully. Keep the original parse failure.
+                try { opened.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+                throw failure;
             }
-            headerLine = stripBom(headerLine);
-            JsonNode header = objectMapper.readTree(headerLine);
-            MetabibDatasetValidator.Context validation = MetabibDatasetValidator.validateHeader(header, source);
-            CatalogDatasetInfo info = new CatalogDatasetInfo(
-                    text(header, "schema"), text(header, "record_schema"), text(header, "id"), text(header, "library"),
-                    header.has("records") && header.get("records").canConvertToLong() ? header.get("records").asLong() : null,
-                    datasetMetadata(header));
-            return new Session(reader, opened, info, source, validation);
         } catch (IOException e) {
             throw new IllegalStateException("Cannot open metabib dataset " + source + ": " + e.getMessage(), e);
         }
