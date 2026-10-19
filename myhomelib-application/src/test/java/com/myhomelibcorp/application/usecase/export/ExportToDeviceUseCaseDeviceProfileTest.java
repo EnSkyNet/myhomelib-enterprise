@@ -125,23 +125,88 @@ class ExportToDeviceUseCaseDeviceProfileTest {
                 .format(ExportRequest.ExportFormat.FB2_ZIP)
                 .preferredFormats(List.of(ExportRequest.ExportFormat.FB2_ZIP, ExportRequest.ExportFormat.FB2))
                 .collisionPolicy(ExportRequest.CollisionPolicy.OVERWRITE)
-                .customFileNameTemplate("book").subfolderTemplate("safe")
+                .customFileNameTemplate("Гарна назва").subfolderTemplate("safe")
                 .build();
 
         ExportToDeviceUseCase.ExportResult result = useCase.execute(request);
 
-        Path archive = destination.resolve("safe").resolve("book.fb2.zip");
+        Path archive = destination.resolve("safe").resolve("Гарна назва.fb2.zip");
         assertThat(result.failed()).isZero();
         assertThat(result.exported()).isEqualTo(1);
         assertThat(archive).exists();
-        assertThat(destination.resolve("safe").resolve("book.fb2")).doesNotExist();
+        assertThat(destination.resolve("safe").resolve("Гарна назва.fb2")).doesNotExist();
         try (ZipFile zip = new ZipFile(archive.toFile())) {
-            assertThat(zip.getEntry("book.fb2")).isNotNull();
+            assertThat(zip.size()).isEqualTo(1);
+            ZipEntry entry = zip.getEntry("Гарна назва.fb2");
+            assertThat(entry).isNotNull();
+            assertThat(zip.getInputStream(entry).readAllBytes())
+                    .isEqualTo("FB2".getBytes(StandardCharsets.UTF_8));
+            assertThat(zip.getEntry("book.fb2")).isNull();
         }
         verify(converter).convert(argThat(context -> context != null
                 && "fb2".equals(context.sourceFormat())
                 && "fb2_zip".equals(context.targetFormat())
                 && context.targetFile().getFileName().toString().endsWith(".fb2.zip")));
+    }
+
+    @Test
+    void existingDownloadedFb2ZipRenamesInnerBookAfterCollisionRename() throws Exception {
+        BookId id = BookId.generate();
+        String technicalEntry = "Dornichev_Demon-Pozhiratel-dush-01-18.729586.fb2";
+        String title = "Демон. Пожиратель душ #01-18";
+        byte[] fb2 = "<FictionBook>unmodified text</FictionBook>"
+                .getBytes(StandardCharsets.UTF_8);
+        java.io.ByteArrayOutputStream archiveBytes = new java.io.ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(archiveBytes, StandardCharsets.UTF_8)) {
+            zip.putNextEntry(new ZipEntry(technicalEntry));
+            zip.write(fb2);
+            zip.closeEntry();
+        }
+        byte[] sourceArchive = archiveBytes.toByteArray();
+        BookArtifact downloaded = artifact("downloaded", "source.fb2.zip", "fb2_zip", sourceArchive);
+        Book book = Book.builder().id(id).title(title)
+                .file(downloaded.getFile()).artifacts(List.of(downloaded))
+                .preferredArtifactId(downloaded.getId()).local(true).build();
+
+        BookQueryRepository books = mock(BookQueryRepository.class);
+        BookResourcePort resources = mock(BookResourcePort.class);
+        ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
+        when(books.findById(id)).thenReturn(Optional.of(book));
+        when(resources.readBookData(eq("source.fb2.zip"), anyString(), anyString(), anyString()))
+                .thenReturn(Optional.of(new ByteArrayInputStream(sourceArchive)));
+        when(settings.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
+        ExportToDeviceUseCase useCase = new ExportToDeviceUseCase(books, List.of(), resources, settings,
+                mock(BookActionProfileService.class), mock(BookActionExecutionService.class),
+                mock(ExportHistoryService.class), mock(ExportCompletionService.class),
+                mock(ConvertBookUseCase.class), activeLifecycle(),
+                new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
+
+        Path destination = Files.createDirectories(temp.resolve("renamed-archive-device").resolve("safe"));
+        Files.write(destination.resolve(title + ".fb2.zip"), "previous export".getBytes(StandardCharsets.UTF_8));
+        ExportRequest request = ExportRequest.builder()
+                .collectionId("c1").bookIds(List.of(id))
+                .destinationFolder(temp.resolve("renamed-archive-device"))
+                .format(ExportRequest.ExportFormat.FB2_ZIP)
+                .preferredFormats(List.of(ExportRequest.ExportFormat.FB2_ZIP))
+                .collisionPolicy(ExportRequest.CollisionPolicy.RENAME)
+                .customFileNameTemplate("%t").subfolderTemplate("safe")
+                .build();
+
+        ExportToDeviceUseCase.ExportResult result = useCase.execute(request);
+
+        assertThat(result.failed()).isZero();
+        assertThat(result.exported()).isEqualTo(1);
+        Path exported = destination.resolve(title + " (1).fb2.zip");
+        assertThat(exported).exists();
+        assertThat(Files.readString(destination.resolve(title + ".fb2.zip")))
+                .isEqualTo("previous export");
+        try (ZipFile zip = new ZipFile(exported.toFile(), StandardCharsets.UTF_8)) {
+            assertThat(zip.size()).isEqualTo(1);
+            ZipEntry entry = zip.getEntry(title + " (1).fb2");
+            assertThat(entry).isNotNull();
+            assertThat(zip.getEntry(technicalEntry)).isNull();
+            assertThat(zip.getInputStream(entry).readAllBytes()).isEqualTo(fb2);
+        }
     }
 
     @Test
