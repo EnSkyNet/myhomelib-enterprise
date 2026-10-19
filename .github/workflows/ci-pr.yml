@@ -348,7 +348,7 @@ jobs:
         shell: pwsh
         run: >-
           .\tools\invoke-maven.ps1 -B -ntp
-          -pl myhomelib-updater,myhomelib-bootstrap -am
+          -pl 'myhomelib-updater,myhomelib-bootstrap' -am
           '-Dtest=ApplicationUpdaterMainTest,ApplicationUpdateInstallerTest'
           '-Dsurefire.failIfNoSpecifiedTests=false'
           test
