@@ -1,6 +1,7 @@
 package com.myhomelibcorp.shared.util;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -23,6 +24,45 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ProcessExecutionSupportTest {
+
+    @Test
+    void cancellationBeforeStartDoesNotLaunchAnExecutable() {
+        assertThatThrownBy(() -> ProcessExecutionSupport.run(
+                new ProcessBuilder("nonexistent-cancelled-converter"), null, Duration.ofSeconds(5), 4096,
+                () -> true))
+                .isInstanceOf(CancellationException.class);
+    }
+
+    @Test
+    void cancellationBeforeStartDoesNotTruncateRedirectedOutput(@TempDir Path directory) throws Exception {
+        Path output = directory.resolve("existing-output.txt");
+        Files.writeString(output, "existing content");
+
+        assertThatThrownBy(() -> ProcessExecutionSupport.run(
+                new ProcessBuilder(javaCommand(Sleeper.class)).redirectOutput(output.toFile()),
+                null, Duration.ofSeconds(5), 4096, () -> true))
+                .isInstanceOf(CancellationException.class);
+
+        assertThat(Files.readString(output)).isEqualTo("existing content");
+    }
+
+    @Test
+    void interruptionBeforeStartDoesNotTruncateRedirectedOutput(@TempDir Path directory) throws Exception {
+        Path output = directory.resolve("existing-output.txt");
+        Files.writeString(output, "existing content");
+
+        Thread.currentThread().interrupt();
+        try {
+            assertThatThrownBy(() -> ProcessExecutionSupport.run(
+                    new ProcessBuilder(javaCommand(Sleeper.class)).redirectOutput(output.toFile()),
+                    null, Duration.ofSeconds(5), 4096))
+                    .isInstanceOf(InterruptedException.class);
+        } finally {
+            Thread.interrupted();
+        }
+
+        assertThat(Files.readString(output)).isEqualTo("existing content");
+    }
 
     @Test
     void drainsLargeStdoutAndStderrWithoutDeadlockAndBoundsCapturedOutput() throws Exception {
@@ -53,7 +93,6 @@ class ProcessExecutionSupportTest {
                 .hasMessageContaining("cancelled");
         assertThat(polls.get()).isGreaterThanOrEqualTo(2);
     }
-
 
     @Test
     void timeoutTerminatesDescendantProcessTree() throws Exception {
@@ -261,4 +300,6 @@ class ProcessExecutionSupportTest {
             System.out.print("len=" + input.length);
         }
     }
+
+
 }
