@@ -18,8 +18,8 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.UUID;
@@ -191,11 +191,7 @@ public final class LocalCopyDeletionRecoveryStore {
             Path managedRoot = Path.of(required(properties, "managedRoot"));
             String collectionId = required(properties, "collectionId");
             String ids = required(properties, "bookIds");
-            List<String> bookIds = new ArrayList<>();
-            for (String id : ids.split(",")) {
-                String trimmed = id.trim();
-                if (!trimmed.isEmpty() && !bookIds.contains(trimmed)) bookIds.add(trimmed);
-            }
+            List<String> bookIds = parseAffectedBookIds(ids);
             if (bookIds.isEmpty()) throw new IOException("Recovery marker has no book ids: " + marker);
             String contentHash = VERSION.equals(version)
                     ? normalizeHash(required(properties, "contentSha256"), "marker content SHA-256")
@@ -205,6 +201,19 @@ public final class LocalCopyDeletionRecoveryStore {
         } catch (RuntimeException invalidMarker) {
             throw new IOException("Invalid local-copy deletion recovery marker: " + marker, invalidMarker);
         }
+    }
+
+    /**
+     * Retain marker order while deduplicating in linear time. A bounded on-disk marker may
+     * still contain thousands of ids; repeated List.contains made startup recovery quadratic.
+     */
+    static List<String> parseAffectedBookIds(String csv) {
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        for (String id : csv.split(",")) {
+            String trimmed = id.trim();
+            if (!trimmed.isEmpty()) unique.add(trimmed);
+        }
+        return List.copyOf(unique);
     }
 
     private static String required(Properties properties, String key) throws IOException {
