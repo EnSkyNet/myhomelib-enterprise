@@ -344,6 +344,14 @@ jobs:
           '-Dsurefire.failIfNoSpecifiedTests=false'
           test
 
+      - name: Windows updater launch and rollback without POSIX shell
+        shell: pwsh
+        run: >-
+          .\tools\invoke-maven.ps1 -B -ntp
+          -pl myhomelib-updater -am
+          '-Dtest=ApplicationUpdaterMainTest'
+          '-Dsurefire.failIfNoSpecifiedTests=false'
+          test
       - name: Retain native Windows test diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
