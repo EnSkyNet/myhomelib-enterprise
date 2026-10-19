@@ -185,6 +185,40 @@ class CalibreCliBookConverterTest {
     }
 
     @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs(org.junit.jupiter.api.condition.OS.WINDOWS)
+    void cancellationCleansWorkspaceAfterTransientNativeHandleCloses() throws Exception {
+        previousDataDir = System.getProperty("myhomelib.dataDir");
+        System.setProperty("myhomelib.dataDir", temp.resolve("cancel-data").toString());
+        AtomicReference<Path> workspace = new AtomicReference<>();
+        AtomicReference<Thread> release = new AtomicReference<>();
+        CalibreCliBookConverter converter = availableConverter("epub", ".epub", (argv, cwd, cancelled, timeout) -> {
+            Path input = Path.of(argv.get(1));
+            workspace.set(input.getParent());
+            var channel = java.nio.channels.FileChannel.open(input, java.nio.file.StandardOpenOption.READ,
+                    com.sun.nio.file.ExtendedOpenOption.NOSHARE_DELETE);
+            release.set(Thread.startVirtualThread(() -> {
+                try (channel) {
+                    Thread.sleep(200);
+                } catch (Exception failure) {
+                    throw new AssertionError(failure);
+                }
+            }));
+            throw new CancellationException("native worker cancelled");
+        });
+        Path target = temp.resolve("cancelled.epub");
+        try {
+            assertThrows(CancellationException.class, () -> converter.convert(new BookConversionContext(
+                    book("source.fb2"), "fb2", "epub", new ByteArrayInputStream("source".getBytes()),
+                    target, () -> false, 1024)));
+            assertNotNull(workspace.get());
+            assertFalse(Files.exists(workspace.get()), "Transient native handle must not leave private source bytes");
+            assertFalse(Files.exists(target));
+        } finally {
+            if (release.get() != null) release.get().join(5_000);
+        }
+    }
+
+    @Test
     void configuredExecutableRunsThroughRealProcessBuilderOnPosix() throws Exception {
         org.junit.jupiter.api.Assumptions.assumeFalse(System.getProperty("os.name", "").toLowerCase().contains("win"));
         previousDataDir = System.getProperty("myhomelib.dataDir");

@@ -313,7 +313,7 @@ jobs:
         run: >-
           .\tools\invoke-maven.ps1 -B -ntp
           -pl myhomelib-library-organizer -am
-          '-Dtest=ApplyLibraryOrganizationUseCaseTest,OrganizerTargetPublisherTest,OrganizerIoStallMonitorTest,OrganizerPathSafetyTest,OrganizerArchiveSupportTest'
+          '-Dtest=ApplyLibraryOrganizationUseCaseTest,OrganizerTargetPublisherTest,OrganizerIoStallMonitorTest,OrganizerPathSafetyTest,OrganizerArchiveSupportTest,ProcessWorkspaceCleanupTest'
           '-Dsurefire.failIfNoSpecifiedTests=false'
           test
 
