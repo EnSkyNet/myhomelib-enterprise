@@ -58,7 +58,7 @@ class SqliteOrganizerApplyCrashIntegrationV27Test {
                         "-cp", cp, SqliteOrganizerApplyCrashWorkerV27.class.getName(),
                         db.toString(), source.toString(), target.toString(), originalHash,
                         operationId.toString(), itemId.toString(), point)
-                        .redirectErrorStream(true).redirectOutput(childLog).start();
+                        .redirectErrorStream(true).redirectOutput(childLog.toFile()).start();
                 boolean ended = child.waitFor(45, TimeUnit.SECONDS);
                 if (!ended) {child.destroyForcibly();child.waitFor();}
                 String output = Files.readString(childLog);
