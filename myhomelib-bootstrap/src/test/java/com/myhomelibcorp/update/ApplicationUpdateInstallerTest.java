@@ -20,6 +20,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -36,9 +37,10 @@ class ApplicationUpdateInstallerTest {
         Path staged = temp.resolve("candidate.bin"); Files.write(staged, newBytes);
         UpdatePlan plan = plan(pair, staged, install, newBytes);
         var installer = new ApplicationUpdateInstaller(id -> Optional.of(pair.getPublic()));
-        String script = "printf healthy > \"$" + ApplicationUpdateInstaller.HEALTH_MARKER_ENV + "\"; sleep 1";
 
-        var result = installer.apply(plan, context(), List.of("sh", "-c", script), Duration.ofSeconds(2));
+        var result = installer.apply(plan, context(), launchProbe("healthy"), Duration.ofSeconds(10));
+        Files.delete(plan.healthMarker());
+        awaitProbeExit(result.launchedPid());
         assertThat(result.installed()).isTrue();
         assertThat(Files.readAllBytes(install)).containsExactly(newBytes);
         assertThat(Files.exists(plan.backupPath())).isFalse();
@@ -54,7 +56,7 @@ class ApplicationUpdateInstallerTest {
         UpdatePlan plan = plan(pair, staged, install, newBytes);
         var installer = new ApplicationUpdateInstaller(id -> Optional.of(pair.getPublic()));
 
-        assertThatThrownBy(() -> installer.apply(plan, context(), List.of("sh", "-c", "exit 0"), Duration.ofMillis(150)))
+        assertThatThrownBy(() -> installer.apply(plan, context(), launchProbe("unhealthy"), Duration.ofSeconds(5)))
                 .isInstanceOf(java.io.IOException.class).hasMessageContaining("healthy");
         assertThat(Files.readAllBytes(install)).containsExactly(oldBytes);
     }
@@ -70,11 +72,42 @@ class ApplicationUpdateInstallerTest {
         Files.writeString(staged, "tampered", StandardCharsets.UTF_8);
         var installer = new ApplicationUpdateInstaller(id -> Optional.of(pair.getPublic()));
 
-        assertThatThrownBy(() -> installer.apply(plan, context(), List.of("sh", "-c", "exit 0"), Duration.ofMillis(100)))
+        assertThatThrownBy(() -> installer.apply(plan, context(), launchProbe("unhealthy"), Duration.ofSeconds(5)))
                 .isInstanceOf(SecurityException.class);
         assertThat(Files.readAllBytes(install)).containsExactly(oldBytes);
     }
 
+    private static List<String> launchProbe(String outcome) throws Exception {
+        String executable = System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java";
+        Path java = Path.of(System.getProperty("java.home"), "bin", executable);
+        Path classes = Path.of(LaunchProbe.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        return List.of(java.toString(), "-cp", classes.toString(), LaunchProbe.class.getName(), outcome);
+    }
+
+    private static void awaitProbeExit(long pid) throws Exception {
+        var process = ProcessHandle.of(pid);
+        if (process.isEmpty()) return;
+        try {
+            process.get().onExit().get(10, TimeUnit.SECONDS);
+        } finally {
+            if (process.get().isAlive()) {
+                process.get().destroyForcibly();
+                process.get().onExit().get(10, TimeUnit.SECONDS);
+            }
+        }
+    }
+
+    /** Real child JVM; no shell or executable lookup through PATH is required. */
+    public static final class LaunchProbe {
+        public static void main(String[] args) throws Exception {
+            if (!"healthy".equals(args[0])) return;
+            Path marker = Path.of(System.getenv(ApplicationUpdateInstaller.HEALTH_MARKER_ENV));
+            Files.writeString(marker, "ok", StandardCharsets.UTF_8);
+            // Remain alive until the test acknowledges health evidence; self-bound on failures.
+            long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+            while (Files.exists(marker) && System.nanoTime() < deadline) Thread.sleep(10);
+        }
+    }
     private UpdatePlan plan(KeyPair pair, Path staged, Path install, byte[] newBytes) throws Exception {
         String sha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(newBytes));
         ReleaseManifest unsigned = new ReleaseManifest("myhomelib", "8.1.0", UpdateChannel.STABLE, "linux", "x64",
