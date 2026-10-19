@@ -208,29 +208,49 @@ class ContentIndexingQueueServiceTest {
                 .hasMessageContaining("duplicate artifact work");
     }
 
-    @Test
+    @org.junit.jupiter.api.RepeatedTest(10)
     void freshnessCheckpointCannotClearWhileOlderAsyncSnapshotIsStillWriting() throws Exception {
         OrderingCheckpoint checkpoint = new OrderingCheckpoint();
         CountDownLatch processed = new CountDownLatch(1);
+        var worker = new java.util.concurrent.atomic.AtomicReference<Thread>();
         ContentIndexingQueueService queue = queue((task, control) -> {
+            worker.set(Thread.currentThread());
             processed.countDown();
             return ContentIndexingOutcome.completed();
         }, checkpoint, () -> false, IndexingResourceProfile.ECO, 2);
         queue.pause();
 
-        queue.enqueue(task("checkpoint-race", ContentIndexingPriority.NORMAL));
-        assertThat(checkpoint.nonEmptySaveStarted.await(2, TimeUnit.SECONDS)).isTrue();
-
-        queue.resume();
-        assertThat(processed.await(2, TimeUnit.SECONDS)).isTrue();
-
-        // The worker has drained the task and is trying to publish READY/clear the checkpoint.
-        // The old async snapshot must retain the write lock until its durable save finishes.
-        assertThat(checkpoint.clearObserved.await(250, TimeUnit.MILLISECONDS)).isFalse();
-
-        checkpoint.releaseNonEmptySave.countDown();
-        assertThat(checkpoint.clearObserved.await(2, TimeUnit.SECONDS)).isTrue();
-        assertThat(checkpoint.nonEmptySaveAfterClear).isFalse();
+        try (var caller = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+            try {
+                queue.enqueue(task("checkpoint-race", ContentIndexingPriority.NORMAL));
+                assertThat(checkpoint.nonEmptySaveStarted.await(2, TimeUnit.SECONDS)).isTrue();
+                // resume() dispatches synchronously as well as waking the coordinator.
+                // It can wait for enqueueLock held by a worker finalizing against our
+                // blocked checkpoint. The test thread must remain free to release it.
+                var resumed = caller.submit(queue::resume);
+                assertThat(processed.await(2, TimeUnit.SECONDS)).isTrue();
+                var threads = java.lang.management.ManagementFactory.getThreadMXBean();
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                java.lang.management.ThreadInfo info;
+                do {
+                    info = threads.getThreadInfo(worker.get().threadId(), 20);
+                    if (info != null && info.getThreadState() == Thread.State.BLOCKED
+                            && info.getLockOwnerId() == checkpoint.writer.threadId()) break;
+                    java.util.concurrent.locks.LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
+                } while (System.nanoTime() < deadline);
+                assertThat(info).as("Worker must reach the checkpoint barrier").isNotNull();
+                assertThat(info.getThreadState()).isEqualTo(Thread.State.BLOCKED);
+                assertThat(info.getLockOwnerId()).isEqualTo(checkpoint.writer.threadId());
+                assertThat(checkpoint.clearObserved.getCount()).isEqualTo(1);
+                checkpoint.releaseNonEmptySave.countDown();
+                resumed.get(2, TimeUnit.SECONDS);
+                assertThat(checkpoint.clearObserved.await(2, TimeUnit.SECONDS)).isTrue();
+                assertThat(checkpoint.nonEmptySaveAfterClear).isFalse();
+                assertThat(checkpoint.writes).startsWith("save-start", "save-end", "clear");
+            } finally {
+                checkpoint.releaseNonEmptySave.countDown();
+            }
+        }
     }
 
     @Test
@@ -400,6 +420,8 @@ class ContentIndexingQueueServiceTest {
         final CountDownLatch releaseNonEmptySave = new CountDownLatch(1);
         final CountDownLatch clearObserved = new CountDownLatch(1);
         volatile boolean nonEmptySaveAfterClear;
+        volatile Thread writer;
+        final List<String> writes = new CopyOnWriteArrayList<>();
 
         @Override
         public Optional<ContentIndexQueueCheckpoint> load(String collectionId) { return Optional.empty(); }
@@ -408,12 +430,13 @@ class ContentIndexingQueueServiceTest {
         public void save(ContentIndexQueueCheckpoint checkpoint) {
             boolean nonEmpty = checkpoint != null && !checkpoint.tasks().isEmpty();
             if (nonEmpty) {
+                writer = Thread.currentThread();
+                writes.add("save-start");
                 if (clearObserved.getCount() == 0) nonEmptySaveAfterClear = true;
                 nonEmptySaveStarted.countDown();
                 try {
-                    if (!releaseNonEmptySave.await(3, TimeUnit.SECONDS)) {
-                        throw new AssertionError("Timed out waiting to release checkpoint save");
-                    }
+                    releaseNonEmptySave.await(); // Always released by the test's finally block.
+                    writes.add("save-end");
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     throw new AssertionError(interrupted);
@@ -423,6 +446,7 @@ class ContentIndexingQueueServiceTest {
 
         @Override
         public void clear(String collectionId) {
+            writes.add("clear");
             clearObserved.countDown();
         }
     }
