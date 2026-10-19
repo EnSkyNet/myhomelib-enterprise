@@ -163,10 +163,57 @@ class BookWorkspaceAnnotationFxTest {
     }
 
     @Test
+    void remoteBookDisplaysExistingSidebarCatalogAnnotationWithoutFetchingItsFb2() throws Exception {
+        String id = "66666666-6666-6666-6666-666666666666";
+        BookId bookId = BookId.fromString(id);
+        BookDto loaded = BookDto.builder().id(id).title("Пожиратель душ. Том 18")
+                .annotation("").local(false).fileName("729586.fb2").build();
+        BookDto sidebarBook = loaded.toBuilder()
+                .annotation("Анотація вже відома з каталогу").build();
+        LoadBookByIdUseCase loader = mock(LoadBookByIdUseCase.class);
+        when(loader.execute(bookId)).thenReturn(Optional.of(loaded));
+        BookDownloadCoordinator downloads = mock(BookDownloadCoordinator.class);
+        BookDetailsAnalysisService analysis = mock(BookDetailsAnalysisService.class);
+        UiBackgroundExecutor executor = new UiBackgroundExecutor(new LibraryOperationCoordinator());
+        BookViewModelMapper mapper = mock(BookViewModelMapper.class);
+        when(mapper.toViewModel(any(BookDto.class))).thenReturn(new BookViewModel());
+        ApplicationState state = mock(ApplicationState.class);
+        when(state.getCurrentLibraryCollectionId()).thenReturn("flib");
+        com.myhomelibcorp.ui.viewmodel.BookDetailsViewModel sidebar =
+                new com.myhomelibcorp.ui.viewmodel.BookDetailsViewModel();
+        sidebar.setCurrentBook(sidebarBook);
+        when(state.getBookDetails()).thenReturn(sidebar);
+        BookWorkspaceController controller = controller(loader, analysis, mapper, executor, state, downloads);
+        CountDownLatch displayed = new CountDownLatch(1);
+        try {
+            onFx(() -> {
+                Label annotation = attachLabels(controller);
+                annotation.textProperty().addListener((obs, oldValue, value) -> {
+                    if ("Анотація вже відома з каталогу".equals(value)) displayed.countDown();
+                });
+                controller.setBookId(bookId);
+                return null;
+            });
+            assertThat(displayed.await(8, TimeUnit.SECONDS)).isTrue();
+            verifyNoInteractions(analysis, downloads);
+            assertThat(loaded.getAnnotation()).isBlank(); // Never mutate repository DTO.
+        } finally {
+            onFx(() -> { controller.dispose(); return null; });
+            executor.shutdown();
+        }
+    }
+
+    @Test
     void catalogAnnotationTakesPriorityAndRemoteBooksDoNotParse() {
         assertThat(BookWorkspaceController.preferredAnnotation("З каталогу", "З FB2")).isEqualTo("З каталогу");
         assertThat(BookWorkspaceController.preferredAnnotation(" ", "  З FB2  ")).isEqualTo("З FB2");
         assertThat(BookWorkspaceController.preferredAnnotation(null, null)).isEmpty();
+        BookDto loaded = BookDto.builder().id("book-1").annotation("").build();
+        BookDto other = BookDto.builder().id("book-2").annotation(" чужа анотація ").build();
+        assertThat(BookWorkspaceController.preferVisibleAnnotation(loaded, other)).isSameAs(loaded);
+        BookDto sourceWithAnnotation = loaded.toBuilder().annotation("Зі сховища").build();
+        assertThat(BookWorkspaceController.preferVisibleAnnotation(sourceWithAnnotation,
+                loaded.toBuilder().annotation("З панелі").build())).isSameAs(sourceWithAnnotation);
     }
 
     private static BookWorkspaceController controller(
