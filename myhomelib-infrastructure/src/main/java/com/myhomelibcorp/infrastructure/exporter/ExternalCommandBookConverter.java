@@ -10,6 +10,7 @@ import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.shared.util.ExecutablePathSafety;
 import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
+import com.myhomelibcorp.shared.util.NoLinkPathSafety;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.InputStream;
@@ -156,7 +157,7 @@ public abstract class ExternalCommandBookConverter implements BookConverter {
                     processOutput, targetFile, null, outputSnapshot.sha256(), "External converter publication");
         } finally {
             try {
-                SafeFilePublication.cleanupPrivateWorkspace(workspace);
+                NoLinkPathSafety.cleanupPrivateWorkspaceAfterProcess(workspace, "External converter cleanup");
             } catch (Exception cleanupFailure) {
                 log.warn("Cannot remove temporary converter workspace {}", workspace, cleanupFailure);
             }
