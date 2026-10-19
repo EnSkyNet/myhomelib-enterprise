@@ -326,6 +326,15 @@ jobs:
           '-Dsurefire.failIfNoSpecifiedTests=false'
           test
 
+      - name: Windows SQLite apply crash and UTF-8 diagnostics
+        shell: pwsh
+        run: >-
+          .\tools\invoke-maven.ps1 -B -ntp
+          -pl myhomelib-infrastructure -am
+          '-Dtest=SqliteOrganizerApplyCrashIntegrationV27Test'
+          '-Dsurefire.failIfNoSpecifiedTests=false'
+          test
+
       - name: Retain native Windows test diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

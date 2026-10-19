@@ -20,6 +20,9 @@ import java.util.UUID;
 public final class SqliteOrganizerApplyCrashWorkerV27 {
     private SqliteOrganizerApplyCrashWorkerV27() { }
     public static void main(String[] args) throws Exception {
+        // Both redirected streams must remain decodable on non-UTF-8 Windows hosts.
+        System.out.println("stdout: Аварійне відновлення");
+        System.err.println("stderr: Аварійне відновлення");
         Path database = Path.of(args[0]);
         Path source = Path.of(args[1]);
         Path target = Path.of(args[2]);
