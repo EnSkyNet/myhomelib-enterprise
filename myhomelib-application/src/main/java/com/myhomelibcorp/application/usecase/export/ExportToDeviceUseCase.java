@@ -356,6 +356,13 @@ public class ExportToDeviceUseCase {
                         stagedFile = convertWithFallback(book, conversion.format(), stagingWorkspace,
                                 targetExtension, cancel);
                     }
+                    // Existing FB2.ZIP downloads and freshly converted FB2.ZIPs must
+                    // both use the final device filename for their single inner FB2.
+                    // This runs after collision naming and before the atomic publication.
+                    if (".fb2.zip".equalsIgnoreCase(targetExtension)) {
+                        stagedFile = Fb2ZipExportNameNormalizer.normalize(
+                                stagedFile, targetFile, stagingWorkspace, cancel::get);
+                    }
                     verifyExportedFile(stagedFile);
                     String stagedHash = SafeFilePublication.sha256(stagedFile, "Export staged output");
                     commitExportedFile(stagedFile, targetFile, overwriteExpectedHash, stagedHash,
