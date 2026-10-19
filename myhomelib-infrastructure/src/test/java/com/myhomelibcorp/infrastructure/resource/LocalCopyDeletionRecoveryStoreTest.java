@@ -38,6 +38,23 @@ class LocalCopyDeletionRecoveryStoreTest {
     }
 
     @Test
+    void largeRecoveryMarkerIdSetIsUniqueAndPreservesFirstOccurrenceOrder() {
+        var ids = new java.util.ArrayList<String>();
+        for (int i = 0; i < 4_000; i++) {
+            ids.add("book-" + i);
+            if (i % 2 == 0) ids.add("book-" + i);
+        }
+        ids.add(" ");
+        ids.add("book-10");
+        var parsed = LocalCopyDeletionRecoveryStore.parseAffectedBookIds(String.join(",", ids));
+        assertThat(parsed).hasSize(4_000);
+        assertThat(parsed.getFirst()).isEqualTo("book-0");
+        assertThat(parsed.get(10)).isEqualTo("book-10");
+        assertThat(parsed.getLast()).isEqualTo("book-3999");
+        assertThat(parsed).doesNotHaveDuplicates();
+    }
+
+    @Test
     void startupRecoveryRestoresBytesWhenCatalogTransactionDidNotCommit() throws Exception {
         BookId id = BookId.generate();
         Path root = Files.createDirectories(temp.resolve("library"));
