@@ -128,7 +128,15 @@ class ProcessExecutionSupportTest {
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.stdoutText()).isEqualTo("len=12");
-        assertThat(result.stderrText()).isEmpty();
+        // JVM-injected agents/options are inherited deliberately by subprocesses.
+        // Require precisely the launcher's diagnostics, retaining all other stderr checks.
+        var expectedDiagnostics = new java.util.ArrayList<String>();
+        for (String variable : List.of("JDK_JAVA_OPTIONS", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS")) {
+            String value = System.getenv(variable);
+            if (value != null) expectedDiagnostics.add((variable.equals("JDK_JAVA_OPTIONS") ? "NOTE: " : "")
+                    + "Picked up " + variable + ": " + value);
+        }
+        assertThat(result.stderrText().lines().toList()).containsExactlyElementsOf(expectedDiagnostics);
     }
 
     private static List<String> javaCommand(Class<?> mainClass) {

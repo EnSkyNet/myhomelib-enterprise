@@ -28,7 +28,7 @@ $names = @('JAVA_TOOL_OPTIONS','JDK_JAVA_OPTIONS','_JAVA_OPTIONS','MAVEN_OPTS','
     'SPRING_APPLICATION_JSON','SPRING_CONFIG_LOCATION','SPRING_CONFIG_ADDITIONAL_LOCATION','SPRING_PROFILES_ACTIVE')
 foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
 try {
-    foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name,$null,'Process') }
+    foreach ($name in $names) { Remove-Item -LiteralPath ("Env:" + $name) -ErrorAction SilentlyContinue }
     foreach ($dir in @('classes','home','tmp','appdata','localappdata','reports')) {
         New-Item -ItemType Directory -Path (Join-Path $RunRoot $dir) -Force | Out-Null
     }
@@ -65,6 +65,7 @@ try {
                 }
             }
         }
+        $runStarted = [DateTime]::UtcNow
         Push-Location $repo
         try {
             $ErrorActionPreference = 'Continue'
@@ -74,7 +75,13 @@ try {
         } finally { Pop-Location }
         foreach ($module in $modules) {
             $reports = Join-Path $repo "$module\target\surefire-reports"
-            if (Test-Path -LiteralPath $reports) { Copy-Item -LiteralPath $reports -Destination "$RunRoot\reports\$module" -Recurse }
+            if (Test-Path -LiteralPath $reports) {
+                $fresh = @(Get-ChildItem -LiteralPath $reports -File | Where-Object LastWriteTimeUtc -ge $runStarted)
+                if ($fresh.Count) {
+                    New-Item -ItemType Directory -Path "$RunRoot\reports\$module" -Force | Out-Null
+                    $fresh | Copy-Item -Destination "$RunRoot\reports\$module"
+                }
+            }
         }
         [IO.File]::WriteAllText("$RunRoot\result.txt", "exit=$buildExit`n")
         Write-Output "Maven exit=$buildExit; evidence=$RunRoot"

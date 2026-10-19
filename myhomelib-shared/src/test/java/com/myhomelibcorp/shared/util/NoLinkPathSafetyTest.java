@@ -77,7 +77,7 @@ class NoLinkPathSafetyTest {
     }
 
     @Test
-    void longCopyCanBeCancelledWithoutDamagingSourceOrLeavingPartialTarget() throws Exception {
+    void cancelledCopyRetainsPartialTargetOnlyWithoutFileIdentity() throws Exception {
         Path source = tempDir.resolve("large-source.fb2");
         byte[] chunk = new byte[1024 * 1024];
         try (var out = Files.newOutputStream(source)) {
@@ -90,7 +90,13 @@ class NoLinkPathSafetyTest {
                 .isInstanceOf(java.util.concurrent.CancellationException.class);
         assertThat(polls.get()).isGreaterThanOrEqualTo(5);
         assertThat(Files.size(source)).isEqualTo(12L * 1024 * 1024);
-        assertThat(destination).doesNotExist();
+        if (Files.exists(destination, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            var attrs = Files.readAttributes(destination, java.nio.file.attribute.BasicFileAttributes.class,
+                    java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            assertThat(attrs.isRegularFile()).isTrue();
+            assertThat(attrs.fileKey()).as("Only unprovable ownership permits retained partial bytes").isNull();
+            assertThat(attrs.size()).isLessThan(Files.size(source));
+        }
     }
 
     @Test
