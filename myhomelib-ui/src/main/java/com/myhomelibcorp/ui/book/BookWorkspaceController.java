@@ -132,7 +132,12 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
             setLoadState(UiText.text("ui.java.book_workspace_controller.457c748374"), true);
             return;
         }
-        currentBook = result.get();
+        // The sidebar can already hold a richer catalogue DTO for this very book.
+        // Reuse its annotation before attempting a costly local FB2 inspection; never
+        // borrow details from a previous selection or overwrite a nonempty DB value.
+        BookDto loaded = result.get();
+        var sidebar = appState.getBookDetails();
+        currentBook = preferVisibleAnnotation(loaded, sidebar == null ? null : sidebar.getCurrentBook());
         updateUI(currentBook);
         coverPresenter.showCover(currentBook);
         setLoadState(null, false);
@@ -146,11 +151,16 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
      */
     private void loadMissingDocumentAnnotation(BookId bookId, UiAsyncRequestToken requestToken, BookDto book) {
         if (book == null || (book.getAnnotation() != null && !book.getAnnotation().isBlank())) return;
-        if (!book.isLocal() && book.getArtifacts().stream().noneMatch(artifact -> artifact != null && artifact.isLocal())) {
-            return; // Remote-only books must not initiate document download/inspection.
-        }
         UiBackgroundExecutor.CancellableSubmission<String> task =
                 backgroundExecutor.submitInteractiveCancellable(() -> {
+                    // Details already probes the active collection root before treating a stale
+                    // remote catalogue flag as authoritative. Match that behavior here too, on
+                    // the worker thread: local-file reconciliation never performs an HTTP request.
+                    boolean claimedLocal = book.isLocal() || book.getArtifacts().stream()
+                            .anyMatch(artifact -> artifact != null && artifact.isLocal());
+                    if (!claimedLocal && !bookDownloadCoordinator.reconcileLocalClaim(book)) {
+                        return ""; // Genuine remote-only book: do not inspect or download.
+                    }
                     try (RichBookDetailsSession session = detailsAnalysisService.analyze(book.getId())) {
                         return session.inspection().annotation();
                     }
@@ -170,6 +180,15 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
                 .whenComplete((ignored, failure) -> {
                     if (pendingAnnotation == task) pendingAnnotation = null;
                 });
+    }
+
+    static BookDto preferVisibleAnnotation(BookDto loaded, BookDto visible) {
+        if (loaded == null || visible == null || !java.util.Objects.equals(loaded.getId(), visible.getId())) {
+            return loaded;
+        }
+        if (loaded.getAnnotation() != null && !loaded.getAnnotation().isBlank()) return loaded;
+        if (visible.getAnnotation() == null || visible.getAnnotation().isBlank()) return loaded;
+        return loaded.toBuilder().annotation(visible.getAnnotation()).build();
     }
 
     static String preferredAnnotation(String catalogAnnotation, String documentAnnotation) {
