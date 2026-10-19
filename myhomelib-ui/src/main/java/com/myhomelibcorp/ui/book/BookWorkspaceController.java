@@ -4,6 +4,8 @@ import com.myhomelibcorp.ui.util.UiExceptionSupport;
 
 import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.ui.service.BookDisplayText;
+import com.myhomelibcorp.ui.details.BookDetailsAnalysisService;
+import com.myhomelibcorp.ui.details.model.RichBookDetailsSession;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.imports.saver.BookSaver;
 import com.myhomelibcorp.application.operation.LibraryOperationConflictException;
@@ -36,6 +38,7 @@ import org.springframework.stereotype.Component;
 import java.util.Optional;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Component
@@ -56,6 +59,7 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
     private final ClassicLibraryActionsService classicLibraryActionsService;
     private final UiBackgroundExecutor backgroundExecutor;
     private final ApplicationState appState;
+    private final BookDetailsAnalysisService detailsAnalysisService;
 
     @FXML private ImageView coverImageView;
     @FXML private Label titleLabel;
@@ -76,6 +80,7 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
 
     private final AtomicLong loadGeneration = new AtomicLong();
     private volatile Future<?> pendingLoad;
+    private volatile UiBackgroundExecutor.CancellableSubmission<String> pendingAnnotation;
     private BookDto currentBook;
 
     @FXML
@@ -85,6 +90,7 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
 
     public void setBookId(BookId bookId) {
         UiAsyncRequestGuard.invalidate(loadGeneration);
+        cancelAnnotationLoad();
         Future<?> previous = pendingLoad;
         if (previous != null) previous.cancel(true);
         currentBook = null;
@@ -130,6 +136,51 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
         updateUI(currentBook);
         coverPresenter.showCover(currentBook);
         setLoadState(null, false);
+        loadMissingDocumentAnnotation(bookId, requestToken, currentBook);
+    }
+
+    /**
+     * The catalogue may not contain an annotation although the local FB2 does.
+     * Reuse the same document inspection as the right-hand Details panel, but only
+     * for that missing field and never on the FX thread.
+     */
+    private void loadMissingDocumentAnnotation(BookId bookId, UiAsyncRequestToken requestToken, BookDto book) {
+        if (book == null || (book.getAnnotation() != null && !book.getAnnotation().isBlank())) return;
+        if (!book.isLocal() && book.getArtifacts().stream().noneMatch(artifact -> artifact != null && artifact.isLocal())) {
+            return; // Remote-only books must not initiate document download/inspection.
+        }
+        UiBackgroundExecutor.CancellableSubmission<String> task =
+                backgroundExecutor.submitInteractiveCancellable(() -> {
+                    try (RichBookDetailsSession session = detailsAnalysisService.analyze(book.getId())) {
+                        return session.inspection().annotation();
+                    }
+                });
+        pendingAnnotation = task;
+        task.completion().orTimeout(5, TimeUnit.SECONDS)
+                .thenAccept(annotation -> UiExecutor.runOnUiThread(() -> {
+                    if (!UiAsyncRequestGuard.isCurrent(requestToken, loadGeneration, appState)
+                            || currentBook == null || !bookId.asString().equals(currentBook.getId())) return;
+                    annotationLabel.setText(preferredAnnotation(currentBook.getAnnotation(), annotation));
+                }))
+                .exceptionally(failure -> {
+                    task.cancel();
+                    log.debug("Document annotation unavailable for {}: {}", bookId, failure.toString());
+                    return null;
+                })
+                .whenComplete((ignored, failure) -> {
+                    if (pendingAnnotation == task) pendingAnnotation = null;
+                });
+    }
+
+    static String preferredAnnotation(String catalogAnnotation, String documentAnnotation) {
+        if (catalogAnnotation != null && !catalogAnnotation.isBlank()) return catalogAnnotation;
+        return documentAnnotation == null ? "" : documentAnnotation.strip();
+    }
+
+    private void cancelAnnotationLoad() {
+        UiBackgroundExecutor.CancellableSubmission<String> task = pendingAnnotation;
+        pendingAnnotation = null;
+        if (task != null) task.cancel();
     }
 
     private void applyLoadError(BookId bookId, UiAsyncRequestToken requestToken, Throwable error) {
@@ -163,7 +214,7 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
         formatLabel.setText(UiText.text("ui.java.book_workspace_controller.e7c843a4f1") + displayFormat(book.getFileName(), book.getArchiveEntry()));
         sizeLabel.setText(UiText.text("ui.java.book_workspace_controller.173f73a83f") + BookDisplayText.fileSize(book.getFileSize()));
         ratingLabel.setText(UiText.text("ui.java.book_workspace_controller.f72f596b66") + book.getRateStars());
-        annotationLabel.setText(book.getAnnotation() != null ? book.getAnnotation() : "");
+        annotationLabel.setText(preferredAnnotation(book.getAnnotation(), ""));
         readingProgress.setProgress(book.getProgress() / 100.0);
         progressLabel.setText(book.getProgress() + "%");
     }
@@ -312,6 +363,7 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
     @Override
     public void dispose() {
         UiAsyncRequestGuard.invalidate(loadGeneration);
+        cancelAnnotationLoad();
         Future<?> load = pendingLoad;
         if (load != null) load.cancel(true);
         pendingLoad = null;
