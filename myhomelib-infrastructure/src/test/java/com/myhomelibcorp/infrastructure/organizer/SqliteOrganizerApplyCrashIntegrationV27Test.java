@@ -49,14 +49,19 @@ class SqliteOrganizerApplyCrashIntegrationV27Test {
                 UUID itemId = UUID.randomUUID();
                 String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
                 String cp = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
+                // Windows anonymous process pipes have small buffers. Waiting for the child
+                // before draining its verbose crash diagnostics can deadlock both sides.
+                // Redirect into this isolated scenario to keep the worker unblocked and
+                // preserve the actual diagnostic output for any failed assertion.
+                Path childLog = scenario.resolve("crash-worker.log");
                 Process child = new ProcessBuilder(java, "-Dmyhomelib.dataDir=" + stateDir,
                         "-cp", cp, SqliteOrganizerApplyCrashWorkerV27.class.getName(),
                         db.toString(), source.toString(), target.toString(), originalHash,
                         operationId.toString(), itemId.toString(), point)
-                        .redirectErrorStream(true).start();
+                        .redirectErrorStream(true).redirectOutput(childLog.toFile()).start();
                 boolean ended = child.waitFor(45, TimeUnit.SECONDS);
                 if (!ended) {child.destroyForcibly();child.waitFor();}
-                String output = new String(child.getInputStream().readAllBytes());
+                String output = Files.readString(childLog);
                 assertThat(ended).as(point + ": " + output).isTrue();
                 assertThat(child.exitValue()).as(point + ": " + output).isEqualTo(83);
                 // A fresh adapter and connection must observe the persisted SQLite WAL state.

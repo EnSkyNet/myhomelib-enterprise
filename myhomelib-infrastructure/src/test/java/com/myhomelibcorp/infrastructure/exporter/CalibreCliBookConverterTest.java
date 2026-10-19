@@ -239,6 +239,11 @@ class CalibreCliBookConverterTest {
             Files.createDirectories(executable.getParent());
             Files.writeString(executable, "tool");
             executable.toFile().setExecutable(true);
+            // Frozen Windows Calibre needs its worker executable next to ebook-convert.
+            // The compatibility fixture must reflect that production requirement.
+            if (executableName.endsWith(".exe")) {
+                Files.writeString(executable.resolveSibling("calibre-parallel.exe"), "worker");
+            }
 
             CalibreCliBookConverter converter = new CalibreCliBookConverter(new MemorySettings(), "epub", ".epub");
             assertTrue(converter.isAvailable());
