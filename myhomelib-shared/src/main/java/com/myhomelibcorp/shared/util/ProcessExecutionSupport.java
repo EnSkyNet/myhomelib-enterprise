@@ -60,6 +60,11 @@ public final class ProcessExecutionSupport {
         if (timeout.isZero() || timeout.isNegative()) throw new IllegalArgumentException("timeout must be positive");
         if (maxCaptureBytes <= 0) throw new IllegalArgumentException("maxCaptureBytes must be positive");
 
+        // Starting a process can already truncate redirected files or launch native workers.
+        // Honour cancellation before allowing any of those side effects.
+        if (Thread.interrupted()) throw new InterruptedException("Process execution interrupted before start");
+        if (cancelled.getAsBoolean()) throw new CancellationException("Process execution cancelled");
+
         // Separate streams are intentional: callers often need stderr diagnostics. Each one is
         // drained concurrently, so keeping them separate does not reintroduce a pipe deadlock.
         builder.redirectErrorStream(false);
