@@ -2,8 +2,8 @@
 
 Base master: `37dbc2f450a42754cecfef35ab3f67735aad8ced`. Release remains **NO-GO**.
 
-- PR #25 pre-start cancellation: isolated Windows shared reactor 61/0/0/0; see [evidence](V34-PROCESS-PRESTART-2026-10-19.md) in that PR.
-- PR #26 converter cleanup: isolated Windows targeted reactor 51/0/0/4 (47 executed); see [evidence](V34-CONVERTER-CLEANUP-2026-10-19.md) in that PR.
+- PR #25 pre-start cancellation: isolated Windows shared reactor 61/0/0/0; see [evidence](https://github.com/EnSkyNet/myhomelib-enterprise/blob/252f7067d7d28474dfd4c8866b147b1497b035a8/docs/release/V34-PROCESS-PRESTART-2026-10-19.md) in that PR.
+- PR #26 converter cleanup: isolated Windows targeted reactor 51/0/0/4 (47 executed); see [evidence](https://github.com/EnSkyNet/myhomelib-enterprise/blob/bad489d6a37e4a53b89454d98fe41c5d957de875/docs/release/V34-CONVERTER-CLEANUP-2026-10-19.md) in that PR.
 - Crash-worker UTF-8 diagnostic fix: 1/0/0/0, three real SQLite crash/recovery boundaries; see [evidence](V34-CRASH-WORKER-UTF8-2026-10-19.md).
 - Full clean verify on PR #25 failed at the existing Windows child-log encoding bug. A fresh full run including the diagnostic fix is required; historical full runs below are not current evidence.
 - SCA remains blocked on NVD credentials. Installed-app GUI, real Calibre/device, portable and MSI/EXE lifecycle acceptance remain open.
