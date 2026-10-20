@@ -47,7 +47,7 @@
         <maven-resources-plugin.version>3.3.1</maven-resources-plugin.version>
         <maven-jar-plugin.version>3.3.0</maven-jar-plugin.version>
         <cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
-        <dependency-check-maven.version>12.2.2</dependency-check-maven.version>
+        <dependency-check-maven.version>13.0.0</dependency-check-maven.version>
         <jna.version>5.13.0</jna.version>
     </properties>
 
