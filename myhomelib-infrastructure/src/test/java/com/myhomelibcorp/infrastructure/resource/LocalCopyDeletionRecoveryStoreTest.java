@@ -55,6 +55,33 @@ class LocalCopyDeletionRecoveryStoreTest {
     }
 
     @Test
+    void preparingLargeRecoveryMarkerPreservesIdOrderWithoutDuplicates() throws Exception {
+        var ids = new java.util.ArrayList<BookId>();
+        for (int i = 0; i < 2_000; i++) {
+            BookId id = BookId.generate();
+            ids.add(id);
+            ids.add(id);
+        }
+        Path root = Files.createDirectories(temp.resolve("recovery-large-marker"));
+        var marker = LocalCopyDeletionRecoveryStore.prepare(
+                root.resolve("book.fb2"), root.resolve("book.pending"), root,
+                "collection-test", ids, "0".repeat(64));
+        try {
+            Properties properties = new Properties();
+            try (var input = Files.newInputStream(marker.path())) {
+                properties.load(input);
+            }
+            var parsed = LocalCopyDeletionRecoveryStore.parseAffectedBookIds(
+                    properties.getProperty("bookIds"));
+            assertThat(parsed).hasSize(2_000);
+            assertThat(parsed.getFirst()).isEqualTo(ids.getFirst().asString());
+            assertThat(parsed.getLast()).isEqualTo(ids.get(ids.size() - 1).asString());
+        } finally {
+            Files.deleteIfExists(marker.path());
+        }
+    }
+
+    @Test
     void startupRecoveryRestoresBytesWhenCatalogTransactionDidNotCommit() throws Exception {
         BookId id = BookId.generate();
         Path root = Files.createDirectories(temp.resolve("library"));
