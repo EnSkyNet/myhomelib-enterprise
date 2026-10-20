@@ -866,7 +866,21 @@ public final class ApplyLibraryOrganizationUseCase {
         checkCancelled(cancelled);
         ioMonitor.mark(item.itemId(), "PUBLISH_START");
         log.info("ORGANIZER_STAGE operationId={} itemId={} stage=PUBLISH_START", plan.operationId(), item.itemId());
-        targetPublisher.publish(staged,item.targetPath(),sourceHash,cancelled);
+        final long publishStarted = System.nanoTime();
+        final long[] lastPublishLog = {publishStarted};
+        final boolean[] firstPublishChunkLogged = {false};
+        targetPublisher.publish(staged, item.targetPath(), sourceHash, cancelled, (stage, bytes) -> {
+            ioMonitor.mark(item.itemId(), "PUBLISH_" + stage, bytes);
+            long now = System.nanoTime();
+            if (!"TEMP_BYTES".equals(stage) || !firstPublishChunkLogged[0]
+                    || now - lastPublishLog[0] >= TimeUnit.SECONDS.toNanos(5)) {
+                log.info("ORGANIZER_PUBLISH operationId={} itemId={} stage={} bytesCopied={} elapsedMs={}",
+                        plan.operationId(), item.itemId(), stage, bytes,
+                        TimeUnit.NANOSECONDS.toMillis(now - publishStarted));
+                firstPublishChunkLogged[0] = true;
+                lastPublishLog[0] = now;
+            }
+        });
         log.info("ORGANIZER_STAGE operationId={} itemId={} stage=PUBLISH_VERIFIED", plan.operationId(), item.itemId());
         String targetHash=sourceHash;
         try {
