@@ -191,8 +191,8 @@ public final class LuceneContentIndexService implements ContentIndexPort {
                     checkInterrupted();
                     int required = (int) Math.min(10_000L, (long) query.offset() + query.limit());
                     TopDocs top = searcher.search(finalQuery, Math.max(1, required));
-                    long total = top.totalHits.value;
-                    if (top.totalHits.relation != org.apache.lucene.search.TotalHits.Relation.EQUAL_TO) {
+                    long total = top.totalHits.value();
+                    if (top.totalHits.relation() != org.apache.lucene.search.TotalHits.Relation.EQUAL_TO) {
                         checkInterrupted();
                         total = searcher.count(finalQuery);
                     }
