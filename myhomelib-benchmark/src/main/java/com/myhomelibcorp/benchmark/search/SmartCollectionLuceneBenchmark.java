@@ -139,8 +139,8 @@ public final class SmartCollectionLuceneBenchmark {
             long started = System.nanoTime();
             TopDocs docs = sort == null ? searcher.search(query, maxResults) : searcher.search(query, maxResults, sort);
             elapsed[i] = System.nanoTime() - started;
-            totalHits = docs.totalHits.value;
-            totalHitsRelation = docs.totalHits.relation.name();
+            totalHits = docs.totalHits.value();
+            totalHitsRelation = docs.totalHits.relation().name();
             heapPeak = Math.max(heapPeak, heapUsed());
             rssPeak = Math.max(rssPeak, rssBytes());
         }
