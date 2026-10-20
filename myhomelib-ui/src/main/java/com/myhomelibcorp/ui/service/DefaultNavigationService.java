@@ -93,7 +93,12 @@ public class DefaultNavigationService implements NavigationService {
             case KEYWORDS -> navigateToKeyword(node.label());
             case GROUPS -> navigateToGroup(GroupId.fromLong(Long.parseLong(node.id())));
             case REVIEWS -> navigateToReviews(ReviewNavigationFilter.fromId(node.id()));
-            case UPDATES -> navigateToUpdates();
+            case UPDATES -> {
+                var range = com.myhomelibcorp.application.navigation.UpdatePeriodRange.parse(
+                        node.id(), java.time.LocalDate.now());
+                if (range != null) workspaceManager.showBooksAddedBetween(range.from(), range.to());
+                else if ("updates".equals(node.id())) navigateToUpdates();
+            }
             case DOWNLOADED -> workspaceManager.showDownloadedAuthorWorkspace(AuthorId.fromString(node.id()));
             case ALREADY_READ -> navigateToAlreadyRead();
             case HISTORY -> navigateToHistory();

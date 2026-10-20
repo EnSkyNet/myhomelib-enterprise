@@ -72,13 +72,13 @@
         </VBox>
 
         <HBox spacing="10" visible="true" managed="true">
-            <VBox fx:id="seriesSection" spacing="4" HBox.hgrow="ALWAYS" maxHeight="130">
+            <VBox fx:id="seriesSection" spacing="4" HBox.hgrow="ALWAYS" minHeight="115" prefHeight="115" maxHeight="130">
                 <HBox spacing="6"><Label text="ui.fxml.search_workspace.series_ee6d3f5" style="-fx-font-weight: bold;"/><Label fx:id="seriesCountLabel" text="ui.fxml.search_workspace.0"/></HBox>
-                <ListView fx:id="seriesListView" prefHeight="90"/>
+                <ListView fx:id="seriesListView" minHeight="90" prefHeight="90"/>
             </VBox>
-            <VBox fx:id="genresSection" spacing="4" HBox.hgrow="ALWAYS" maxHeight="130">
+            <VBox fx:id="genresSection" spacing="4" HBox.hgrow="ALWAYS" minHeight="115" prefHeight="115" maxHeight="130">
                 <HBox spacing="6"><Label text="ui.fxml.search_workspace.genres" style="-fx-font-weight: bold;"/><Label fx:id="genresCountLabel" text="ui.fxml.search_workspace.0"/></HBox>
-                <ListView fx:id="genresListView" prefHeight="90"/>
+                <ListView fx:id="genresListView" minHeight="90" prefHeight="90"/>
             </VBox>
         </HBox>
 

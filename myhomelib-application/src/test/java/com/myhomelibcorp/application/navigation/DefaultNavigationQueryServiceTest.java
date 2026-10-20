@@ -265,8 +265,16 @@ class DefaultNavigationQueryServiceTest {
     @Test
     void updatesRemainIndependentFromBookFilter() {
         when(catalogUpdateService.pendingUpdateCount()).thenReturn(27L);
-        assertThat(service.load(NavigationMode.UPDATES).join()).containsExactly(
-                new NavigationNodeDto(NavigationMode.UPDATES, "updates", "updates", 27L));
+        var nodes = service.load(NavigationMode.UPDATES).join();
+        assertThat(nodes.stream().map(NavigationNodeDto::id).toList())
+                .contains("updates-header-day", "updates-day-1", "updates-day-6", "updates-header-week",
+                        "updates-week-1", "updates-week-4", "updates-header-month", "updates-month-1",
+                        "updates-month-12", "updates-header-year",
+                        "updates-year-" + java.time.LocalDate.now().getYear(), "updates");
+        assertThat(nodes.stream().filter(n -> n.id().startsWith("updates-day-")).count()).isEqualTo(6);
+        assertThat(nodes.stream().filter(n -> n.id().startsWith("updates-week-")).count()).isEqualTo(4);
+        assertThat(nodes.stream().filter(n -> n.id().startsWith("updates-month-")).count()).isEqualTo(12);
+        assertThat(nodes).contains(new NavigationNodeDto(NavigationMode.UPDATES, "updates", "Сповіщення каталогу", 27L));
     }
 
     @Test

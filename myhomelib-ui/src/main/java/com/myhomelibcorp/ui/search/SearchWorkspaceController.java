@@ -784,7 +784,6 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         setSectionVisible(booksSection, !books.isEmpty());
         booksTableView.getItems().setAll(books);
         booksTableView.getSelectionModel().clearSelection();
-        booksTableView.refresh();
         refreshMasterSelection();
         updateBookPagingUi(bookPage);
         appState.getBookDetails().setCurrentBook(null);
@@ -916,6 +915,20 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         performSearch(searchField == null ? lastQuery : searchField.getText());
     }
 
+    /** Catalogue-wide filter: discard inherited Smart Collection and content-search scope. */
+    public void searchAddedBetween(java.time.LocalDate from, java.time.LocalDate to) {
+        if (from == null || to == null || from.isAfter(to)) throw new IllegalArgumentException("Invalid updates range");
+        activeSmartCollectionId = null;
+        activeSmartCollectionName = null;
+        updateActiveScopeIndicator();
+        if (searchModeChoice != null) searchModeChoice.setValue(SearchScope.METADATA);
+        setSearchTextWithoutDebounce("");
+        clearAdvancedFields();
+        addedFromPicker.setValue(from);
+        addedToPicker.setValue(to);
+        performSearch("");
+    }
+
     public void setInitialQuery(String query) {
         if (query != null && !query.isBlank()) {
             setSearchTextWithoutDebounce(query);
@@ -931,7 +944,6 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
             setSectionVisible(booksSection, true);
             booksTableView.getItems().setAll(results);
             booksTableView.getSelectionModel().clearSelection();
-            booksTableView.refresh();
             refreshMasterSelection();
             booksCountLabel.setText("(" + results.size() + ")");
             setSectionVisible(authorsSection, false);

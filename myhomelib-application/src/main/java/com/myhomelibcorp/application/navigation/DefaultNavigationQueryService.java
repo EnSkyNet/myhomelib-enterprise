@@ -364,12 +364,19 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
 
 
     private List<NavigationNodeDto> loadUpdates() {
-        long count = catalogUpdateService.pendingUpdateCount();
-        return List.of(new NavigationNodeDto(
-                NavigationMode.UPDATES,
-                "updates",
-                "updates",
-                count));
+        java.util.ArrayList<NavigationNodeDto> nodes = new java.util.ArrayList<>();
+        nodes.add(NavigationNodeDto.of(NavigationMode.UPDATES, "updates-header-day", "За день"));
+        for (int i = 1; i <= 6; i++) nodes.add(NavigationNodeDto.of(NavigationMode.UPDATES, "updates-day-" + i, "    Останні " + i + " дн."));
+        nodes.add(NavigationNodeDto.of(NavigationMode.UPDATES, "updates-header-week", "За тиждень"));
+        for (int i = 1; i <= 4; i++) nodes.add(NavigationNodeDto.of(NavigationMode.UPDATES, "updates-week-" + i, "    Останні " + i + " тижн."));
+        nodes.add(NavigationNodeDto.of(NavigationMode.UPDATES, "updates-header-month", "За місяць"));
+        for (int i = 1; i <= 12; i++) nodes.add(NavigationNodeDto.of(NavigationMode.UPDATES, "updates-month-" + i, "    Останні " + i + " міс."));
+        nodes.add(NavigationNodeDto.of(NavigationMode.UPDATES, "updates-header-year", "За рік"));
+        for (int year = java.time.LocalDate.now().getYear(); year >= 1900; year--)
+            nodes.add(NavigationNodeDto.of(NavigationMode.UPDATES, "updates-year-" + year, "    " + year));
+        nodes.add(new NavigationNodeDto(NavigationMode.UPDATES, "updates", "Сповіщення каталогу",
+                catalogUpdateService.pendingUpdateCount()));
+        return List.copyOf(nodes);
     }
 
     private List<NavigationNodeDto> loadAlreadyRead(BookFilterSpec filter) {

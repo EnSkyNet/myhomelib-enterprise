@@ -300,6 +300,18 @@ public class WorkspaceManager {
         bookLoaderService.loadReadingHistory();
     }
 
+    /** Activate the search workspace before issuing its asynchronous date-filter request. */
+    public void showBooksAddedBetween(java.time.LocalDate from, java.time.LocalDate to) {
+        Pane workspace = fxmlLoaderFactory.loadSearchWorkspace("");
+        setWorkspace(workspace);
+        push("search", "");
+        if (workspace.getUserData() instanceof SearchWorkspaceController controller) {
+            controller.searchAddedBetween(from, to);
+        } else {
+            log.warn("Updates navigation: search controller missing");
+        }
+    }
+
     public void showSearchResults(String query) {
         Pane workspace = fxmlLoaderFactory.loadSearchWorkspace(query);
         setWorkspace(workspace);
