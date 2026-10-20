@@ -1,12 +1,15 @@
 # Current V34 continuation status — 2026-10-19
 
-Base master: `37dbc2f450a42754cecfef35ab3f67735aad8ced`. Release remains **NO-GO**.
+Base master: `cc69f26b86a34a391d0ebce2fe36e84a7e206512`. Release remains **NO-GO**.
 
-- PR #25 pre-start cancellation: isolated Windows shared reactor 61/0/0/0; see [evidence](https://github.com/EnSkyNet/myhomelib-enterprise/blob/fix/v34-process-prestart-cancellation/docs/release/V34-PROCESS-PRESTART-2026-10-19.md) in that PR.
-- PR #26 converter cleanup: isolated Windows targeted reactor 51/0/0/4 (47 executed); see [evidence](https://github.com/EnSkyNet/myhomelib-enterprise/blob/fix/v34-converter-workspace-cleanup/docs/release/V34-CONVERTER-CLEANUP-2026-10-19.md) in that PR.
-- Crash-worker UTF-8 diagnostic fix: 1/0/0/0, three real SQLite crash/recovery boundaries; see [evidence](V34-CRASH-WORKER-UTF8-2026-10-19.md).
-- Full clean verify on PR #25 failed at the existing Windows child-log encoding bug. A fresh full run including the diagnostic fix is required; historical full runs below are not current evidence.
-- SCA remains blocked on NVD credentials. Installed-app GUI, real Calibre/device, portable and MSI/EXE lifecycle acceptance remain open.
+- PR #25/#26 and crash-worker UTF-8 (#28, superseding #27) are merged; PR #31/#34 add recovery optimization and synchronized release history. Do not repeat those fixes.
+- [Full Windows CI #39289554488](https://github.com/EnSkyNet/myhomelib-enterprise/actions/runs/39289554488) succeeded for its PR #29 candidate. Artifact `12204958396` inspected: 706 report XML files under the isolated `reports` tree, **2582 tests / 0 failures / 0 errors / 29 skipped (2553 executed)**. Duplicate artifact copies outside that tree were not counted. Annotation JavaFX 5/5, device-profile export 8/8, ZIP normalization 4/4, process execution 10/10, process workspace cleanup 5/5, SQLite crash recovery 1/1. This is CI evidence for that candidate, not exact-current master or installed-app acceptance.
+- Local full verify of aggregate `3f79cd0a` failed at updater tests because `sh` is absent from PATH. The same failure was reproduced on current master: **4 tests / 2 failures / 1 error / 0 skipped**. No full-build PASS is claimed for this run.
+- Updater test fixtures now launch the current JDK directly, with a bounded health-marker handshake and child exit cleanup. Signature, publication, healthy startup, rollback and stale failed-update evidence assertions remain. On native Windows 11/NTFS/JDK 21, `tools/windows-isolated.ps1 -RunRoot C:/Temp/mhl-v34-master-updater-green -Mode Maven -LocalRepository <isolated-cache> -MavenArguments @('-o','-pl','myhomelib-updater','-am','test')` passes **4/4**, 0 skipped, 3.767 s Maven elapsed. Production updater is unchanged; explicit Windows CI coverage added.
+- Follow-up full verify at `870ebbbe` passed updater but reproduced the same shell dependency in bootstrap ApplicationUpdateInstallerTest (1 failure + 1 error among 3 tests). Its fixture now uses the same bounded current-JDK approach. Combined targeted reactor `-pl myhomelib-bootstrap,myhomelib-updater -am -Dtest=ApplicationUpdaterMainTest,ApplicationUpdateInstallerTest -Dsurefire.failIfNoSpecifiedTests=false test`: **7/7 PASS**, 0 skipped, 8.464 s, evidence `C:/Temp/mhl-v34-bootstrap-updater-green`. Full verification must be rerun on the follow-up commit.
+- NVD credentials now pass preflight. [Current master SCA #39312074179](https://github.com/EnSkyNet/myhomelib-enterprise/actions/runs/39312074179) is scanning at inspection; no completed vulnerability assessment is claimed. Fast gate, source integrity, Windows Organizer and DPAPI succeeded; CodeQL #39312074120 succeeded.
+- Performance #21 and #30 pass the JVM suite under Xvfb but hit the 45-minute job limit in SQLite scale tests. A local SQLite 3.45.1 probe reproduced the filtered author query taking about 21 seconds at 100k books; investigation is ongoing. No performance acceptance claimed.
+- Installed-app GUI, the user's specific book, real Calibre/device, portable and MSI/EXE lifecycle acceptance remain open. Only isolated synthetic data was used.
 
 The following sections are preserved historical evidence.
 

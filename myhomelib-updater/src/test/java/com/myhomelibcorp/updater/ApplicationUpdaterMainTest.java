@@ -15,6 +15,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,11 +33,11 @@ class ApplicationUpdaterMainTest {
         Path backup = temp.resolve("backup.jar"); Path marker = temp.resolve("health.ok");
         var plan = signedPlan(pair, staged, install, backup, marker, newBytes);
         Path planFile = temp.resolve("pending.properties"); Files.writeString(planFile, "x=y\n");
-        String script = "printf ok > \"$" + ApplicationUpdaterMain.HEALTH_ENV + "\"; sleep 1";
         var options = new ApplicationUpdaterMain.Options(planFile, 0, "8.0.0", "8.0.0", "linux", "x64",
-                List.of("sh", "-c", script), Duration.ofSeconds(2));
+                launchProbe("healthy"), Duration.ofSeconds(10));
 
         var result = new ApplicationUpdaterMain().apply(plan, options, Map.of("test", pair.getPublic()));
+        awaitProbeExit(result.pid());
         assertThat(result.installed()).isTrue();
         assertThat(Files.readAllBytes(install)).containsExactly(newBytes);
         assertThat(Files.exists(backup)).isFalse();
@@ -54,7 +55,7 @@ class ApplicationUpdaterMainTest {
         var plan = signedPlan(pair, staged, install, backup, marker, newBytes);
         Path planFile = temp.resolve("pending.properties"); Files.writeString(planFile, "x=y\n");
         var options = new ApplicationUpdaterMain.Options(planFile, 0, "8.0.0", "8.0.0", "linux", "x64",
-                List.of("sh", "-c", "exit 0"), Duration.ofMillis(100));
+                launchProbe("unhealthy"), Duration.ofSeconds(5));
 
         assertThatThrownBy(() -> new ApplicationUpdaterMain().apply(plan, options, Map.of("test", pair.getPublic())))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("healthy");
@@ -77,7 +78,7 @@ class ApplicationUpdaterMainTest {
         var plan = signedPlan(pair, staged, install, backup, marker, newBytes);
         Path planFile = temp.resolve("pending-stale.properties"); Files.writeString(planFile, "x=y\n");
         var options = new ApplicationUpdaterMain.Options(planFile, 0, "8.0.0", "8.0.0", "linux", "x64",
-                List.of("sh", "-c", "exit 0"), Duration.ofMillis(100));
+                launchProbe("unhealthy"), Duration.ofSeconds(5));
 
         assertThatThrownBy(() -> new ApplicationUpdaterMain().apply(plan, options, Map.of("test", pair.getPublic())))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("healthy");
@@ -97,7 +98,7 @@ class ApplicationUpdaterMainTest {
         var plan = signedPlan(other, staged, install, temp.resolve("backup.jar"), temp.resolve("health.ok"), newBytes);
         Path planFile = temp.resolve("pending.properties"); Files.writeString(planFile, "x=y\n");
         var options = new ApplicationUpdaterMain.Options(planFile, 0, "8.0.0", "8.0.0", "linux", "x64",
-                List.of("sh", "-c", "exit 0"), Duration.ofMillis(100));
+                launchProbe("unhealthy"), Duration.ofSeconds(5));
 
         assertThatThrownBy(() -> new ApplicationUpdaterMain().apply(plan, options, Map.of("test", pair.getPublic())))
                 .isInstanceOf(SecurityException.class).hasMessageContaining("signature");
@@ -105,6 +106,37 @@ class ApplicationUpdaterMainTest {
         assertThat(Files.exists(staged)).isTrue();
     }
 
+    private static List<String> launchProbe(String outcome) throws Exception {
+        String executable = System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java";
+        Path java = Path.of(System.getProperty("java.home"), "bin", executable);
+        Path classes = Path.of(LaunchProbe.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        return List.of(java.toString(), "-cp", classes.toString(), LaunchProbe.class.getName(), outcome);
+    }
+
+    private static void awaitProbeExit(long pid) throws Exception {
+        var process = ProcessHandle.of(pid);
+        if (process.isEmpty()) return;
+        try {
+            process.get().onExit().get(10, TimeUnit.SECONDS);
+        } finally {
+            if (process.get().isAlive()) {
+                process.get().destroyForcibly();
+                process.get().onExit().get(10, TimeUnit.SECONDS);
+            }
+        }
+    }
+
+    /** Real child JVM; no shell or executable lookup through PATH is required. */
+    public static final class LaunchProbe {
+        public static void main(String[] args) throws Exception {
+            if (!"healthy".equals(args[0])) return;
+            Path marker = Path.of(System.getenv(ApplicationUpdaterMain.HEALTH_ENV));
+            Files.writeString(marker, "ok", StandardCharsets.UTF_8);
+            // Remain alive until the updater consumes health evidence; self-bound on failures.
+            long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+            while (Files.exists(marker) && System.nanoTime() < deadline) Thread.sleep(10);
+        }
+    }
     private static ApplicationUpdaterMain.Plan signedPlan(KeyPair pair, Path staged, Path install, Path backup, Path marker,
                                                            byte[] bytes) throws Exception {
         String sha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
