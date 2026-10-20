@@ -7,6 +7,7 @@ on:
     paths:
       - 'tools/apply-epubcheck-httpcore-fix.py'
       - 'tools/stage-epubcheck-httpcore-fix.py'
+      - 'tools/stage-epubcheck-httpcore-fix-test.py'
       - '.github/workflows/stage-epubcheck-httpcore.yml'
 
 permissions:
