@@ -44,6 +44,10 @@ jobs:
         shell: bash
         run: chmod +x tools/invoke-maven.sh
 
+      - name: EPUBCheck HttpCore security staging regression
+        shell: bash
+        run: python3 -B tools/stage-epubcheck-httpcore-fix-test.py
+
       - name: Compile production and test sources
         shell: bash
         run: ./tools/invoke-maven.sh -B -ntp -DskipTests test-compile
