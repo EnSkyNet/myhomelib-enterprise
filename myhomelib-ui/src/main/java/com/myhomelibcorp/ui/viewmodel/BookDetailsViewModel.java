@@ -1,12 +1,27 @@
 package com.myhomelibcorp.ui.viewmodel;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import javafx.beans.property.IntegerProperty;
+import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
 
 public class BookDetailsViewModel {
 
     private final ObjectProperty<BookDto> currentBook = new SimpleObjectProperty<>();
+    private final IntegerProperty readingProgress = new SimpleIntegerProperty(0);
+
+    public IntegerProperty readingProgressProperty() {
+        return readingProgress;
+    }
+
+    public void updateReadingProgress(String bookId, int progress) {
+        BookDto selected = currentBook.get();
+        if (selected == null || bookId == null || !bookId.equals(selected.getId())) return;
+        int normalized = Math.max(0, Math.min(100, progress));
+        selected.setProgress(normalized);
+        readingProgress.set(normalized);
+    }
 
     public ObjectProperty<BookDto> currentBookProperty() {
         return currentBook;
@@ -14,6 +29,7 @@ public class BookDetailsViewModel {
 
     public void setCurrentBook(BookDto book) {
         currentBook.set(book);
+        readingProgress.set(book == null ? 0 : book.getProgress());
     }
 
     /**
@@ -36,7 +52,7 @@ public class BookDetailsViewModel {
             }
             return false;
         }
-        currentBook.set(book);
+        setCurrentBook(book);
         return true;
     }
 
@@ -53,6 +69,6 @@ public class BookDetailsViewModel {
     }
 
     public void clear() {
-        currentBook.set(null);
+        setCurrentBook(null);
     }
 }
