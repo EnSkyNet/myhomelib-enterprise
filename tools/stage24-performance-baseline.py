@@ -122,11 +122,17 @@ def synthesize(conn: sqlite3.Connection, books: int) -> dict:
     conn.execute('''INSERT INTO book_genres(book_id,genre_code)
         SELECT printf('b%09d',n), 'g'||printf('%02d',n%40) FROM benchmark_nums WHERE n < ?''', (books,))
     conn.commit()
-    conn.execute('PRAGMA optimize')
+    # This is deterministic synthetic setup, outside the measured import/query paths.
+    # Before SQLite 3.46, optimize may leave these newly populated tables unanalyzed.
+    statistics_start = now_ms()
+    conn.execute('ANALYZE')
+    statistics_ms = now_ms() - statistics_start
     conn.commit()
     fixture_ms = now_ms() - start
     return {
         'authors': authors,
+        'statistics_mode': 'full-analyze',
+        'statistics_ms': round(statistics_ms, 3),
         'fixture_generation_ms': round(fixture_ms, 3),
         'fixture_books_per_sec': round(books / (fixture_ms / 1000.0), 1) if fixture_ms else None,
     }

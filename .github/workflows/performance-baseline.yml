@@ -1,6 +1,12 @@
 name: Performance baseline
 
 on:
+  # Run the actual performance suite when its CI recipe changes.
+  pull_request:
+    paths:
+      - '.github/workflows/performance-baseline.yml'
+      - 'tools/stage24-performance-baseline.py'
+      - 'tools/stage24-fixture-statistics-test.py'
   workflow_dispatch:
     inputs:
       sizes:
@@ -29,13 +35,23 @@ jobs:
           python-version: '3.12'
       - name: Make Maven launcher helper executable
         run: chmod +x tools/invoke-maven.sh
+      - name: Prepare virtual display for JavaFX tests
+        run: |
+          # Linux CI runners are headless, but the Maven reactor also runs JavaFX
+          # reader contract tests. Keep them enabled under an isolated X server.
+          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v xauth >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends xvfb xauth
+          fi
       - name: JVM/Lucene/reader performance suite
         env:
           PERF_SIZES: ${{ github.event.inputs.sizes || '100000,500000,700000,1000000' }}
         run: >-
-          ./tools/invoke-maven.sh -B -ntp -pl myhomelib-benchmark -am test -Pperformance
+          xvfb-run -a ./tools/invoke-maven.sh -B -ntp -pl myhomelib-benchmark -am test -Pperformance
           -Dmhl.performance.sizes="$PERF_SIZES"
           -Dmhl.performance.readerMb=8
+      - name: SQLite fixture statistics regression
+        run: python3 -B tools/stage24-fixture-statistics-test.py
       - name: Offline SQLite scale baseline
         env:
           PERF_SIZES: ${{ github.event.inputs.sizes || '100000,500000,700000,1000000' }}
