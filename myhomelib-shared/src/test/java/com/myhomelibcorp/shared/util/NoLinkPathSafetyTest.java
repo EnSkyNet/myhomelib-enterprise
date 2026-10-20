@@ -100,6 +100,26 @@ class NoLinkPathSafetyTest {
     }
 
     @Test
+    void verifiedCopyCancelledAtFirstWrittenChunkDoesNotLeaveOwnedTemporaryData() throws Exception {
+        Path source = Files.write(tempDir.resolve("verified-source.fb2"), new byte[256 * 1024]);
+        Path target = tempDir.resolve("verified-target.fb2");
+        String digest = java.util.HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(source)));
+        var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        assertThatThrownBy(() -> NoLinkPathSafety.copyFreshFileVerified(
+                source, target, "verified copy", cancelled::get, digest, (stage, bytes) -> {
+                    if ("BYTES".equals(stage) && bytes > 0) cancelled.set(true);
+                })).isInstanceOf(java.util.concurrent.CancellationException.class);
+        assertThat(source).exists();
+        if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            var attrs = Files.readAttributes(target, java.nio.file.attribute.BasicFileAttributes.class,
+                    java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            assertThat(attrs.fileKey()).as("Only targets with unprovable identity may be retained").isNull();
+            assertThat(attrs.size()).isLessThan(Files.size(source));
+        }
+    }
+
+    @Test
     void cancellationBeforeCopyNeverCreatesDestination() throws Exception {
         Path source = Files.writeString(tempDir.resolve("source-cancel.fb2"), "original");
         Path destination = tempDir.resolve("destination-cancel.fb2");
