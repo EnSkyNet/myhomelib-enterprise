@@ -40,7 +40,7 @@ class StageSafetyTest(unittest.TestCase):
             with patch.object(stage.urllib.request, "urlopen", side_effect=open_mock):
                 path, actual = stage.verified_artifact(
                     "org.apache.httpcomponents.core5", "httpcore5", "5.4.4", target)
-            self.assertEqual(digest.decode(), actual)
+            self.assertEqual(hashlib.sha256(data).hexdigest(), actual)
             self.assertEqual(data, path.read_bytes())
             with patch.object(stage.urllib.request, "urlopen", side_effect=open_mock):
                 with self.assertRaises(FileExistsError):
