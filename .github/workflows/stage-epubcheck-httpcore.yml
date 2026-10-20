@@ -6,6 +6,7 @@ on:
       - security/v34-epubcheck-httpcore-upgrade-tool
     paths:
       - 'tools/apply-epubcheck-httpcore-fix.py'
+      - 'tools/stage-epubcheck-httpcore-fix.py'
       - '.github/workflows/stage-epubcheck-httpcore.yml'
 
 permissions:
