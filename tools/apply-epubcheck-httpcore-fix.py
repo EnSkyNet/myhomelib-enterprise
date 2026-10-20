@@ -40,7 +40,7 @@ def apply(root, staging):
         if (root / new_path).exists():
             raise ValueError(f"Refusing to overwrite vendor file: {new_path}")
         data = replacement.read_bytes()
-        if not data.startswith(b"PK\\x03\\x04") or not data:
+        if not data.startswith(b"PK\x03\x04") or not data:
             raise ValueError(f"Invalid staged JAR: {replacement}")
         edits.append((entry, source, root / new_path, data, hashlib.sha256(data).hexdigest()))
     digest_lines = (root / SHA_LIST).read_text(encoding="utf-8").splitlines()
@@ -72,8 +72,8 @@ def apply(root, staging):
         }]
         entry["purl"] = f"pkg:maven/org.apache.httpcomponents.core5/{name}@{NEW_VERSION}"
         entry["runtimeVersionVerified"] = False
-    (root / MANIFEST).write_text(json.dumps(original, ensure_ascii=False, indent=2)+"\\n", encoding="utf-8")
-    (root / SHA_LIST).write_text("\\n".join(digest_lines)+"\\n", encoding="utf-8")
+    (root / MANIFEST).write_text(json.dumps(original, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
+    (root / SHA_LIST).write_text("\n".join(digest_lines)+"\n", encoding="utf-8")
     # Reuse canonical SBOM generator; never hand-edit a stale checked-in SBOM.
     import subprocess
     import sys
