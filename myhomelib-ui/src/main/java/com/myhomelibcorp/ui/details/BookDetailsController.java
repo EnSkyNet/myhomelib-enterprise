@@ -956,6 +956,10 @@ public class BookDetailsController {
             vm.currentBookProperty().removeListener(bookChangeListener);
             bookChangeListener = null;
         }
+        if (readingProgressListener != null) {
+            vm.readingProgressProperty().removeListener(readingProgressListener);
+            readingProgressListener = null;
+        }
         closeCurrentSession();
     }
 
