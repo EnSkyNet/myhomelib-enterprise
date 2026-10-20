@@ -200,6 +200,9 @@ public class BookDetailsController {
                     closeCurrentSession();
                     currentSession = session;
                     updateUI(session);
+                    // Rich inspection re-reads metadata; preserve the visible catalogue progress.
+                    progressLabel.setText(UiText.text("ui.java.book_details_controller.807433eeb3")
+                            + BookProgressPresentation.preserveVisibleProgress(session.book(), stillSelected).getProgressFormatted());
                     coverPresenter.showCover(session.book());
                     loadSimilarBooks(selected.getId(), requestToken);
                 }))

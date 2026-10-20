@@ -137,7 +137,10 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
         // borrow details from a previous selection or overwrite a nonempty DB value.
         BookDto loaded = result.get();
         var sidebar = appState.getBookDetails();
-        currentBook = preferVisibleAnnotation(loaded, sidebar == null ? null : sidebar.getCurrentBook());
+        currentBook = preferVisibleAnnotation(
+                com.myhomelibcorp.ui.details.BookProgressPresentation.preserveVisibleProgress(
+                        loaded, sidebar == null ? null : sidebar.getCurrentBook()),
+                sidebar == null ? null : sidebar.getCurrentBook());
         updateUI(currentBook);
         coverPresenter.showCover(currentBook);
         setLoadState(null, false);
