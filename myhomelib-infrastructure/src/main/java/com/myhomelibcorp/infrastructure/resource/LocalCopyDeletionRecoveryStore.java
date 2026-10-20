@@ -24,6 +24,7 @@ import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Durable intent log for crash-safe local-copy deletion.
@@ -70,7 +71,7 @@ public final class LocalCopyDeletionRecoveryStore {
         properties.setProperty("managedRoot", managedRoot.toAbsolutePath().normalize().toString());
         properties.setProperty("collectionId", collectionId);
         properties.setProperty("bookIds", affectedBookIds.stream().map(BookId::asString).distinct()
-                .reduce((a, b) -> a + "," + b).orElseThrow());
+                .collect(Collectors.joining(",")));
         properties.setProperty("contentSha256", contentHash);
 
         ByteArrayOutputStream encoded = new ByteArrayOutputStream();
