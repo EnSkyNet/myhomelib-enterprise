@@ -35,6 +35,13 @@ final class OrganizerTargetPublisher {
 
     void publish(Path staged, Path target, String expectedHash,
                  java.util.function.BooleanSupplier cancelled) throws Exception {
+        publish(staged, target, expectedHash, cancelled, (stage, bytes) -> { });
+    }
+
+    void publish(Path staged, Path target, String expectedHash,
+                 java.util.function.BooleanSupplier cancelled,
+                 java.util.function.BiConsumer<String, Long> progress) throws Exception {
+        java.util.Objects.requireNonNull(progress, "progress");
         OrganizerFileIntegritySupport.checkCancelled(cancelled);
         if (expectedHash == null || !expectedHash.matches("(?i)[0-9a-f]{64}")) {
             throw new IllegalArgumentException("A validated SHA-256 digest is required for organizer publication");
@@ -66,6 +73,7 @@ final class OrganizerTargetPublisher {
         try {
             OrganizerPathSafety.copyFreshFileVerified(safeStaged, temp, "Organizer destination temporary copy",
                     cancelled, expectedHash, (stage, bytes) -> {
+                        progress.accept("TEMP_" + stage, bytes);
                         if ("OPENED".equals(stage)) {
                             try {
                                 createdKey[0] = Files.readAttributes(temp, java.nio.file.attribute.BasicFileAttributes.class,
@@ -78,12 +86,15 @@ final class OrganizerTargetPublisher {
             // volumes reject it with ERROR_INVALID_FUNCTION; fall back to a fresh
             // no-replace copy rather than aborting the entire organization operation.
             // Final bytes are verified before the catalog/source is mutated.
+            progress.accept("FINAL_PUBLISH_START", 0L);
             SafeFilePrimitives.publishFreshNoReplace(temp, safeTarget, "Organizer target", cancelled);
             published = true;
+            progress.accept("FINAL_VERIFY_START", 0L);
             if (!expectedHash.equalsIgnoreCase(OrganizerFileIntegritySupport.sha256(safeTarget, cancelled))) {
                 throw new IllegalStateException("Final target hash mismatch: " + safeTarget);
             }
             OrganizerFileIntegritySupport.checkCancelled(cancelled);
+            progress.accept("FINAL_VERIFIED", 0L);
         } catch (Exception failure) {
             if (published) {
                 if (matchesRequiredHash(safeTarget, expectedHash)) {

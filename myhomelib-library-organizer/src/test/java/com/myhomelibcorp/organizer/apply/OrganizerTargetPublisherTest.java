@@ -185,6 +185,38 @@ class OrganizerTargetPublisherTest {
     }
 
     @Test
+    void publicationReportsCopyBytesAndVerificationStagesWithoutChangingPayload() throws Exception {
+        byte[] payload = new byte[512 * 1024 + 7];
+        java.util.Arrays.fill(payload, (byte) 42);
+        Path staged = Files.write(temp.resolve("progress-source.fb2"), payload);
+        Path target = temp.resolve("progress/target.fb2");
+        String digest = OrganizerFileIntegritySupport.sha256(staged);
+        java.util.List<String> stages = new java.util.ArrayList<>();
+        java.util.List<Long> copied = new java.util.ArrayList<>();
+        new OrganizerTargetPublisher().publish(staged, target, digest, () -> false,
+                (stage, bytes) -> { stages.add(stage); copied.add(bytes); });
+        assertThat(stages).containsSubsequence("TEMP_OPENED", "TEMP_BYTES", "TEMP_STREAM_DONE",
+                "TEMP_VERIFY_TARGET_START", "TEMP_VERIFY_TARGET_DONE", "FINAL_PUBLISH_START",
+                "FINAL_VERIFY_START", "FINAL_VERIFIED");
+        assertThat(copied.get(stages.lastIndexOf("TEMP_BYTES"))).isEqualTo(payload.length);
+        assertThat(Files.readAllBytes(target)).isEqualTo(payload);
+    }
+
+    @Test
+    void cancellationDuringPublicationVerificationPreservesStagedBytes() throws Exception {
+        Path staged = Files.writeString(temp.resolve("cancel-publish.fb2"), "retain source");
+        Path target = temp.resolve("cancel/target.fb2");
+        String digest = OrganizerFileIntegritySupport.sha256(staged);
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        assertThatThrownBy(() -> new OrganizerTargetPublisher().publish(staged, target, digest,
+                cancelled::get, (stage, bytes) -> {
+                    if ("TEMP_VERIFY_TARGET_START".equals(stage)) cancelled.set(true);
+                })).isInstanceOf(java.util.concurrent.CancellationException.class);
+        assertThat(Files.readString(staged)).isEqualTo("retain source");
+        assertThat(target).doesNotExist();
+    }
+
+    @Test
     void publishesVerifiedStagedBytesToFreshTarget() throws Exception {
         Path staged = Files.writeString(temp.resolve("staged.fb2"), "verified payload", StandardCharsets.UTF_8);
         Path target = temp.resolve("library/Author/Book.fb2");
