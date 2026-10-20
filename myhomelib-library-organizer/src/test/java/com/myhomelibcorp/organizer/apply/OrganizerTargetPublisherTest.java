@@ -199,7 +199,24 @@ class OrganizerTargetPublisherTest {
                 "TEMP_VERIFY_TARGET_START", "TEMP_VERIFY_TARGET_DONE", "FINAL_PUBLISH_START",
                 "FINAL_VERIFY_START", "FINAL_VERIFIED");
         assertThat(copied.get(stages.lastIndexOf("TEMP_BYTES"))).isEqualTo(payload.length);
+        assertThat(stages).contains("FINAL_VERIFY_BYTES");
+        assertThat(copied.get(stages.lastIndexOf("FINAL_VERIFY_BYTES"))).isEqualTo(payload.length);
         assertThat(Files.readAllBytes(target)).isEqualTo(payload);
+    }
+
+    @Test
+    void cancellationDuringFinalHashDoesNotLeavePublishedTarget() throws Exception {
+        byte[] payload = new byte[512 * 1024];
+        Path staged = Files.write(temp.resolve("cancel-final-hash.fb2"), payload);
+        Path target = temp.resolve("destination/cancel-final-hash.fb2");
+        String digest = OrganizerFileIntegritySupport.sha256(staged);
+        var cancel = new java.util.concurrent.atomic.AtomicBoolean();
+        assertThatThrownBy(() -> new OrganizerTargetPublisher().publish(
+                staged, target, digest, cancel::get, (stage, bytes) -> {
+                    if ("FINAL_VERIFY_BYTES".equals(stage) && bytes > 0L) cancel.set(true);
+                })).isInstanceOf(java.util.concurrent.CancellationException.class);
+        assertThat(staged).exists();
+        assertThat(target).doesNotExist();
     }
 
     @Test
