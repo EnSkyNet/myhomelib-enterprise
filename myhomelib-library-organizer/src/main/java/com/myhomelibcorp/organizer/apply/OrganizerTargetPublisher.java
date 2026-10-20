@@ -90,7 +90,8 @@ final class OrganizerTargetPublisher {
             SafeFilePrimitives.publishFreshNoReplace(temp, safeTarget, "Organizer target", cancelled);
             published = true;
             progress.accept("FINAL_VERIFY_START", 0L);
-            if (!expectedHash.equalsIgnoreCase(OrganizerFileIntegritySupport.sha256(safeTarget, cancelled))) {
+            if (!expectedHash.equalsIgnoreCase(OrganizerFileIntegritySupport.sha256(safeTarget, cancelled,
+                    bytes -> progress.accept("FINAL_VERIFY_BYTES", bytes)))) {
                 throw new IllegalStateException("Final target hash mismatch: " + safeTarget);
             }
             OrganizerFileIntegritySupport.checkCancelled(cancelled);
