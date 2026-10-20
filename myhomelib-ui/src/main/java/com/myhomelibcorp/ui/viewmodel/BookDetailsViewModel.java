@@ -27,7 +27,15 @@ public class BookDetailsViewModel {
      */
     public boolean setCurrentBookIfDifferentId(BookDto book) {
         BookDto current = currentBook.get();
-        if (sameBookId(current, book)) return false;
+        if (sameBookId(current, book)) {
+            // Keep the selected DTO to avoid an expensive rich-details reload.
+            // Propagate the latest nonzero progress for the same logical book.
+            if (current != null && book != null && book.getProgress() > 0
+                    && book.getProgress() != current.getProgress()) {
+                updateReadingProgress(current.getId(), book.getProgress());
+            }
+            return false;
+        }
         currentBook.set(book);
         return true;
     }
