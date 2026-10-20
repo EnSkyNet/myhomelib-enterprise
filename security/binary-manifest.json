@@ -446,62 +446,62 @@
       "purl": "pkg:maven/org.apache.httpcomponents.client5/httpclient5@5.1.3"
     },
     {
-      "path": "tools/validators/epubcheck/lib/httpcore5-5.1.3.jar",
-      "sha256": "f2bf2f2c7772169c9e30699719667ad30f9b46c4e9d7841907deb2d12d9923fe",
-      "sizeBytes": 850808,
+      "path": "tools/validators/epubcheck/lib/httpcore5-5.4.4.jar",
+      "sha256": "b08e3c3a440fec2029e89980134c7c787dd6796454641ad1eafb81478d7e8b0b",
+      "sizeBytes": 955270,
       "name": "httpcore5",
-      "version": "5.1.3",
+      "version": "5.4.4",
       "license": "Apache-2.0",
       "licenseEvidence": [
         "tools/validators/epubcheck/THIRD-PARTY.txt"
       ],
       "identityEvidence": [
-        "tools/validators/epubcheck/lib/httpcore5-5.1.3.jar (distribution filename)",
-        "tools/validators/epubcheck/lib/httpcore5-5.1.3.jar!/META-INF/maven/org.apache.httpcomponents.core5/httpcore5/pom.properties"
+        "tools/validators/epubcheck/lib/httpcore5-5.4.4.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/httpcore5-5.4.4.jar!/META-INF/maven/org.apache.httpcomponents.core5/httpcore5/pom.properties"
       ],
       "metadataStatus": "embedded-maven-metadata",
-      "checkedOn": "2026-10-13",
+      "checkedOn": "2026-10-20",
       "runtimeVersionVerified": false,
-      "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5/5.1.3/",
-      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5/5.4.4/",
+      "sourceKind": "Maven Central SHA-256 verified, embedded Maven metadata verified",
       "embeddedMavenComponents": [
         {
           "artifactId": "httpcore5",
           "groupId": "org.apache.httpcomponents.core5",
-          "version": "5.1.3"
+          "version": "5.4.4"
         }
       ],
       "group": "org.apache.httpcomponents.core5",
-      "purl": "pkg:maven/org.apache.httpcomponents.core5/httpcore5@5.1.3"
+      "purl": "pkg:maven/org.apache.httpcomponents.core5/httpcore5@5.4.4"
     },
     {
-      "path": "tools/validators/epubcheck/lib/httpcore5-h2-5.1.3.jar",
-      "sha256": "d0e78ba15aa8ebe77982b660ac4b09a95d6e035dbdbea762577dc1c8e2935807",
-      "sizeBytes": 232137,
+      "path": "tools/validators/epubcheck/lib/httpcore5-h2-5.4.4.jar",
+      "sha256": "9a61441889f9b222ce99581977cc549b4dfca7ac9d2841582c1e57a31fa65b48",
+      "sizeBytes": 263674,
       "name": "httpcore5-h2",
-      "version": "5.1.3",
+      "version": "5.4.4",
       "license": "Apache-2.0",
       "licenseEvidence": [
         "tools/validators/epubcheck/THIRD-PARTY.txt"
       ],
       "identityEvidence": [
-        "tools/validators/epubcheck/lib/httpcore5-h2-5.1.3.jar (distribution filename)",
-        "tools/validators/epubcheck/lib/httpcore5-h2-5.1.3.jar!/META-INF/maven/org.apache.httpcomponents.core5/httpcore5-h2/pom.properties"
+        "tools/validators/epubcheck/lib/httpcore5-h2-5.4.4.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/httpcore5-h2-5.4.4.jar!/META-INF/maven/org.apache.httpcomponents.core5/httpcore5-h2/pom.properties"
       ],
       "metadataStatus": "embedded-maven-metadata",
-      "checkedOn": "2026-10-13",
+      "checkedOn": "2026-10-20",
       "runtimeVersionVerified": false,
-      "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5-h2/5.1.3/",
-      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5-h2/5.4.4/",
+      "sourceKind": "Maven Central SHA-256 verified, embedded Maven metadata verified",
       "embeddedMavenComponents": [
         {
           "artifactId": "httpcore5-h2",
           "groupId": "org.apache.httpcomponents.core5",
-          "version": "5.1.3"
+          "version": "5.4.4"
         }
       ],
       "group": "org.apache.httpcomponents.core5",
-      "purl": "pkg:maven/org.apache.httpcomponents.core5/httpcore5-h2@5.1.3"
+      "purl": "pkg:maven/org.apache.httpcomponents.core5/httpcore5-h2@5.4.4"
     },
     {
       "path": "tools/validators/epubcheck/lib/icu4j-77.1.jar",
