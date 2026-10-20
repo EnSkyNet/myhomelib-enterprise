@@ -32,11 +32,11 @@ def jar_bytes(name="httpcore5", version="5.4.4"):
 class StageSafetyTest(unittest.TestCase):
     def test_valid_signed_by_digest_metadata_is_staged_without_mutating_other_files(self):
         data = jar_bytes()
-        digest = hashlib.sha256(data).hexdigest().encode()
+        digest = hashlib.sha512(data).hexdigest().encode()
         with tempfile.TemporaryDirectory() as d:
             target = Path(d)
             def open_mock(url, timeout):
-                return FakeResponse(digest if url.endswith(".sha256") else data)
+                return FakeResponse(digest if url.endswith(".sha512") else data)
             with patch.object(stage.urllib.request, "urlopen", side_effect=open_mock):
                 path, actual = stage.verified_artifact(
                     "org.apache.httpcomponents.core5", "httpcore5", "5.4.4", target)
@@ -51,21 +51,21 @@ class StageSafetyTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             target = Path(d)
             def open_mock(url, timeout):
-                return FakeResponse(b"0" * 64 if url.endswith(".sha256") else data)
+                return FakeResponse(b"0" * 128 if url.endswith(".sha512") else data)
             with patch.object(stage.urllib.request, "urlopen", side_effect=open_mock):
-                with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                with self.assertRaisesRegex(ValueError, "Published checksum mismatch"):
                     stage.verified_artifact("org.apache.httpcomponents.core5", "httpcore5", "5.4.4", target)
             self.assertEqual([], list(target.iterdir()))
 
     def test_mismatched_embedded_version_never_writes_bytes(self):
         data = jar_bytes(version="5.1.3")
-        digest = hashlib.sha256(data).hexdigest().encode()
+        digest = hashlib.sha512(data).hexdigest().encode()
         with tempfile.TemporaryDirectory() as d:
             target = Path(d)
             def open_mock(url, timeout):
-                return FakeResponse(digest if url.endswith(".sha256") else data)
+                return FakeResponse(digest if url.endswith(".sha512") else data)
             with patch.object(stage.urllib.request, "urlopen", side_effect=open_mock):
-                with self.assertRaises(AssertionError):
+                with self.assertRaises(ValueError):
                     stage.verified_artifact("org.apache.httpcomponents.core5", "httpcore5", "5.4.4", target)
             self.assertEqual([], list(target.iterdir()))
 
