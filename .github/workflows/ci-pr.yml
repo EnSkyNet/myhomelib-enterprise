@@ -48,6 +48,14 @@ jobs:
         shell: bash
         run: python3 -B tools/stage-epubcheck-httpcore-fix-test.py
 
+      - name: EPUBCheck bundled JAR smoke with updated HttpCore
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar tools/validators/epubcheck/epubcheck.jar --version 2>&1 | grep -F 'EPUBCheck v5.4.0'
+          java -jar tools/validators/epubcheck/epubcheck.jar --help >/dev/null 2>&1
+          python3 -B tools/vendor-binary-inventory.py --check
+
       - name: Compile production and test sources
         shell: bash
         run: ./tools/invoke-maven.sh -B -ntp -DskipTests test-compile
