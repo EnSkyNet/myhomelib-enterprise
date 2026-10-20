@@ -26,6 +26,24 @@ class BookDetailsViewModelIdentityUpdateTest {
     }
 
     @Test
+    void repeatedSelectionOfSameIdRefreshesNonzeroProgressWithoutRetriggeringDetails() {
+        BookDetailsViewModel model = new BookDetailsViewModel();
+        AtomicInteger selectionChanges = new AtomicInteger();
+        model.currentBookProperty().addListener((obs, oldValue, newValue) -> selectionChanges.incrementAndGet());
+        BookDto selected = BookDto.builder().id("same").progress(21).build();
+        model.setCurrentBook(selected);
+        BookDto readerCopy = BookDto.builder().id("same").progress(38).build();
+        assertThat(model.setCurrentBookIfDifferentId(readerCopy)).isFalse();
+        assertThat(model.getCurrentBook()).isSameAs(selected);
+        assertThat(model.readingProgressProperty().get()).isEqualTo(38);
+        assertThat(selected.getProgress()).isEqualTo(38);
+        assertThat(selectionChanges).hasValue(1);
+        // A stale zero projection must not replace the last known reader position.
+        assertThat(model.setCurrentBookIfDifferentId(BookDto.builder().id("same").progress(0).build())).isFalse();
+        assertThat(model.readingProgressProperty().get()).isEqualTo(38);
+    }
+
+    @Test
     void differentBookStillUpdatesSelection() {
         BookDetailsViewModel viewModel = new BookDetailsViewModel();
         BookDto first = BookDto.builder().id("11111111-1111-1111-1111-111111111111").build();

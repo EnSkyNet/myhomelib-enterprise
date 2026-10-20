@@ -134,6 +134,7 @@ public class BookDetailsController {
 
     private final AtomicLong loadGeneration = new AtomicLong();
     private ChangeListener<BookDto> bookChangeListener;
+    private javafx.beans.value.ChangeListener<Number> readingProgressListener;
     private RichBookDetailsSession currentSession;
     private volatile UiBackgroundExecutor.CancellableSubmission<RichBookDetailsSession> detailsAnalysisTask;
     private volatile UiBackgroundExecutor.CancellableSubmission<List<SimilarBookResult>> similarBooksTask;
@@ -144,6 +145,14 @@ public class BookDetailsController {
         BookDetailsViewModel vm = appState.getBookDetails();
         bookChangeListener = (obs, old, bookDto) -> loadBookDetails(bookDto);
         vm.currentBookProperty().addListener(bookChangeListener);
+        readingProgressListener = (obs, oldValue, newValue) -> {
+            BookDto selected = vm.getCurrentBook();
+            if (selected != null && progressLabel != null) {
+                progressLabel.setText(UiText.text("ui.java.book_details_controller.807433eeb3")
+                        + newValue.intValue() + "%");
+            }
+        };
+        vm.readingProgressProperty().addListener(readingProgressListener);
         configureArtifactPicker();
         loadBookDetails(vm.getCurrentBook());
     }
@@ -946,6 +955,10 @@ public class BookDetailsController {
         if (bookChangeListener != null) {
             vm.currentBookProperty().removeListener(bookChangeListener);
             bookChangeListener = null;
+        }
+        if (readingProgressListener != null) {
+            vm.readingProgressProperty().removeListener(readingProgressListener);
+            readingProgressListener = null;
         }
         closeCurrentSession();
     }
