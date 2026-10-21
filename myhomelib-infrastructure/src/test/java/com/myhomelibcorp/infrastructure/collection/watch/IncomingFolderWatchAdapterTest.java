@@ -141,7 +141,7 @@ class IncomingFolderWatchAdapterTest {
         // Manual scan enrolls even a disabled watch in durable replay.
         adapter.scanNow("c1");
 
-        String invalid = "!broken\\u0000path.txt";
+        String invalid = "!broken" + (char) 0 + "path.txt";
         Path valid = Files.writeString(incoming.resolve("valid-book.txt"), "safe test content");
         String signature = Instant.now().minus(Duration.ofSeconds(30)).toString();
         jdbc.update("""
