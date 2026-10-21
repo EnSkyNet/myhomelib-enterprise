@@ -440,7 +440,19 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                     resumeCollection = candidate.collectionId();
                     resumeFile = candidate.filePath();
                     if (!queuedCollections.contains(candidate.collectionId())) continue;
-                    Path path = Path.of(candidate.filePath());
+                    Path path;
+                    try {
+                        path = Path.of(candidate.filePath());
+                    } catch (InvalidPathException malformed) {
+                        // A corrupt persisted path must not block every valid file behind it.
+                        // Update by its original text: it cannot be represented as a Path.
+                        jdbc.update("""
+                                UPDATE incoming_folder_file
+                                   SET status='FAILED', last_error='INVALID_PATH', updated_at=?
+                                 WHERE collection_id=? AND file_path=? AND status='WAITING'
+                                """, now(), candidate.collectionId(), candidate.filePath());
+                        continue;
+                    }
                     if (!isSafeIncomingRegularFile(path)) {
                         markMissing(candidate.collectionId(), path);
                         continue;
