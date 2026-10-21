@@ -133,6 +133,48 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    void malformedPersistedPathIsQuarantinedWithoutStarvingLaterValidBooks() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("replay-corrupt-path"));
+        adapter.configure("c1", incoming, false, 1, 1);
+        // Manual scan enrolls even a disabled watch in durable replay.
+        adapter.scanNow("c1");
+
+        String invalid = "!broken\\u0000path.txt";
+        Path valid = Files.writeString(incoming.resolve("valid-book.txt"), "safe test content");
+        String signature = Instant.now().minus(Duration.ofSeconds(30)).toString();
+        jdbc.update("""
+                INSERT INTO incoming_folder_file(
+                    collection_id, file_path, observed_size, observed_mtime,
+                    signature_seen_at, fingerprint, status, detected_at, updated_at)
+                VALUES(?,?,?,?,?,NULL,'WAITING',?,?)
+                """, "c1", invalid, 0L, 0L, signature, signature, signature);
+        jdbc.update("""
+                INSERT INTO incoming_folder_file(
+                    collection_id, file_path, observed_size, observed_mtime,
+                    signature_seen_at, fingerprint, status, detected_at, updated_at)
+                VALUES(?,?,?,?,?,NULL,'WAITING',?,?)
+                """, "c1", valid.toAbsolutePath().normalize().toString(), Files.size(valid),
+                Files.getLastModifiedTime(valid).toMillis(), signature, signature, signature);
+
+        var refill = IncomingFolderWatchAdapter.class.getDeclaredMethod("refillPendingFromDatabase");
+        refill.setAccessible(true);
+        refill.invoke(adapter);
+
+        assertThat(jdbc.queryForObject("""
+                SELECT status FROM incoming_folder_file WHERE collection_id='c1' AND file_path=?
+                """, String.class, invalid)).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("""
+                SELECT last_error FROM incoming_folder_file WHERE collection_id='c1' AND file_path=?
+                """, String.class, invalid)).isEqualTo("INVALID_PATH");
+        await(() -> jdbc.queryForObject("""
+                SELECT status FROM incoming_folder_file WHERE collection_id='c1' AND file_path=?
+                """, String.class, valid.toAbsolutePath().normalize().toString()).equals("READY"),
+                Duration.ofSeconds(8));
+    }
+
+    @Test
     void overflowReplayHandlesDeletedPathsWithoutSchedulingMissingBooks() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
