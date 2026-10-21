@@ -146,11 +146,15 @@ class IncomingFolderWatchAdapterTest {
 
         Path deleted = incoming.resolve("book-" + (count - 1) + ".txt");
         Files.delete(deleted);
-        await(() -> jdbc.queryForObject("""
-                SELECT status FROM incoming_folder_file
-                 WHERE collection_id='c1' AND file_path=?
-                """, String.class, deleted.toAbsolutePath().normalize().toString()).equals("MISSING"),
-                Duration.ofSeconds(40));
+        // A deleted candidate may have been queued but not yet persisted when the
+        // file disappears. Both an absent row and a MISSING row are safe; READY is not.
+        await(() -> {
+            var states = jdbc.query("""
+                    SELECT status FROM incoming_folder_file
+                     WHERE collection_id='c1' AND file_path=?
+                    """, (rs, row) -> rs.getString(1), deleted.toAbsolutePath().normalize().toString());
+            return states.isEmpty() || states.getFirst().equals("MISSING");
+        }, Duration.ofSeconds(40));
         assertThat(Files.exists(deleted)).isFalse();
     }
 
