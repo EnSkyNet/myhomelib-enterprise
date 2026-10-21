@@ -17,12 +17,11 @@ import java.nio.file.attribute.FileTime;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -93,7 +92,7 @@ public class ExternalReaderMaterializationCache implements AutoCloseable, Initia
                     if (n == 0) continue;
                     copied += n;
                     if (copied > maxFileBytes) throw new IOException("Materialized book exceeds the per-file cache limit");
-                    if (base + copied > maxBytes) throw new IOException("External-reader cache size limit exceeded");
+                    if (copied > maxBytes - base) throw new IOException("External-reader cache size limit exceeded");
                     out.write(buffer, 0, n);
                 }
                 success = true;
@@ -118,7 +117,10 @@ public class ExternalReaderMaterializationCache implements AutoCloseable, Initia
             Path safeSource = SafeFilePublication.requireSafeRegularFile(source, "External-reader adopted source");
             long size = Files.readAttributes(safeSource, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).size();
             if (size > maxFileBytes) throw new IOException("Materialized book exceeds the per-file cache limit");
-            if (totalSizeLocked() + size > maxBytes) throw new IOException("External-reader cache size limit exceeded");
+            long existing = totalSizeLocked();
+            if (existing > maxBytes || size > maxBytes - existing) {
+                throw new IOException("External-reader cache size limit exceeded");
+            }
 
             Path target = newTarget(extension(source.getFileName() == null ? "" : source.getFileName().toString()));
             String sourceHash = SafeFilePublication.sha256(safeSource, "External-reader adopted source");
@@ -173,32 +175,41 @@ public class ExternalReaderMaterializationCache implements AutoCloseable, Initia
 
     private void cleanupCrashLeftoversLocked() throws IOException {
         if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return;
-        for (Path file : cacheFilesLocked()) {
-            // No file can be active before this JVM has issued a lease, therefore every pre-existing file is stale.
-            Files.deleteIfExists(file);
+        // Startup may encounter thousands of crash leftovers; don't allocate a list of every path.
+        try (Stream<Path> files = cacheFilesLocked()) {
+            for (var paths = files.iterator(); paths.hasNext();) {
+                // No file can be active before this JVM has issued a lease.
+                Files.deleteIfExists(paths.next());
+            }
         }
     }
 
     private void cleanupInactiveLocked() throws IOException {
         if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return;
         Instant cutoff = clock.instant().minus(maxAge);
-        List<Path> candidates = new ArrayList<>();
-        for (Path file : cacheFilesLocked()) {
-            if (active.contains(file) || retainUntilRestart.contains(file)) continue;
-            candidates.add(file);
-            try {
-                if (Files.getLastModifiedTime(file, LinkOption.NOFOLLOW_LINKS).toInstant().isBefore(cutoff)) {
-                    Files.deleteIfExists(file);
-                }
-            } catch (IOException ignored) { }
+        // The common age/under-budget path stays constant-memory, even with large directories.
+        try (Stream<Path> files = cacheFilesLocked()) {
+            for (var paths = files.iterator(); paths.hasNext();) {
+                Path file = paths.next();
+                if (active.contains(file) || retainUntilRestart.contains(file)) continue;
+                try {
+                    if (Files.getLastModifiedTime(file, LinkOption.NOFOLLOW_LINKS).toInstant().isBefore(cutoff)) {
+                        Files.deleteIfExists(file);
+                    }
+                } catch (IOException ignored) { }
+            }
         }
 
         long total = totalSizeLocked();
         if (total <= maxBytes) return;
-        candidates = cacheFilesLocked().stream()
-                .filter(file -> !active.contains(file) && !retainUntilRestart.contains(file))
-                .sorted(Comparator.comparingLong(this::modifiedQuietly))
-                .toList();
+        // Only allocate/sort eviction candidates when the cache is actually over its budget.
+        java.util.List<Path> candidates;
+        try (Stream<Path> files = cacheFilesLocked()) {
+            candidates = files
+                    .filter(file -> !active.contains(file) && !retainUntilRestart.contains(file))
+                    .sorted(Comparator.comparingLong(this::modifiedQuietly))
+                    .toList();
+        }
         for (Path file : candidates) {
             if (total <= maxBytes) break;
             long size = sizeQuietly(file);
@@ -208,22 +219,23 @@ public class ExternalReaderMaterializationCache implements AutoCloseable, Initia
         }
     }
 
-    private List<Path> cacheFilesLocked() throws IOException {
-        if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) return List.of();
+    /** Caller owns this lazy directory stream and must close it in every return path. */
+    private Stream<Path> cacheFilesLocked() throws IOException {
+        if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) return Stream.empty();
         SafeFilePublication.requireSafeDirectoryPath(directory, "External-reader cache");
-        try (var stream = Files.list(directory)) {
-            return stream.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(path))
-                    .map(path -> path.toAbsolutePath().normalize())
-                    .toList();
-        }
+        return Files.list(directory)
+                .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(path))
+                .map(path -> path.toAbsolutePath().normalize());
     }
 
     private long totalSizeLocked() throws IOException {
         long total = 0;
-        for (Path file : cacheFilesLocked()) {
-            long size = sizeQuietly(file);
-            if (Long.MAX_VALUE - total < size) return Long.MAX_VALUE;
-            total += size;
+        try (Stream<Path> files = cacheFilesLocked()) {
+            for (var paths = files.iterator(); paths.hasNext();) {
+                long size = sizeQuietly(paths.next());
+                if (Long.MAX_VALUE - total < size) return Long.MAX_VALUE;
+                total += size;
+            }
         }
         return total;
     }
