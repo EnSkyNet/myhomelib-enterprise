@@ -440,7 +440,19 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                     resumeCollection = candidate.collectionId();
                     resumeFile = candidate.filePath();
                     if (!queuedCollections.contains(candidate.collectionId())) continue;
-                    Path path = Path.of(candidate.filePath());
+                    Path path;
+                    try {
+                        path = Path.of(candidate.filePath());
+                    } catch (InvalidPathException malformed) {
+                        // A corrupt persisted path must not block every valid file behind it.
+                        // Update by its original text: it cannot be represented as a Path.
+                        jdbc.update("""
+                                UPDATE incoming_folder_file
+                                   SET status='FAILED', last_error='INVALID_PATH', updated_at=?
+                                 WHERE collection_id=? AND file_path=? AND status='WAITING'
+                                """, now(), candidate.collectionId(), candidate.filePath());
+                        continue;
+                    }
                     if (!isSafeIncomingRegularFile(path)) {
                         markMissing(candidate.collectionId(), path);
                         continue;
@@ -460,13 +472,12 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
             if (queuedCollections.isEmpty()) return;
             try {
                 refillPendingFromDatabase();
-                // Stop the periodic wakeup after every WAITING file has been processed.
-                Integer remaining = jdbc.queryForObject(
-                        "SELECT COUNT(*) FROM incoming_folder_file WHERE status='WAITING'", Integer.class);
-                if (remaining != null && remaining == 0) {
-                    synchronized (pendingLock) {
-                        cancelOverflowRetryLocked();
-                    }
+                // Inactive/paused collections can retain WAITING rows indefinitely.
+                // Only active registrations and explicitly enrolled manual scans should
+                // keep a recurring timer alive. Probe per-collection using the V12 partial
+                // WAITING index; no full COUNT(*) over an unrelated backlog.
+                synchronized (pendingLock) {
+                    if (!hasEligibleWaitingRowsLocked()) cancelOverflowRetryLocked();
                 }
             } catch (RuntimeException failure) {
                 // The normal completion hook may also hit SQLITE_BUSY. Retain exactly
@@ -474,6 +485,19 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                 log.warn("Cannot replay incoming-folder SQLite backlog yet: {}", safeMessage(failure));
             }
         }, OVERFLOW_RETRY_SECONDS, OVERFLOW_RETRY_SECONDS, TimeUnit.SECONDS);
+    }
+
+    /** Must be called with pendingLock held; at most one indexed EXISTS query per enrollment. */
+    private boolean hasEligibleWaitingRowsLocked() {
+        for (String collectionId : queuedCollections) {
+            Integer exists = jdbc.queryForObject("""
+                    SELECT EXISTS(
+                        SELECT 1 FROM incoming_folder_file
+                         WHERE collection_id=? AND status='WAITING')
+                    """, Integer.class, collectionId);
+            if (exists != null && exists != 0) return true;
+        }
+        return false;
     }
 
     private void cancelOverflowRetryLocked() {
