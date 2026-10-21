@@ -14,7 +14,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.PriorityQueue;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -209,25 +213,68 @@ public class ApplicationThemeService {
         return SafeFilePublication.requireSafeRegularFile(file, "Generated theme stylesheet");
     }
 
-    /** Keep a small rolling cache so already-open scenes never reference a stylesheet deleted mid-session. */
+    /** Keep the eight newest stylesheets without sorting all generated cache paths. */
     private void cleanupOldGenerated() {
         try {
-            Path cacheDir = SafeFilePublication.requireSafeDirectoryPath(AppPaths.cacheDir(), "Generated theme cache cleanup");
-            try (var paths = Files.list(cacheDir)) {
-                var generated = paths
-                        .filter(path -> path.getFileName().toString().startsWith(GENERATED_MARKER))
-                        .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
-                        .filter(this::isSafeGeneratedFile)
-                        .sorted((left, right) -> Long.compare(lastModified(right), lastModified(left)))
-                        .toList();
-                for (int i = 8; i < generated.size(); i++) {
-                    try {
-                        Path safe = SafeFilePublication.requireSafeRegularFile(generated.get(i), "Generated theme cache entry");
-                        Files.delete(safe);
-                    } catch (IOException ignored) { }
+            Path cacheDir = SafeFilePublication.requireSafeDirectoryPath(
+                    AppPaths.cacheDir(), "Generated theme cache cleanup");
+            pruneGeneratedCss(cacheDir);
+        } catch (IOException ignored) { }
+    }
+
+    /**
+     * Two bounded scans: first determine the eight files to retain, then delete the others.
+     * Closing the first stream before deletion avoids retaining an unbounded file snapshot.
+     */
+    void pruneGeneratedCss(Path cacheDir) throws IOException {
+        record Generated(Path path, long modifiedAt) { }
+        Comparator<Generated> oldestFirst = Comparator.comparingLong(Generated::modifiedAt)
+                .thenComparing(entry -> entry.path().getFileName().toString());
+        PriorityQueue<Generated> retained = new PriorityQueue<>(8, oldestFirst);
+        int eligible = 0;
+        try (var paths = Files.list(cacheDir)) {
+            var iterator = paths.iterator();
+            while (iterator.hasNext()) {
+                Path path = iterator.next();
+                if (!isEligibleGeneratedCss(path)) continue;
+                eligible++;
+                Generated candidate = new Generated(path, lastModified(path));
+                if (retained.size() < 8) {
+                    retained.add(candidate);
+                } else if (oldestFirst.compare(candidate, retained.peek()) > 0) {
+                    retained.poll();
+                    retained.add(candidate);
                 }
             }
-        } catch (IOException ignored) { }
+        }
+        if (eligible <= 8) return;
+        Generated cutoff = retained.peek();
+        Set<Path> keep = new HashSet<>();
+        for (Generated candidate : retained) keep.add(candidate.path());
+        try (var paths = Files.list(cacheDir)) {
+            var iterator = paths.iterator();
+            while (iterator.hasNext()) {
+                Path path = iterator.next();
+                if (keep.contains(path) || !path.getFileName().toString().startsWith(GENERATED_MARKER))
+                    continue;
+                // A newer stylesheet may have been created after the first scan. Never remove it.
+                if (oldestFirst.compare(new Generated(path, lastModified(path)), cutoff) > 0)
+                    continue;
+                try {
+                    Path safe = SafeFilePublication.requireSafeRegularFile(
+                            path, "Generated theme cache entry");
+                    Files.delete(safe);
+                } catch (IOException ignored) {
+                    // Fail closed on replaced/locked cache entries; never follow symlinks.
+                }
+            }
+        }
+    }
+
+    private boolean isEligibleGeneratedCss(Path path) {
+        return path.getFileName().toString().startsWith(GENERATED_MARKER)
+                && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                && isSafeGeneratedFile(path);
     }
 
     private boolean isSafeGeneratedFile(Path path) {
