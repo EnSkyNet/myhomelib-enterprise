@@ -1,6 +1,7 @@
 package com.myhomelibcorp.shared.util;
 
 import java.io.IOException;
+import java.io.Writer;
 import java.nio.charset.Charset;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -22,9 +23,20 @@ import java.util.UUID;
 public final class AtomicFileSupport {
     private AtomicFileSupport() { }
 
-    public static void writeStringReplacing(Path target, CharSequence content, Charset charset) throws IOException {
+    @FunctionalInterface
+    public interface WriterBody {
+        void write(Writer output) throws IOException;
+    }
+
+    /**
+     * Atomically publish large text incrementally without materializing the entire output
+     * in a String. Caller writes only to an owned private staging file, never the target.
+     */
+    public static void writeWithWriterReplacing(
+            Path target, Charset charset, WriterBody body) throws IOException {
         if (target == null) throw new IllegalArgumentException("target cannot be null");
         if (charset == null) throw new IllegalArgumentException("charset cannot be null");
+        if (body == null) throw new IllegalArgumentException("body cannot be null");
         Path absolute = target.toAbsolutePath().normalize();
         Path parent = absolute.getParent();
         if (parent == null) throw new IOException("Target has no parent directory: " + target);
@@ -34,13 +46,26 @@ public final class AtomicFileSupport {
         Path staging = Files.createTempFile(parent, ".mhl-write-", ".part");
         String stagingHash = null;
         try {
-            Files.writeString(staging, content == null ? "" : content, charset,
-                    StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+            try (Writer output = Files.newBufferedWriter(staging, charset,
+                    StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE,
+                    LinkOption.NOFOLLOW_LINKS)) {
+                body.write(output);
+            }
             stagingHash = sha256(staging, "atomic-write staging");
             publishReplacingIfUnchanged(staging, absolute, expectedTargetHash, "atomic write");
         } finally {
+            // A failed writer may have produced only a partial staged file. Remove it
+            // only if it is still the same safe file with the bytes just inspected.
+            if (stagingHash == null && Files.exists(staging, LinkOption.NOFOLLOW_LINKS)) {
+                try { stagingHash = sha256(staging, "failed atomic-write staging"); }
+                catch (IOException ignored) { }
+            }
             cleanupOwnedStaging(staging, stagingHash);
         }
+    }
+
+    public static void writeStringReplacing(Path target, CharSequence content, Charset charset) throws IOException {
+        writeWithWriterReplacing(target, charset, output -> output.append(content == null ? "" : content));
     }
 
     /**
