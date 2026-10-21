@@ -55,7 +55,7 @@ class DesktopIntegrationSupportTest {
     @Test
     void safeMessageHandlesCyclicCausesWithoutLosingSanitization() {
         IllegalStateException first = new IllegalStateException("first");
-        IllegalStateException second = new IllegalStateException("leaf\\r\\nmarker");
+        IllegalStateException second = new IllegalStateException("leaf\r\nmarker");
         first.initCause(second);
         second.initCause(first);
 
