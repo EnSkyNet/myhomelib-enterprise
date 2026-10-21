@@ -71,6 +71,81 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(value = 120)
+    void deleteRecreateStormAcrossOverflowDoesNotLoseSurvivingBooks() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("overflow-churn-books"));
+        adapter.configure("c1", incoming, false, 2, 2);
+
+        var schedulerField = IncomingFolderWatchAdapter.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        var scheduler = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
+
+        // Deterministically freeze both scheduler workers so no book can be READY
+        // before the simulated file deletion and re-creation storm is complete.
+        var workersStarted = new java.util.concurrent.CountDownLatch(2);
+        var resumeWorkers = new java.util.concurrent.CountDownLatch(1);
+        for (int worker = 0; worker < 2; worker++) {
+            scheduler.submit(() -> {
+                workersStarted.countDown();
+                try {
+                    resumeWorkers.await();
+                } catch (InterruptedException interrupt) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+        }
+        assertThat(workersStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        int count = IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 84;
+        int permanentlyDeleted = 0;
+        try {
+            for (int i = 0; i < count; i++) {
+                Files.writeString(incoming.resolve("test-book-" + i + ".txt"), "initial-" + i);
+            }
+            assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:" + count);
+            for (int i = 0; i < count; i += 7) {
+                Path file = incoming.resolve("test-book-" + i + ".txt");
+                Files.delete(file);
+                if (i % 14 == 0) {
+                    Files.writeString(file, "recreated-" + i);
+                } else {
+                    permanentlyDeleted++;
+                }
+            }
+            assertThat(adapter.scanNow("c1").status())
+                    .isEqualTo("SCAN_SCHEDULED:" + (count - permanentlyDeleted));
+            assertThat(pending.size())
+                    .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+            assertThat(scheduler.getQueue().size())
+                    .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 1);
+        } finally {
+            resumeWorkers.countDown();
+        }
+
+        int expectedReady = count - permanentlyDeleted;
+        await(() -> jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file
+                 WHERE collection_id='c1' AND status='READY'
+                """, Integer.class) == expectedReady, Duration.ofSeconds(60));
+
+        for (int i = 7; i < count; i += 14) {
+            String path = incoming.resolve("test-book-" + i + ".txt")
+                    .toAbsolutePath().normalize().toString();
+            assertThat(jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM incoming_folder_file
+                     WHERE collection_id='c1' AND file_path=? AND status='READY'
+                    """, Integer.class, path)).isZero();
+        }
+        assertThat(pending.size())
+                .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+    }
+
+    @Test
     void bulkManualScanSchedulesAllSupportedFilesWithoutRetainingDirectorySnapshot() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
