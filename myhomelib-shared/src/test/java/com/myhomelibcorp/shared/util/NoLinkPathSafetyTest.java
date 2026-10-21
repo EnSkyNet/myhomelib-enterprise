@@ -101,7 +101,9 @@ class NoLinkPathSafetyTest {
 
     @Test
     void verifiedCopyCancelledAtFirstWrittenChunkDoesNotLeaveOwnedTemporaryData() throws Exception {
-        Path source = Files.write(tempDir.resolve("verified-source.fb2"), new byte[256 * 1024]);
+        // Must exceed the 1 MiB transfer buffer: a single BYTES milestone
+        // may otherwise contain the entire file before cancellation is observed.
+        Path source = Files.write(tempDir.resolve("verified-source.fb2"), new byte[2 * 1024 * 1024]);
         Path target = tempDir.resolve("verified-target.fb2");
         String digest = java.util.HexFormat.of().formatHex(
                 java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(source)));
