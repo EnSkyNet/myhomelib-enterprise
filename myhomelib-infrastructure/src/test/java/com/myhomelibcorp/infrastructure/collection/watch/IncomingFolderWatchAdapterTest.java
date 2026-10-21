@@ -88,7 +88,7 @@ class IncomingFolderWatchAdapterTest {
         var retryField = IncomingFolderWatchAdapter.class.getDeclaredField("overflowReplayWakeup");
         retryField.setAccessible(true);
         var wakeup = (java.util.concurrent.ScheduledFuture<?>) retryField.get(adapter);
-        assertThat(wakeup).isNotNull();
+        org.junit.jupiter.api.Assertions.assertNotNull(wakeup);
         assertThat(wakeup.isCancelled()).isFalse();
         adapter.stopMonitoring("c1");
         assertThat(wakeup.isCancelled()).isTrue();
