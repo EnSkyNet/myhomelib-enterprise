@@ -29,7 +29,7 @@ class MetadataDatabaseMigrationTest {
 
         flyway.migrate();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("11");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
         JdbcTemplate jdbc = new JdbcTemplate(ds);
         Set<String> columns = jdbc.queryForList("PRAGMA table_info(library_organization_items)").stream()
                 .map(row -> row.get("name"))
@@ -50,5 +50,17 @@ class MetadataDatabaseMigrationTest {
                 .map(Object::toString)
                 .collect(Collectors.toSet());
         assertThat(collectionColumns).contains("owns_database");
+
+        Set<String> watcherIndices = jdbc.queryForList("PRAGMA index_list('incoming_folder_file')").stream()
+                .map(row -> row.get("name"))
+                .filter(java.util.Objects::nonNull)
+                .map(Object::toString)
+                .collect(Collectors.toSet());
+        assertThat(watcherIndices).contains("idx_incoming_folder_waiting_replay");
+        Set<String> orderedColumns = jdbc.queryForList(
+                        "PRAGMA index_info('idx_incoming_folder_waiting_replay')").stream()
+                .map(row -> String.valueOf(row.get("name")))
+                .collect(Collectors.toSet());
+        assertThat(orderedColumns).containsExactlyInAnyOrder("status", "collection_id", "file_path");
     }
 }
