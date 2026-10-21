@@ -63,7 +63,7 @@ class ThemeCacheBoundedCleanupTest {
         }
         var service = new ApplicationThemeService(mock(UiPreferenceService.class));
         service.pruneGeneratedCss(temp);
-        assertThat(outside).hasContent("foreign");
+        assertThat(Files.readString(outside)).isEqualTo("foreign");
         assertThat(Files.isSymbolicLink(link)).isTrue();
     }
 }
