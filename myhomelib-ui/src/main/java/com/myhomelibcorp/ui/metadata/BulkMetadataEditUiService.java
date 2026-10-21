@@ -18,6 +18,7 @@ import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
 import com.myhomelibcorp.ui.util.UiExceptionMessages;
+import com.myhomelibcorp.shared.util.ThrowableMessages;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -325,13 +326,8 @@ public class BulkMetadataEditUiService {
         label.setText(update.processed() + " / " + update.total());
     }
 
-    private static boolean isCancellation(Throwable error) {
-        Throwable current = error;
-        while (current != null) {
-            if (current instanceof CancellationException) return true;
-            current = current.getCause();
-        }
-        return false;
+    static boolean isCancellation(Throwable error) {
+        return ThrowableMessages.anyCause(error, CancellationException.class::isInstance);
     }
 
     private static void setManagedVisible(Node node, boolean visible) {
