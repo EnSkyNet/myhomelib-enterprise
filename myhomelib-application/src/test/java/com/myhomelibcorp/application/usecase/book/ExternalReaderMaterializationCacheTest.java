@@ -160,16 +160,16 @@ class ExternalReaderMaterializationCacheTest {
     @Test
     void overBudgetCleanupEvictsOldestInactiveFileFirst() throws Exception {
         Path cacheDir = temp.resolve("age-ordered-eviction");
-        ExternalReaderMaterializationCache cache = cache(cacheDir, 10, Duration.ofDays(1));
-        cache.initialize();
+        // Initialize before writing fixtures; startup cleanup intentionally removes crash leftovers.
+        ExternalReaderMaterializationCache fixed = new ExternalReaderMaterializationCache(
+                cacheDir, 10, 10, Duration.ofDays(365), Clock.fixed(
+                        Instant.parse("2026-10-03T00:00:00Z"), ZoneOffset.UTC));
+        fixed.initialize();
         Path oldest = Files.writeString(cacheDir.resolve("book-old.fb2"), "123456");
         Path newest = Files.writeString(cacheDir.resolve("book-new.fb2"), "abcdef");
         Files.setLastModifiedTime(oldest, FileTime.from(Instant.parse("2026-10-01T00:00:00Z")));
         Files.setLastModifiedTime(newest, FileTime.from(Instant.parse("2026-10-02T00:00:00Z")));
-        // Both files must remain younger than the maximum age, so size eviction decides.
-        ExternalReaderMaterializationCache fixed = new ExternalReaderMaterializationCache(
-                cacheDir, 10, 10, Duration.ofDays(365), Clock.fixed(
-                        Instant.parse("2026-10-03T00:00:00Z"), ZoneOffset.UTC));
+        // Both files remain within maxAge; only the byte-budget policy decides which to remove.
         fixed.cleanupInactive();
 
         assertThat(oldest).doesNotExist();
