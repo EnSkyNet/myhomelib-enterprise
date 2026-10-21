@@ -44,6 +44,107 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    void oversizedManualScanUsesBoundedTimersAndReplaysOverflowFromSqlite() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("bounded-incoming"));
+        // Disabled watches may still be scanned manually; the overflow must not be lost.
+        adapter.configure("c1", incoming, false, 1, 1);
+        int count = IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 96;
+        for (int i = 0; i < count; i++) {
+            Files.writeString(incoming.resolve("book-" + i + ".txt"), "unique-book-" + i);
+        }
+
+        assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:" + count);
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        var schedulerField = IncomingFolderWatchAdapter.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
+        var scheduler = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
+        assertThat(pending.size()).isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+        assertThat(scheduler.getQueue().size())
+                .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+
+        await(() -> jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file
+                 WHERE collection_id='c1' AND status='READY'
+                """, Integer.class) == count, Duration.ofSeconds(40));
+        assertThat(pending.size()).isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+    }
+
+    @Test
+    void stoppedDisabledWatchDoesNotResumePersistedOverflow() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("stop-overflow"));
+        adapter.configure("c1", incoming, false, 3600, 3600);
+        int count = IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 32;
+        for (int i = 0; i < count; i++) {
+            Files.writeString(incoming.resolve("book-" + i + ".txt"), "data-" + i);
+        }
+        adapter.scanNow("c1");
+        adapter.stopMonitoring("c1");
+
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
+        assertThat(pending).isEmpty();
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file
+                 WHERE collection_id='c1' AND status='WAITING'
+                """, Integer.class)).isGreaterThan(0);
+        Thread.sleep(250);
+        assertThat(pending).isEmpty();
+    }
+
+    @Test
+    void overflowReplayHandlesDeletedPathsWithoutSchedulingMissingBooks() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("overflow-delete"));
+        adapter.configure("c1", incoming, false, 1, 1);
+        int count = IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 24;
+        for (int i = 0; i < count; i++) {
+            Files.writeString(incoming.resolve("book-" + i + ".txt"), "data-" + i);
+        }
+        adapter.scanNow("c1");
+
+        Path deleted = incoming.resolve("book-" + (count - 1) + ".txt");
+        Files.delete(deleted);
+        await(() -> jdbc.queryForObject("""
+                SELECT status FROM incoming_folder_file
+                 WHERE collection_id='c1' AND file_path=?
+                """, String.class, deleted.toAbsolutePath().normalize().toString()).equals("MISSING"),
+                Duration.ofSeconds(40));
+        assertThat(Files.exists(deleted)).isFalse();
+    }
+
+    @Test
+    void shutdownClearsManualScanTimersAndFinishesSqliteWorkersOnWindows() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("shutdown-bounded"));
+        adapter.configure("c1", incoming, false, 3600, 3600);
+        for (int i = 0; i < IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 12; i++) {
+            Files.writeString(incoming.resolve("slow-" + i + ".txt"), "content-" + i);
+        }
+        adapter.scanNow("c1");
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
+        var schedulerField = IncomingFolderWatchAdapter.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        var scheduler = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
+
+        adapter.shutdown();
+
+        assertThat(pending).isEmpty();
+        assertThat(scheduler.isTerminated()).isTrue();
+        assertThat(scheduler.getQueue()).isEmpty();
+    }
+
+    @Test
     void cancelledDebounceTimersAreRemovedFromSchedulerQueue() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));

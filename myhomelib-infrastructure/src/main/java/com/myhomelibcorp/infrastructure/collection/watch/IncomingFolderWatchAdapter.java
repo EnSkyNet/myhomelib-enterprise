@@ -37,6 +37,9 @@ import static java.nio.file.StandardWatchEventKinds.*;
 public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
     private static final int MIN_SECONDS = 1;
     private static final int MAX_SECONDS = 3600;
+    /** Bound per-file ScheduledFutures on the 4 GB target; excess paths go into SQLite. */
+    static final int MAX_PENDING_CANDIDATES = 256;
+    private static final int REFILL_PAGE_SIZE = 128;
     private static final SupportedFormatRegistry FORMATS = SupportedFormatRegistry.standard();
 
     private final JdbcTemplate jdbc;
@@ -49,6 +52,11 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
     });
     private final Map<String, WatchRegistration> watchers = new ConcurrentHashMap<>();
     private final Map<String, PendingTask> pending = new ConcurrentHashMap<>();
+    private final Object pendingLock = new Object();
+    /** Includes enabled watches and explicitly scanned disabled watches; stop invalidates enrollment. */
+    private final java.util.Set<String> queuedCollections = ConcurrentHashMap.newKeySet();
+    private String resumeCollection = "";
+    private String resumeFile = "";
 
     public IncomingFolderWatchAdapter(@Qualifier("metadataJdbcTemplate") JdbcTemplate jdbc,
                                       @Qualifier("flywayMetadata") Flyway flywayMetadata,
@@ -145,6 +153,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
             return findState(collectionId).orElseThrow();
         }
         int scheduled = 0;
+        queuedCollections.add(collectionId);
         WatchSettings scanSettings = new WatchSettings(state.folder(), state.enabled(),
                 state.debounceSeconds(), state.stabilitySeconds());
         try (var stream = Files.list(folder)) {
@@ -160,6 +169,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
             updateWatchStatus(collectionId, "SCAN_ERROR: " + safeMessage(failure), true);
             throw new IllegalStateException("Cannot scan incoming folder", failure);
         }
+        refillPendingFromDatabase();
         updateWatchStatus(collectionId, "SCAN_SCHEDULED:" + scheduled, true);
         return findState(collectionId).orElseThrow();
     }
@@ -236,6 +246,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
             WatchRegistration registration = new WatchRegistration(collectionId, state.folder(), watchService,
                     new WatchSettings(state.folder(), true, state.debounceSeconds(), state.stabilitySeconds()));
             watchers.put(collectionId, registration);
+            queuedCollections.add(collectionId);
             Thread thread = new Thread(() -> watchLoop(registration), "incoming-folder-watch-" + collectionId);
             thread.setDaemon(true);
             registration.thread = thread;
@@ -249,12 +260,15 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
 
     @Override
     public synchronized void stopMonitoring(String collectionId) {
-        String prefix = collectionId + "\u0000";
-        pending.entrySet().removeIf(entry -> {
-            if (!entry.getKey().startsWith(prefix)) return false;
-            entry.getValue().cancel();
-            return true;
-        });
+        synchronized (pendingLock) {
+            queuedCollections.remove(collectionId);
+            String prefix = collectionId + "\u0000";
+            pending.entrySet().removeIf(entry -> {
+                if (!entry.getKey().startsWith(prefix)) return false;
+                entry.getValue().cancel();
+                return true;
+            });
+        }
         WatchRegistration registration = watchers.remove(collectionId);
         if (registration != null) registration.close();
     }
@@ -273,9 +287,11 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                     if (event.kind() == ENTRY_DELETE) {
                         // The path no longer exists: release its debounce timer immediately instead
                         // of retaining the path (and a scheduled task) for up to MAX_SECONDS.
-                        PendingTask abandoned = pending.remove(key(registration.collectionId, changed));
-                        if (abandoned != null) abandoned.cancel();
-                        markMissing(registration.collectionId, changed);
+                        synchronized (pendingLock) {
+                            PendingTask abandoned = pending.remove(key(registration.collectionId, changed));
+                            if (abandoned != null) abandoned.cancel();
+                            markMissing(registration.collectionId, changed);
+                        }
                     } else if (!registration.closed.get() && isIncomingSupported(changed)) {
                         // The registration is recreated on configuration changes. Event bursts should not
                         // issue one SQLite settings query per create/modify notification.
@@ -314,13 +330,26 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                                    WatchSettings state) {
         if (state == null || !state.enabled() && explicitDelaySeconds < 0) return;
         int delay = explicitDelaySeconds >= 0 ? explicitDelaySeconds : state.debounceSeconds();
-        String key = key(collectionId, file);
+        synchronized (pendingLock) {
+            if (!queuedCollections.contains(collectionId) || scheduler.isShutdown()) return;
+            String candidateKey = key(collectionId, file);
+            if (!pending.containsKey(candidateKey) && pending.size() >= MAX_PENDING_CANDIDATES) {
+                persistOverflowCandidate(collectionId, file);
+                return;
+            }
+            registerPendingLocked(collectionId, file, delay);
+        }
+    }
+
+    /** Must be called under pendingLock; no external callers may bypass the queue ceiling. */
+    private void registerPendingLocked(String collectionId, Path file, int delay) {
+        String candidateKey = key(collectionId, file);
         PendingTask replacement = new PendingTask();
-        pending.compute(key, (ignored, old) -> {
+        pending.compute(candidateKey, (ignored, old) -> {
             if (old != null) old.cancel();
             replacement.future = scheduler.schedule(() -> {
                 AtomicBoolean current = new AtomicBoolean();
-                pending.computeIfPresent(key, (ignoredKey, registered) -> {
+                pending.computeIfPresent(candidateKey, (ignoredKey, registered) -> {
                     if (registered != replacement) return registered;
                     current.set(true);
                     return null;
@@ -329,10 +358,100 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                 try { observeCandidate(collectionId, file); }
                 catch (RuntimeException failure) {
                     log.warn("Incoming candidate check failed for {}: {}", file, safeMessage(failure));
+                } finally {
+                    // A completed timer frees one slot. Refill from durable overflow rows
+                    // without ever materializing the remaining incoming directory paths.
+                    refillPendingFromDatabase();
                 }
             }, Math.max(0, delay), TimeUnit.SECONDS);
             return replacement;
         });
+    }
+
+    /** Stage only excess paths. Changed paths need a fresh stability window; unchanged rows keep their state. */
+    private void persistOverflowCandidate(String collectionId, Path file) {
+        if (!isSafeIncomingRegularFile(file) || !isIncomingSupported(file)) return;
+        try {
+            BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            String timestamp = now();
+            jdbc.update("""
+                    INSERT INTO incoming_folder_file(
+                        collection_id, file_path, observed_size, observed_mtime, signature_seen_at,
+                        fingerprint, status, detected_at, last_error, updated_at)
+                    VALUES(?, ?, ?, ?, ?, NULL, 'WAITING', ?, NULL, ?)
+                    ON CONFLICT(collection_id, file_path) DO UPDATE SET
+                        status=CASE WHEN incoming_folder_file.observed_size<>excluded.observed_size
+                              OR incoming_folder_file.observed_mtime<>excluded.observed_mtime
+                              OR incoming_folder_file.status IN ('MISSING','FAILED')
+                              THEN 'WAITING' ELSE incoming_folder_file.status END,
+                        fingerprint=CASE WHEN incoming_folder_file.observed_size<>excluded.observed_size
+                              OR incoming_folder_file.observed_mtime<>excluded.observed_mtime
+                              OR incoming_folder_file.status IN ('MISSING','FAILED')
+                              THEN NULL ELSE incoming_folder_file.fingerprint END,
+                        signature_seen_at=CASE WHEN incoming_folder_file.observed_size<>excluded.observed_size
+                              OR incoming_folder_file.observed_mtime<>excluded.observed_mtime
+                              OR incoming_folder_file.status IN ('MISSING','FAILED')
+                              THEN excluded.signature_seen_at ELSE incoming_folder_file.signature_seen_at END,
+                        observed_size=excluded.observed_size,
+                        observed_mtime=excluded.observed_mtime,
+                        updated_at=excluded.updated_at
+                    """, collectionId, normalize(file), attrs.size(), attrs.lastModifiedTime().toMillis(),
+                    timestamp, timestamp, timestamp);
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot persist overflowed incoming file: " + file, e);
+        }
+    }
+
+    /**
+     * Keyset-paged replay from SQLite. The two-column cursor wraps after the last row.
+     * Only one page of paths is retained; paths already in the executor or stopped watches
+     * are skipped without re-queuing them. Called when a timer frees space and after scans.
+     */
+    private void refillPendingFromDatabase() {
+        synchronized (pendingLock) {
+            if (scheduler.isShutdown() || pending.size() >= MAX_PENDING_CANDIDATES
+                    || queuedCollections.isEmpty()) return;
+            String firstCollection = resumeCollection;
+            String firstFile = resumeFile;
+            boolean wrapped = false;
+            while (pending.size() < MAX_PENDING_CANDIDATES) {
+                List<QueuedPath> page = jdbc.query("""
+                        SELECT collection_id, file_path FROM incoming_folder_file
+                         WHERE status='WAITING'
+                           AND (collection_id>? OR (collection_id=? AND file_path>?))
+                         ORDER BY collection_id, file_path LIMIT ?
+                        """, (rs, row) -> new QueuedPath(rs.getString(1), rs.getString(2)),
+                        resumeCollection, resumeCollection, resumeFile, REFILL_PAGE_SIZE);
+                if (page.isEmpty()) {
+                    if (wrapped) break;
+                    resumeCollection = "";
+                    resumeFile = "";
+                    wrapped = true;
+                    continue;
+                }
+                for (QueuedPath candidate : page) {
+                    if (wrapped && compareQueuedPath(candidate.collectionId(), candidate.filePath(),
+                            firstCollection, firstFile) > 0) return;
+                    resumeCollection = candidate.collectionId();
+                    resumeFile = candidate.filePath();
+                    if (!queuedCollections.contains(candidate.collectionId())) continue;
+                    Path path = Path.of(candidate.filePath());
+                    if (!isSafeIncomingRegularFile(path)) {
+                        markMissing(candidate.collectionId(), path);
+                        continue;
+                    }
+                    if (pending.containsKey(key(candidate.collectionId(), path))) continue;
+                    registerPendingLocked(candidate.collectionId(), path, 0);
+                    if (pending.size() >= MAX_PENDING_CANDIDATES) break;
+                }
+            }
+        }
+    }
+
+    private static int compareQueuedPath(String collection, String path,
+                                         String otherCollection, String otherPath) {
+        int comparison = collection.compareTo(otherCollection);
+        return comparison == 0 ? path.compareTo(otherPath) : comparison;
     }
 
     private void observeCandidate(String collectionId, Path file) {
@@ -528,10 +647,28 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
     @PreDestroy
     void shutdown() {
         watchers.keySet().stream().toList().forEach(this::stopMonitoring);
+        // A manual scan of a disabled watcher has no WatchRegistration, yet can still have
+        // many timers. Cancel them too before the temporary SQLite DB is closed/deleted.
+        synchronized (pendingLock) {
+            queuedCollections.clear();
+            pending.values().forEach(PendingTask::cancel);
+            pending.clear();
+        }
         scheduler.shutdownNow();
+        try {
+            // Windows keeps SQLite files locked while a worker is finishing its query.
+            // Do not let test/runtime teardown race those workers.
+            if (!scheduler.awaitTermination(10, TimeUnit.SECONDS)) {
+                log.warn("Incoming-folder watcher workers did not terminate within shutdown timeout");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private record WatchSettings(Path folder, boolean enabled, int debounceSeconds, int stabilitySeconds) { }
+
+    private record QueuedPath(String collectionId, String filePath) { }
 
     private record CandidateObservation(long size, long mtime, String signatureSeenAt,
                                         String fingerprint, IncomingFolderCandidateStatus status) { }
