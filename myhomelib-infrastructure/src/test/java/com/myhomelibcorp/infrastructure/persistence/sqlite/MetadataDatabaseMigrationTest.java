@@ -57,10 +57,10 @@ class MetadataDatabaseMigrationTest {
                 .map(Object::toString)
                 .collect(Collectors.toSet());
         assertThat(watcherIndices).contains("idx_incoming_folder_waiting_replay");
-        Set<String> orderedColumns = jdbc.queryForList(
+        java.util.List<String> orderedColumns = jdbc.queryForList(
                         "PRAGMA index_info('idx_incoming_folder_waiting_replay')").stream()
                 .map(row -> String.valueOf(row.get("name")))
                 .collect(Collectors.toSet());
-        assertThat(orderedColumns).containsExactlyInAnyOrder("status", "collection_id", "file_path");
+        assertThat(orderedColumns).containsExactly("status", "collection_id", "file_path");
     }
 }
