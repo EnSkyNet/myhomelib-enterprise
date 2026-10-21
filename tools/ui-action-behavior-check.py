@@ -169,6 +169,14 @@ def collect() -> list[dict]:
                         # call a common method (execute/refresh/snapshot/...) from satisfying a UI action.
                         if owner_token.lower() not in words:
                             continue
+                    # Reactive Streams subscriber callbacks are generic names.
+                    # A shared HTTP test calling subscriber.onNext must never
+                    # count as evidence for an unrelated JavaFX onNext button.
+                    if (entry["kind"] == "FXML" and token.lower() in {
+                            "onnext", "onsubscribe", "oncomplete", "onerror"}
+                            and not (path.startswith("myhomelib-ui/src/test/")
+                                     or owner_token.lower() in words)):
+                        continue
                     candidates.add(path)
         semantic = (entry["kind"], owner_token, entry["action"])
         exclusion = JUSTIFIED_EXCLUSIONS.get(semantic)

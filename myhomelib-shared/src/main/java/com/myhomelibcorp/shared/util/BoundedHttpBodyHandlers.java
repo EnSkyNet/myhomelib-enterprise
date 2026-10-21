@@ -33,14 +33,22 @@ public final class BoundedHttpBodyHandlers {
 
     private static final class BoundedByteArraySubscriber implements HttpResponse.BodySubscriber<byte[]> {
         private final int maxBytes;
+        private static final int COPY_BUFFER_BYTES = 8 * 1024;
         private final ByteArrayOutputStream output;
+        private byte[] scratch;
         private final CompletableFuture<byte[]> body = new CompletableFuture<>();
-        private Flow.Subscription subscription;
+        private volatile Flow.Subscription subscription;
         private int total;
 
         private BoundedByteArraySubscriber(int maxBytes) {
             this.maxBytes = maxBytes;
-            this.output = new ByteArrayOutputStream(Math.min(maxBytes, 16 * 1024));
+            this.output = new ByteArrayOutputStream(Math.min(maxBytes, 1024));
+            body.whenComplete((value, error) -> {
+                if (body.isCancelled()) {
+                    Flow.Subscription current = subscription;
+                    if (current != null) current.cancel();
+                }
+            });
         }
 
         @Override
@@ -49,17 +57,21 @@ public final class BoundedHttpBodyHandlers {
         }
 
         @Override
-        public void onSubscribe(Flow.Subscription subscription) {
-            if (subscription == null) {
+        public void onSubscribe(Flow.Subscription next) {
+            if (next == null) {
                 body.completeExceptionally(new NullPointerException("subscription"));
                 return;
             }
-            if (this.subscription != null) {
-                subscription.cancel();
+            if (subscription != null || body.isDone()) {
+                next.cancel();
                 return;
             }
-            this.subscription = subscription;
-            subscription.request(Long.MAX_VALUE);
+            subscription = next;
+            if (body.isDone()) {
+                next.cancel();
+            } else {
+                next.request(1);
+            }
         }
 
         @Override
@@ -74,11 +86,20 @@ public final class BoundedHttpBodyHandlers {
                                 "HTTP response body exceeds maximum allowed size: " + maxBytes + " bytes"));
                         return;
                     }
-                    byte[] chunk = new byte[count];
-                    buffer.get(chunk);
-                    output.writeBytes(chunk);
+                    if (buffer.hasArray()) {
+                        output.write(buffer.array(), buffer.arrayOffset() + buffer.position(), count);
+                        buffer.position(buffer.limit());
+                    } else {
+                        while (buffer.hasRemaining()) {
+                            if (scratch == null) scratch = new byte[Math.min(COPY_BUFFER_BYTES, buffer.remaining())];
+                            int chunk = Math.min(buffer.remaining(), scratch.length);
+                            buffer.get(scratch, 0, chunk);
+                            output.write(scratch, 0, chunk);
+                        }
+                    }
                     total += count;
                 }
+                if (!body.isDone() && subscription != null) subscription.request(1);
             } catch (RuntimeException e) {
                 if (subscription != null) subscription.cancel();
                 body.completeExceptionally(e);

@@ -10,8 +10,9 @@ public final class BoundedIoSupport {
     public static byte[] readFully(InputStream input, int maxBytes) throws IOException {
         if (input == null) throw new IllegalArgumentException("input cannot be null");
         if (maxBytes <= 0) throw new IllegalArgumentException("maxBytes must be positive");
-        byte[] bytes = input.readNBytes(maxBytes + 1);
-        if (bytes.length > maxBytes) {
+        // Avoid maxBytes + 1 integer overflow; probe only after the bounded read.
+        byte[] bytes = input.readNBytes(maxBytes);
+        if (bytes.length == maxBytes && input.read() != -1) {
             throw new IOException("Input exceeds maximum allowed size: " + maxBytes + " bytes");
         }
         return bytes;
