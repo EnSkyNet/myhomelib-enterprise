@@ -224,6 +224,49 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    void overflowRetryIgnoresWaitingRowsOfStoppedWatchers() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        jdbc.update("INSERT INTO collections(id,name) VALUES('c2','Other collection')");
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path stoppedFolder = Files.createDirectory(tempDir.resolve("stopped-retry-watch"));
+        Path activeFolder = Files.createDirectory(tempDir.resolve("active-retry-watch"));
+        adapter.configure("c1", stoppedFolder, false, 3600, 3600);
+        adapter.configure("c2", activeFolder, false, 3600, 3600);
+        adapter.scanNow("c1");
+        adapter.stopMonitoring("c1");
+        adapter.scanNow("c2");
+
+        String stoppedPath = stoppedFolder.resolve("stopped.txt").toString();
+        String activePath = activeFolder.resolve("active.txt").toString();
+        for (String[] entry : new String[][]{{"c1", stoppedPath}, {"c2", activePath}}) {
+            jdbc.update("""
+                    INSERT INTO incoming_folder_file (
+                        collection_id, file_path, status, detected_at, updated_at)
+                    VALUES (?, ?, 'WAITING', ?, ?)
+                    """, entry[0], entry[1], Instant.now().toString(), Instant.now().toString());
+        }
+        var eligibility = IncomingFolderWatchAdapter.class.getDeclaredMethod(
+                "hasEligibleWaitingRowsLocked");
+        eligibility.setAccessible(true);
+        assertThat((boolean) eligibility.invoke(adapter)).isTrue();
+
+        jdbc.update("""
+                UPDATE incoming_folder_file SET status='IMPORTED'
+                 WHERE collection_id='c2' AND file_path=?
+                """, activePath);
+        // Stopped c1 still has WAITING rows, but must not keep the periodic timer running.
+        assertThat((boolean) eligibility.invoke(adapter)).isFalse();
+
+        jdbc.update("""
+                UPDATE incoming_folder_file SET status='WAITING'
+                 WHERE collection_id='c2' AND file_path=?
+                """, activePath);
+        assertThat((boolean) eligibility.invoke(adapter)).isTrue();
+        adapter.stopMonitoring("c2");
+        assertThat((boolean) eligibility.invoke(adapter)).isFalse();
+    }
+
+    @Test
     void repeatedOverflowUsesOnlyOneSharedRetryWakeup() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
@@ -247,6 +290,48 @@ class IncomingFolderWatchAdapterTest {
         var executor = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
         assertThat(executor.getQueue().size())
                 .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 1);
+    }
+
+    @Test
+    void malformedPersistedPathIsQuarantinedWithoutStarvingLaterValidBooks() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("replay-corrupt-path"));
+        adapter.configure("c1", incoming, false, 1, 1);
+        // Manual scan enrolls even a disabled watch in durable replay.
+        adapter.scanNow("c1");
+
+        String invalid = "!broken" + (char) 0 + "path.txt";
+        Path valid = Files.writeString(incoming.resolve("valid-book.txt"), "safe test content");
+        String signature = Instant.now().minus(Duration.ofSeconds(30)).toString();
+        jdbc.update("""
+                INSERT INTO incoming_folder_file(
+                    collection_id, file_path, observed_size, observed_mtime,
+                    signature_seen_at, fingerprint, status, detected_at, updated_at)
+                VALUES(?,?,?,?,?,NULL,'WAITING',?,?)
+                """, "c1", invalid, 0L, 0L, signature, signature, signature);
+        jdbc.update("""
+                INSERT INTO incoming_folder_file(
+                    collection_id, file_path, observed_size, observed_mtime,
+                    signature_seen_at, fingerprint, status, detected_at, updated_at)
+                VALUES(?,?,?,?,?,NULL,'WAITING',?,?)
+                """, "c1", valid.toAbsolutePath().normalize().toString(), Files.size(valid),
+                Files.getLastModifiedTime(valid).toMillis(), signature, signature, signature);
+
+        var refill = IncomingFolderWatchAdapter.class.getDeclaredMethod("refillPendingFromDatabase");
+        refill.setAccessible(true);
+        refill.invoke(adapter);
+
+        assertThat(jdbc.queryForObject("""
+                SELECT status FROM incoming_folder_file WHERE collection_id='c1' AND file_path=?
+                """, String.class, invalid)).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("""
+                SELECT last_error FROM incoming_folder_file WHERE collection_id='c1' AND file_path=?
+                """, String.class, invalid)).isEqualTo("INVALID_PATH");
+        await(() -> jdbc.queryForObject("""
+                SELECT status FROM incoming_folder_file WHERE collection_id='c1' AND file_path=?
+                """, String.class, valid.toAbsolutePath().normalize().toString()).equals("READY"),
+                Duration.ofSeconds(8));
     }
 
     @Test
@@ -351,7 +436,7 @@ class IncomingFolderWatchAdapterTest {
         String key = "c1\u0000" + file.toAbsolutePath().normalize();
         Files.writeString(file, "temporary");
         await(() -> pending.containsKey(key), Duration.ofSeconds(5));
-        assertThat(scheduler.getQueue()).isNotEmpty();
+        await(() -> !scheduler.getQueue().isEmpty(), Duration.ofSeconds(5));
 
         Files.delete(file);
         await(() -> !pending.containsKey(key), Duration.ofSeconds(5));
@@ -359,7 +444,7 @@ class IncomingFolderWatchAdapterTest {
 
         Files.writeString(file, "new-content");
         await(() -> pending.containsKey(key), Duration.ofSeconds(5));
-        assertThat(scheduler.getQueue()).isNotEmpty();
+        await(() -> !scheduler.getQueue().isEmpty(), Duration.ofSeconds(5));
     }
 
     @Test
