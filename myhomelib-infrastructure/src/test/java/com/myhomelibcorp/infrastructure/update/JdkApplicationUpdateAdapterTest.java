@@ -183,6 +183,21 @@ class JdkApplicationUpdateAdapterTest {
     }
 
     @Test
+    void pendingPlanRejectsOversizedJournalWithoutLoadingItIntoMemory() throws Exception {
+        System.setProperty("myhomelib.dataDir", temp.toString());
+        Path journal = temp.resolve("updates/pending-update.properties");
+        Files.createDirectories(journal.getParent());
+        Files.write(journal, new byte[JdkApplicationUpdateAdapter.MAX_PENDING_PLAN_BYTES + 1]);
+        var adapter = new JdkApplicationUpdateAdapter(new ObjectMapper(), mock(HttpClient.class));
+
+        assertThatThrownBy(() -> adapter.pendingPlan())
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("size limit");
+        // Rejection does not delete or alter the suspicious persisted journal.
+        assertThat(Files.size(journal)).isEqualTo(JdkApplicationUpdateAdapter.MAX_PENDING_PLAN_BYTES + 1L);
+    }
+
+    @Test
     void updatePlanRoundTripsThroughAtomicJournal() throws Exception {
         System.setProperty("myhomelib.dataDir", temp.toString());
         byte[] bytes = "candidate".getBytes(StandardCharsets.UTF_8);
