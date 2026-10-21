@@ -10,6 +10,8 @@ import javafx.stage.Window;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
@@ -43,12 +45,9 @@ public class BookListExportService {
         if (file == null) return;
 
         executor.submit(() -> {
-            String data = switch (f) {
-                case "html" -> html(books);
-                case "rtf" -> rtf(books);
-                default -> txt(books);
-            };
-            AtomicFileSupport.writeStringReplacing(file.toPath(), data, StandardCharsets.UTF_8);
+            AtomicFileSupport.writeWithWriterReplacing(
+                    file.toPath(), StandardCharsets.UTF_8,
+                    writer -> writeRows(f, books, writer));
             return books.size();
         }).whenComplete((count, error) -> UiExecutor.runOnUiThread(() -> {
             if (error != null) dialogs.showError(UiText.text("ui.java.book_list_export_service.68c7ce9fff"), UiExceptionMessages.root(error));
@@ -56,39 +55,46 @@ public class BookListExportService {
         }));
     }
 
-    private String txt(List<ExportRow> books) {
-        StringBuilder s = new StringBuilder();
+    /** Append rows incrementally: no output-sized StringBuilder is retained in heap. */
+    void writeRows(String format, List<ExportRow> books, Writer out) throws IOException {
+        switch (format) {
+            case "html" -> writeHtml(books, out);
+            case "rtf" -> writeRtf(books, out);
+            default -> writeTxt(books, out);
+        }
+    }
+
+    private void writeTxt(List<ExportRow> books, Writer out) throws IOException {
         int i = 1;
         for (var x : books) {
-            s.append(i++).append(". ").append(x.authors()).append(" — ").append(x.title())
+            out.append(Integer.toString(i++)).append(". ").append(x.authors()).append(" — ").append(x.title())
                     .append(x.series() == null || x.series().isBlank() ? "" : " [" + x.series() + "]")
                     .append('\n');
         }
-        return s.toString();
     }
 
-    private String html(List<ExportRow> books) {
-        StringBuilder s = new StringBuilder("<!doctype html><meta charset=\"utf-8\"><title>MyHomeLib</title>"
-                + UiText.text("ui.java.book_list_export_service.50d4c8ee76")
-                + UiText.text("ui.java.book_list_export_service.55be5d0555"));
+    private void writeHtml(List<ExportRow> books, Writer out) throws IOException {
+        out.append("<!doctype html><meta charset=\"utf-8\"><title>MyHomeLib</title>")
+                .append(UiText.text("ui.java.book_list_export_service.50d4c8ee76"))
+                .append(UiText.text("ui.java.book_list_export_service.55be5d0555"));
         int i = 1;
         for (var x : books) {
-            s.append("<tr><td>").append(i++).append("</td><td>").append(esc(x.authors()))
+            out.append("<tr><td>").append(Integer.toString(i++)).append("</td><td>").append(esc(x.authors()))
                     .append("</td><td>").append(esc(x.title())).append("</td><td>").append(esc(x.series()))
-                    .append("</td><td>").append(esc(x.genres())).append("</td><td>").append(x.rate())
-                    .append("</td></tr>");
+                    .append("</td><td>").append(esc(x.genres())).append("</td><td>")
+                    .append(Integer.toString(x.rate())).append("</td></tr>");
         }
-        return s.append("</table>").toString();
+        out.append("</table>");
     }
 
-    private String rtf(List<ExportRow> books) {
-        StringBuilder s = new StringBuilder("{\\rtf1\\ansi\\deff0\\uc1 MyHomeLib\\par ");
+    private void writeRtf(List<ExportRow> books, Writer out) throws IOException {
+        out.append("{\\rtf1\\ansi\\deff0\\uc1 MyHomeLib\\par ");
         int i = 1;
         for (var x : books) {
-            s.append(i++).append(". ").append(rtfEsc(x.authors())).append(" - ")
+            out.append(Integer.toString(i++)).append(". ").append(rtfEsc(x.authors())).append(" - ")
                     .append(rtfEsc(x.title())).append("\\par ");
         }
-        return s.append('}').toString();
+        out.append('}');
     }
 
     private String esc(String x) {
@@ -111,6 +117,6 @@ public class BookListExportService {
         return new ExportRow(book.getAuthorsText(), book.getTitle(), book.getSeries(), book.getGenresText(), book.getRate());
     }
 
-    private record ExportRow(String authors, String title, String series, String genres, int rate) { }
+    record ExportRow(String authors, String title, String series, String genres, int rate) { }
 
 }
