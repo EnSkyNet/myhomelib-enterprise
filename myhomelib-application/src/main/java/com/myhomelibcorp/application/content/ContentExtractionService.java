@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.content;
 
+import com.myhomelibcorp.shared.util.ThrowableText;
 import com.myhomelibcorp.application.port.out.content.ContentExtractor;
 import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,10 +53,7 @@ public class ContentExtractionService {
     }
 
     private static String rootMessage(Throwable failure) {
-        Throwable current = failure;
-        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
-        String message = current.getMessage();
-        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
+        return ThrowableText.rootMessage(failure, "Unknown error");
     }
     private List<ContentExtractor> allExtractors() {
         java.util.LinkedHashMap<String, ContentExtractor> result = new java.util.LinkedHashMap<>();

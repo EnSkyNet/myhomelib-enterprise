@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.importer.inpx;
 
+import com.myhomelibcorp.shared.util.ThrowableText;
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
@@ -270,9 +271,6 @@ public class InpxImporter implements BookImporterPort {
     }
 
     private static String rootMessage(Throwable error) {
-        Throwable current = error;
-        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
-        String message = current.getMessage();
-        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
+        return ThrowableText.rootMessage(error, "Unknown error");
     }
 }
