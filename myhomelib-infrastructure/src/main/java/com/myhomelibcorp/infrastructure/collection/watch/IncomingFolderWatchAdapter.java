@@ -647,7 +647,23 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
     @PreDestroy
     void shutdown() {
         watchers.keySet().stream().toList().forEach(this::stopMonitoring);
+        // A manual scan of a disabled watcher has no WatchRegistration, yet can still have
+        // many timers. Cancel them too before the temporary SQLite DB is closed/deleted.
+        synchronized (pendingLock) {
+            queuedCollections.clear();
+            pending.values().forEach(PendingTask::cancel);
+            pending.clear();
+        }
         scheduler.shutdownNow();
+        try {
+            // Windows keeps SQLite files locked while a worker is finishing its query.
+            // Do not let test/runtime teardown race those workers.
+            if (!scheduler.awaitTermination(10, TimeUnit.SECONDS)) {
+                log.warn("Incoming-folder watcher workers did not terminate within shutdown timeout");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private record WatchSettings(Path folder, boolean enabled, int debounceSeconds, int stabilitySeconds) { }
