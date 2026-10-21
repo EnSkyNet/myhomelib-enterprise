@@ -718,19 +718,19 @@ class IncomingFolderWatchAdapterTest {
                 committed.waitFor(15, java.util.concurrent.TimeUnit.SECONDS);
             }
         }
-        fresh = reopenedMetadataJdbc(database);
-        assertThat(fresh.queryForObject("PRAGMA integrity_check", String.class)).isEqualTo("ok");
-        assertThat(fresh.queryForObject("""
+        JdbcTemplate afterCommit = reopenedMetadataJdbc(database);
+        assertThat(afterCommit.queryForObject("PRAGMA integrity_check", String.class)).isEqualTo("ok");
+        assertThat(afterCommit.queryForObject("""
                 SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1' AND status='PROCESSING'
                 """, Integer.class)).isEqualTo(total);
         // Disable automatic rescans to specifically prove the startup PROCESSING -> READY repair.
-        fresh.update("UPDATE incoming_folder_watch SET enabled=0 WHERE collection_id='c1'");
-        adapter = new IncomingFolderWatchAdapter(fresh, mock(Flyway.class), mock(DomainEventPublisher.class));
+        afterCommit.update("UPDATE incoming_folder_watch SET enabled=0 WHERE collection_id='c1'");
+        adapter = new IncomingFolderWatchAdapter(afterCommit, mock(Flyway.class), mock(DomainEventPublisher.class));
         adapter.startConfigured();
-        assertThat(fresh.queryForObject("""
+        assertThat(afterCommit.queryForObject("""
                 SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1' AND status='READY'
                 """, Integer.class)).isEqualTo(total);
-        assertThat(fresh.queryForObject("SELECT COUNT(*) FROM incoming_folder_file", Integer.class)).isEqualTo(total);
+        assertThat(afterCommit.queryForObject("SELECT COUNT(*) FROM incoming_folder_file", Integer.class)).isEqualTo(total);
     }
 
     private JdbcTemplate reopenedMetadataJdbc(Path database) {
