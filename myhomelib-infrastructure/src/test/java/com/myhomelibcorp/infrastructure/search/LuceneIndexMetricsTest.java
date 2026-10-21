@@ -26,14 +26,15 @@ class LuceneIndexMetricsTest {
 
     @Test
     void doesNotFollowSymlinksToFilesOutsideTheIndex() throws Exception {
-        Files.write(directory.resolve("_1.cfs"), new byte[11]);
-        Path outside = Files.write(directory.resolveSibling("unrelated-data.bin"), new byte[30_000]);
+        Path indexRoot = Files.createDirectory(directory.resolve("index"));
+        Files.write(indexRoot.resolve("_1.cfs"), new byte[11]);
+        Path outside = Files.write(directory.resolve("unrelated-data.bin"), new byte[30_000]);
         try {
-            Files.createSymbolicLink(directory.resolve("foreign-link"), outside);
+            Files.createSymbolicLink(indexRoot.resolve("foreign-link"), outside);
         } catch (UnsupportedOperationException | java.nio.file.FileSystemException e) {
             Assumptions.assumeTrue(false, "Symbolic links unavailable on this runner");
         }
-        try (FSDirectory index = FSDirectory.open(directory)) {
+        try (FSDirectory index = FSDirectory.open(indexRoot)) {
             assertThat(LuceneIndexMetrics.indexSizeBytes(index)).isEqualTo(11);
         }
     }
