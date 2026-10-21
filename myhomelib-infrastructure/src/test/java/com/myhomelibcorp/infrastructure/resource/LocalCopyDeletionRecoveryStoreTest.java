@@ -82,6 +82,25 @@ class LocalCopyDeletionRecoveryStoreTest {
     }
 
     @Test
+    void oversizedMarkerCannotBePublishedBeyondTheCrashRecoveryReadLimit() throws Exception {
+        Path root = Files.createDirectories(temp.resolve("recovery-oversized-marker"));
+        var ids = new java.util.ArrayList<BookId>();
+        for (int i = 0; i < 8_000; i++) ids.add(BookId.generate());
+
+        assertThatThrownBy(() -> LocalCopyDeletionRecoveryStore.prepare(
+                        root.resolve("book.fb2"), root.resolve(".book.fb2.mhl-delete-test.recovery"),
+                        root, "collection-test", ids, "0".repeat(64)))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("recovery read limit");
+
+        // No published unreadable .pending marker, and no abandoned private workspace.
+        Path directory = LocalCopyDeletionRecoveryStore.recoveryDir();
+        try (var files = Files.list(directory)) {
+            assertThat(files.toList()).isEmpty();
+        }
+    }
+
+    @Test
     void startupRecoveryRestoresBytesWhenCatalogTransactionDidNotCommit() throws Exception {
         BookId id = BookId.generate();
         Path root = Files.createDirectories(temp.resolve("library"));
