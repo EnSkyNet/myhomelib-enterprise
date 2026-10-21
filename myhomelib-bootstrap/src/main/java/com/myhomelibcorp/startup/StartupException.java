@@ -1,5 +1,6 @@
 package com.myhomelibcorp.startup;
 
+import com.myhomelibcorp.shared.util.ThrowableText;
 public class StartupException extends RuntimeException {
     private final String taskId;
 
@@ -13,9 +14,6 @@ public class StartupException extends RuntimeException {
     }
 
     private static String rootMessage(Throwable error) {
-        Throwable current = error;
-        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
-        String message = current.getMessage();
-        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
+        return ThrowableText.rootMessage(error, "Unknown error");
     }
 }

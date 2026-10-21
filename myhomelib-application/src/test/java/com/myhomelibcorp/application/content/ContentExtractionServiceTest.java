@@ -55,6 +55,28 @@ class ContentExtractionServiceTest {
         assertThat(result.message()).contains("bad input");
     }
 
+
+    @Test
+    void causeCycleInExtractorFailureReturnsTypedFailure() {
+        IOException first = new IOException("first");
+        IOException second = new IOException("second");
+        first.initCause(second);
+        second.initCause(first);
+        ContentExtractor extractor = new ContentExtractor() {
+            @Override public String id() { return "cycle-test"; }
+            @Override public boolean supports(String format) { return true; }
+            @Override public ExtractedContent extract(ContentExtractionRequest request, ContentExtractionContext context) throws IOException {
+                throw first;
+            }
+        };
+
+        ContentExtractionResult result = new ContentExtractionService(List.of(extractor)).extract(
+                ContentExtractionRequest.of(source("cycle.fb2", "x")), ContentExtractionContext.none());
+
+        assertThat(result.status()).isEqualTo(ContentExtractionStatus.FAILED);
+        assertThat(result.message()).isNotBlank();
+    }
+
     private static ContentExtractionSource source(String name, String text) {
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
         return new ContentExtractionSource() {

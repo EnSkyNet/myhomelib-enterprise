@@ -1,5 +1,6 @@
 package com.myhomelibcorp.integration;
 
+import com.myhomelibcorp.shared.util.ThrowableText;
 import com.myhomelibcorp.domain.model.sync.ChangeSet;
 import com.myhomelibcorp.plugin.api.PluginApiVersion;
 
@@ -147,10 +148,7 @@ final class DesktopIntegrationSupport {
 
     static String safeMessage(Throwable failure) {
         if (failure == null) return "Невідома помилка";
-        Throwable current = failure;
-        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
-        String message = current.getMessage();
-        if (message == null || message.isBlank()) message = current.getClass().getSimpleName();
+        String message = ThrowableText.rootMessage(failure, "Невідома помилка");
         String clean = message.replaceAll("[\\r\\n\\t]+", " ").trim();
         return clean.length() <= 600 ? clean : clean.substring(0, safeTextCut(clean, 600));
     }

@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.operation;
 
+import com.myhomelibcorp.shared.util.ThrowableText;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -545,10 +546,7 @@ public final class LibraryOperationCoordinator {
 
         private static String rootMessage(Throwable failure) {
             if (failure == null) return "Невідома помилка";
-            Throwable current = failure;
-            while (current.getCause() != null && current.getCause() != current) current = current.getCause();
-            String message = current.getMessage();
-            return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
+            return ThrowableText.rootMessage(failure, "Невідома помилка");
         }
     }
 }
