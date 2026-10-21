@@ -1,17 +1,21 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.shared.util.BoundedIoSupport;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.TextArea;
 import javafx.stage.Window;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
 /** Context-sensitive built-in help. Markdown is bundled; legacy text remains a fallback. */
 @Service
 public class HelpService {
+    /** Bundled help should never allocate an unbounded byte array on a 4 GiB desktop. */
+    static final int MAX_HELP_BYTES = 2 * 1024 * 1024;
     private final LocalizationService localization;
     private final HelpTopicRegistry topics;
 
@@ -54,21 +58,30 @@ public class HelpService {
         return null;
     }
 
-    private String extractTitle(String value, String fallback) {
+    /** Stop at the first nonblank line; never materialize all Markdown lines. */
+    static String extractTitle(String value, String fallback) {
         if (value != null) {
-            for (String line : value.lines().toList()) {
-                String trimmed = line.trim();
-                if (trimmed.startsWith("# ")) return trimmed.substring(2).trim();
-                if (!trimmed.isBlank()) break;
+            try (var lines = value.lines()) {
+                var iterator = lines.iterator();
+                while (iterator.hasNext()) {
+                    String trimmed = iterator.next().trim();
+                    if (trimmed.startsWith("# ")) return trimmed.substring(2).trim();
+                    if (!trimmed.isBlank()) break;
+                }
             }
         }
         return fallback;
     }
 
+    static String readHelpText(InputStream in) throws IOException {
+        return new String(BoundedIoSupport.readFully(in, MAX_HELP_BYTES), StandardCharsets.UTF_8);
+    }
+
     private String load(String resource) {
         try (InputStream in = getClass().getResourceAsStream(resource)) {
-            return in == null ? null : new String(in.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (Exception e) {
+            return in == null ? null : readHelpText(in);
+        } catch (IOException e) {
+            // Oversized or unreadable bundled help is unavailable; caller falls back to uk/index.
             return null;
         }
     }
