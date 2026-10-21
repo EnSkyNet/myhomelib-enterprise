@@ -68,6 +68,11 @@ public class PropertiesApplicationSettingsService implements ApplicationSettings
             try (OutputStream out = SafeFilePublication.openFreshOutputStream(tmp, "staged application settings")) {
                 properties.store(out, "MyHomeLib 8.0.0 settings");
             }
+            // The same 4 MiB limit applies when reading settings on the next launch.
+            // Never publish a file that would make our own settings loader fail closed.
+            if (Files.size(tmp) > MAX_SETTINGS_BYTES) {
+                throw new java.io.IOException("Staged settings exceed the " + MAX_SETTINGS_BYTES + "-byte read limit");
+            }
             SafeFilePublication.publishReplacingIfUnchanged(
                     tmp, file, expectedTargetHash, "application settings publication");
         } catch (Exception e) {

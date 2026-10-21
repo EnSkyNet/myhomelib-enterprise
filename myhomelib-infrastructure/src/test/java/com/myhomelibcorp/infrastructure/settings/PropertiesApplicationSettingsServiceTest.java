@@ -82,6 +82,55 @@ class PropertiesApplicationSettingsServiceTest {
         assertThat(Files.isSymbolicLink(file)).isTrue();
     }
 
+    @Test
+    void oversizedPutCannotPublishAFileThatFailsTheNextStartupRead() throws Exception {
+        Path data = tempDir.resolve("write-size-guard");
+        System.setProperty("myhomelib.dataDir", data.toString());
+        PropertiesApplicationSettingsService settings = new PropertiesApplicationSettingsService();
+        settings.put("existing.setting", "preserve");
+
+        Path file = data.resolve("config/myhomelib.properties");
+        byte[] originalBytes = Files.readAllBytes(file);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> settings.put("oversized.setting", "x".repeat(4 * 1024 * 1024)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Cannot save application settings");
+
+        assertThat(Files.readAllBytes(file)).containsExactly(originalBytes);
+        assertThat(settings.get("oversized.setting", "missing")).isEqualTo("missing");
+        assertThat(settings.get("existing.setting", "")).isEqualTo("preserve");
+        PropertiesApplicationSettingsService reloaded = new PropertiesApplicationSettingsService();
+        assertThat(reloaded.get("existing.setting", "")).isEqualTo("preserve");
+        assertThat(reloaded.get("oversized.setting", "missing")).isEqualTo("missing");
+    }
+
+    @Test
+    void oversizedPrefixReplacementRestoresPreviousValuesAndDiskBytes() throws Exception {
+        Path data = tempDir.resolve("prefix-size-guard");
+        System.setProperty("myhomelib.dataDir", data.toString());
+        PropertiesApplicationSettingsService settings = new PropertiesApplicationSettingsService();
+        settings.put("filter.global.author", "Alice");
+        settings.put("unrelated.setting", "preserve");
+
+        Path file = data.resolve("config/myhomelib.properties");
+        byte[] originalBytes = Files.readAllBytes(file);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> settings.replaceByPrefix(
+                        "filter.global.", Map.of("filter.global.new", "x".repeat(4 * 1024 * 1024))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Cannot save application settings");
+
+        assertThat(Files.readAllBytes(file)).containsExactly(originalBytes);
+        assertThat(settings.findByPrefix("filter.global."))
+                .containsExactly(Map.entry("filter.global.author", "Alice"));
+        assertThat(settings.get("unrelated.setting", "")).isEqualTo("preserve");
+
+        PropertiesApplicationSettingsService reloaded = new PropertiesApplicationSettingsService();
+        assertThat(reloaded.findByPrefix("filter.global."))
+                .containsExactly(Map.entry("filter.global.author", "Alice"));
+    }
+
     private static boolean canCreateSymlink(Path link, Path target) {
         try {
             Files.createSymbolicLink(link, target);
