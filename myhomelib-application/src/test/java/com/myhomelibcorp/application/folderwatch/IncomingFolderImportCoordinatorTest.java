@@ -172,6 +172,58 @@ class IncomingFolderImportCoordinatorTest {
         verify(watcher, never()).markImported(any(), any(), any(), anyLong(), anyLong(), anyLong());
     }
 
+    @Test
+    void cyclicUnclassifiedImportFailureIsReportedWithoutHanging() {
+        IncomingFolderWatchPort watcher = mock(IncomingFolderWatchPort.class);
+        ImportFileUseCase importer = mock(ImportFileUseCase.class);
+        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
+        IncomingFolderImportCoordinator coordinator = new IncomingFolderImportCoordinator(
+                watcher, importer, collections, new DirectExecutor());
+        Path file = Path.of("/tmp/incoming/cycle.txt");
+        IncomingFolderCandidate candidate = new IncomingFolderCandidate(
+                "target", file, HASH, 10, 20, IncomingFolderCandidateStatus.READY, Instant.now(), null);
+        when(collections.getCurrentCollection()).thenReturn(collection("target"));
+        when(watcher.listReady("target", 25)).thenReturn(List.of(candidate), List.of());
+        when(watcher.claimReady("target", file, HASH)).thenReturn(true);
+        IllegalStateException first = new IllegalStateException("outside");
+        IllegalStateException second = new IllegalStateException("nested cycle");
+        first.initCause(second);
+        second.initCause(first);
+        when(importer.execute(any())).thenThrow(first);
+
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(3),
+                () -> coordinator.schedule("target"));
+
+        verify(watcher).markFailed(eq("target"), eq(file), eq(HASH), contains("nested cycle"));
+    }
+
+    @Test
+    void cyclicStaleSourceCauseStillTriggersRescan() {
+        IncomingFolderWatchPort watcher = mock(IncomingFolderWatchPort.class);
+        ImportFileUseCase importer = mock(ImportFileUseCase.class);
+        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
+        IncomingFolderImportCoordinator coordinator = new IncomingFolderImportCoordinator(
+                watcher, importer, collections, new DirectExecutor());
+        Path file = Path.of("/tmp/incoming/stale.txt");
+        IncomingFolderCandidate candidate = new IncomingFolderCandidate(
+                "target", file, HASH, 10, 20, IncomingFolderCandidateStatus.READY, Instant.now(), null);
+        when(collections.getCurrentCollection()).thenReturn(collection("target"));
+        when(watcher.listReady("target", 25)).thenReturn(List.of(candidate), List.of());
+        when(watcher.claimReady("target", file, HASH)).thenReturn(true);
+        IllegalStateException outer = new IllegalStateException("wrapper");
+        StaleImportSourceException stale = new StaleImportSourceException("source changed during read");
+        outer.initCause(stale);
+        stale.initCause(outer);
+        when(importer.execute(any())).thenThrow(outer);
+
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(3),
+                () -> coordinator.schedule("target"));
+
+        verify(watcher).markFailed(eq("target"), eq(file), eq(HASH), any());
+        verify(watcher).scanNow("target");
+        verify(watcher, never()).markImported(any(), any(), any(), anyLong(), anyLong(), anyLong());
+    }
+
     private static Collection collection(String id) {
         return new Collection(id, id, Path.of("/tmp/" + id), id + ".db", 0, null, null, null, null);
     }

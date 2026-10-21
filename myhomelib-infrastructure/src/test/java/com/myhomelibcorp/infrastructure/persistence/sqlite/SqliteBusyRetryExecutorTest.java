@@ -37,4 +37,34 @@ class SqliteBusyRetryExecutorTest {
 
         assertThat(attempts).hasValue(1);
     }
+    @Test
+    void cyclicNonBusyCauseChainReturnsFalseWithoutHanging() {
+        IllegalStateException first = new IllegalStateException("first");
+        IllegalStateException second = new IllegalStateException("second");
+        first.initCause(second);
+        second.initCause(first);
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                java.time.Duration.ofSeconds(3),
+                () -> assertThat(SqliteBusyRetryExecutor.isBusy(first)).isFalse());
+    }
+
+    @Test
+    void cyclicCauseChainStillDetectsSqliteBusyMessage() {
+        IllegalStateException first = new IllegalStateException("wrapper");
+        IllegalStateException second = new IllegalStateException("database is locked");
+        first.initCause(second);
+        second.initCause(first);
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                java.time.Duration.ofSeconds(3),
+                () -> assertThat(SqliteBusyRetryExecutor.isBusy(first)).isTrue());
+    }
+
+    @Test
+    void busyCauseNestedInsideThreeNodeCycleCanBeRecognized() {
+        IllegalStateException a = new IllegalStateException("outer");
+        IllegalStateException b = new IllegalStateException("other");
+        IllegalStateException c = new IllegalStateException("SQLITE_BUSY retryable");
+        a.initCause(b); b.initCause(c); c.initCause(a);
+        assertThat(SqliteBusyRetryExecutor.isBusy(a)).isTrue();
+    }
 }
