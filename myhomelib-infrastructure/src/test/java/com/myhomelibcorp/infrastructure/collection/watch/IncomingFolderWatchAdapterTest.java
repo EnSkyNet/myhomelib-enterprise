@@ -121,6 +121,30 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    void shutdownClearsManualScanTimersAndFinishesSqliteWorkersOnWindows() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("shutdown-bounded"));
+        adapter.configure("c1", incoming, false, 3600, 3600);
+        for (int i = 0; i < IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 12; i++) {
+            Files.writeString(incoming.resolve("slow-" + i + ".txt"), "content-" + i);
+        }
+        adapter.scanNow("c1");
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
+        var schedulerField = IncomingFolderWatchAdapter.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        var scheduler = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
+
+        adapter.shutdown();
+
+        assertThat(pending).isEmpty();
+        assertThat(scheduler.isTerminated()).isTrue();
+        assertThat(scheduler.getQueue()).isEmpty();
+    }
+
+    @Test
     void cancelledDebounceTimersAreRemovedFromSchedulerQueue() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
