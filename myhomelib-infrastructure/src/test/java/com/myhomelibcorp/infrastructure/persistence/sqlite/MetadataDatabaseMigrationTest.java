@@ -60,7 +60,7 @@ class MetadataDatabaseMigrationTest {
         java.util.List<String> orderedColumns = jdbc.queryForList(
                         "PRAGMA index_info('idx_incoming_folder_waiting_replay')").stream()
                 .map(row -> String.valueOf(row.get("name")))
-                .collect(Collectors.toSet());
+                .toList();
         assertThat(orderedColumns).containsExactly("status", "collection_id", "file_path");
     }
 }
