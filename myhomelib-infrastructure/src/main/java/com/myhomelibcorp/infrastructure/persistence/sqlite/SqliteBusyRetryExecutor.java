@@ -54,19 +54,13 @@ public class SqliteBusyRetryExecutor {
     }
 
     public static boolean isBusy(Throwable error) {
-        Throwable current = error;
-        while (current != null) {
-            String message = current.getMessage();
-            if (message != null) {
-                String normalized = message.toLowerCase(java.util.Locale.ROOT);
-                if (normalized.contains("sqlite_busy") || normalized.contains("database is locked")
-                        || normalized.contains("database table is locked")) {
-                    return true;
-                }
-            }
-            current = current.getCause();
-        }
-        return false;
+        return com.myhomelibcorp.shared.util.ThrowableMessages.anyCause(error, cause -> {
+            String message = cause.getMessage();
+            if (message == null) return false;
+            String normalized = message.toLowerCase(java.util.Locale.ROOT);
+            return normalized.contains("sqlite_busy") || normalized.contains("database is locked")
+                    || normalized.contains("database table is locked");
+        });
     }
 
     private static void sleep(long millis) {
