@@ -99,7 +99,7 @@ jobs:
 
       - name: Upload release supply-chain artifacts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: myhomelib-supply-chain
           if-no-files-found: error
@@ -251,7 +251,7 @@ jobs:
 
       - name: Upload Windows installer acceptance logs
         if: always() && matrix.platform == 'windows'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-acceptance-evidence-${{ github.run_id }}
           if-no-files-found: warn
@@ -291,7 +291,7 @@ jobs:
 
       - name: Retain platform test and scan evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: platform-verification-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: warn
@@ -366,7 +366,7 @@ jobs:
           --out "target/release-candidate-integrity/release-candidate-integrity-${{ matrix.platform }}.json"
 
       - name: Upload platform release artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: myhomelib-${{ matrix.platform }}
           path: |
@@ -417,7 +417,7 @@ jobs:
           }
 
       - name: Download all platform artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: myhomelib-*
           path: release-downloads
