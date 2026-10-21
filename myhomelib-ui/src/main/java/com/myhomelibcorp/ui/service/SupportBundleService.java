@@ -24,6 +24,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.PriorityQueue;
 import java.util.Properties;
 import java.util.Set;
 import java.util.zip.ZipEntry;
@@ -36,6 +37,8 @@ public class SupportBundleService {
     static final long MAX_TOTAL_LOGS = 30L * 1024 * 1024;
     // A broken log line may span the entire 10 MiB file. Never retain it as a String.
     static final int MAX_DIAGNOSTIC_LINE_CHARS = 16 * 1024;
+    // Prevent a corrupt/overgrown logs directory from consuming unbounded heap/UI space.
+    static final int MAX_LOG_ENTRIES = 128;
     private static final String OMITTED_DIAGNOSTIC_LINE = "[oversized diagnostic line omitted]";
     private static final long MAX_RELEASE_FILE = 2L * 1024 * 1024;
     private static final Set<String> SECRET_WORDS = Set.of(
@@ -239,15 +242,35 @@ public class SupportBundleService {
         } catch (IOException unsafe) {
             return List.of();
         }
-        List<Path> files = new ArrayList<>();
+        return newestLogFiles(dir);
+    }
+
+    /** Select the 128 newest safe regular files with O(128) retained paths, not O(directory size). */
+    List<Path> newestLogFiles(Path dir) {
+        record LogFile(Path path, long modifiedAt) { }
+        Comparator<LogFile> newestFirst = Comparator.comparingLong(LogFile::modifiedAt)
+                .reversed().thenComparing(entry -> entry.path().getFileName().toString());
+        // The least desirable selected entry is at the head of the bounded heap.
+        PriorityQueue<LogFile> selected = new PriorityQueue<>(MAX_LOG_ENTRIES, newestFirst.reversed());
         try (var stream = Files.list(dir)) {
-            stream.filter(this::isSafeRegularFile)
-                    .sorted((a, b) -> Long.compare(lastModified(b), lastModified(a)))
-                    .forEach(files::add);
-        } catch (IOException ignored) {
+            var entries = stream.iterator();
+            while (entries.hasNext()) {
+                Path path = entries.next();
+                if (!isSafeRegularFile(path)) continue;
+                LogFile candidate = new LogFile(path, lastModified(path));
+                if (selected.size() < MAX_LOG_ENTRIES) {
+                    selected.add(candidate);
+                } else if (newestFirst.compare(candidate, selected.peek()) < 0) {
+                    selected.poll();
+                    selected.add(candidate);
+                }
+            }
+        } catch (IOException | java.io.UncheckedIOException ignored) {
             return List.of();
         }
-        return List.copyOf(files);
+        List<LogFile> ordered = new ArrayList<>(selected);
+        ordered.sort(newestFirst);
+        return ordered.stream().map(LogFile::path).toList();
     }
 
     private long lastModified(Path p) {
