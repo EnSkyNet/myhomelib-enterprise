@@ -8,6 +8,7 @@ import org.apache.lucene.store.FSDirectory;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 
 /** Cheap performance telemetry helpers kept outside search orchestration. */
 @Slf4j
@@ -16,10 +17,19 @@ final class LuceneIndexMetrics {
 
     static long indexSizeBytes(Directory directory) {
         if (!(directory instanceof FSDirectory fsDirectory)) return -1L;
-        try (var paths = Files.walk(fsDirectory.getDirectory())) {
-            return paths.filter(Files::isRegularFile).mapToLong(path -> {
-                try { return Files.size(path); } catch (IOException ignored) { return 0L; }
-            }).sum();
+        // FSDirectory is flat: recursive walking counts unrelated nested files and can cross
+        // foreign symlink targets when checking leaf file sizes. Keep telemetry O(1)-depth.
+        try (var paths = Files.list(fsDirectory.getDirectory())) {
+            long total = 0L;
+            for (var it = paths.iterator(); it.hasNext();) {
+                var path = it.next();
+                if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) continue;
+                long size;
+                try { size = Files.size(path); } catch (IOException ignored) { continue; }
+                if (Long.MAX_VALUE - total < size) return Long.MAX_VALUE;
+                total += size;
+            }
+            return total;
         } catch (IOException e) {
             log.debug("Cannot calculate Lucene index size: {}", e.toString());
             return -1L;
