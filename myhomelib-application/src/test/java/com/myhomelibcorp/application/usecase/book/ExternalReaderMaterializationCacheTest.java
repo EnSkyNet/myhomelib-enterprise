@@ -118,6 +118,83 @@ class ExternalReaderMaterializationCacheTest {
         assertThat(path).doesNotExist();
     }
 
+    @Test
+    void startupCleansManyCrashLeftoversWithoutTouchingSubdirectories() throws Exception {
+        Path cacheDir = Files.createDirectories(temp.resolve("many-crash-leftovers"));
+        for (int i = 0; i < 1_000; i++) {
+            Files.writeString(cacheDir.resolve("book-" + i + ".fb2"), "x");
+        }
+        Path subdirectory = Files.createDirectory(cacheDir.resolve("keep-directory"));
+
+        ExternalReaderMaterializationCache cache = cache(cacheDir, 2_048, Duration.ofHours(1));
+        cache.initialize();
+
+        assertThat(subdirectory).isDirectory();
+        try (var entries = Files.list(cacheDir)) {
+            assertThat(entries.filter(Files::isRegularFile).count()).isZero();
+        }
+        try (ExternalReaderMaterializationCache.Lease lease = cache.materialize(bytes("new"), "fb2")) {
+            assertThat(lease.path()).exists();
+        }
+    }
+
+    @Test
+    void underBudgetCleanupPreservesManyFreshUnmanagedFiles() throws Exception {
+        Path cacheDir = temp.resolve("streamed-under-budget");
+        ExternalReaderMaterializationCache cache = cache(cacheDir, 4_096, Duration.ofHours(1));
+        cache.initialize();
+        for (int i = 0; i < 400; i++) {
+            Files.writeString(cacheDir.resolve("book-" + i + ".fb2"), "x");
+        }
+
+        cache.cleanupInactive();
+
+        try (var entries = Files.list(cacheDir)) {
+            assertThat(entries.filter(Files::isRegularFile).count()).isEqualTo(400);
+        }
+        try (ExternalReaderMaterializationCache.Lease lease = cache.materialize(bytes("new"), "fb2")) {
+            assertThat(lease.path()).exists();
+        }
+    }
+
+    @Test
+    void overBudgetCleanupEvictsOldestInactiveFileFirst() throws Exception {
+        Path cacheDir = temp.resolve("age-ordered-eviction");
+        ExternalReaderMaterializationCache cache = cache(cacheDir, 10, Duration.ofDays(1));
+        cache.initialize();
+        Path oldest = Files.writeString(cacheDir.resolve("book-old.fb2"), "123456");
+        Path newest = Files.writeString(cacheDir.resolve("book-new.fb2"), "abcdef");
+        Files.setLastModifiedTime(oldest, FileTime.from(Instant.parse("2026-10-01T00:00:00Z")));
+        Files.setLastModifiedTime(newest, FileTime.from(Instant.parse("2026-10-02T00:00:00Z")));
+        // Both files must remain younger than the maximum age, so size eviction decides.
+        ExternalReaderMaterializationCache fixed = new ExternalReaderMaterializationCache(
+                cacheDir, 10, 10, Duration.ofDays(365), Clock.fixed(
+                        Instant.parse("2026-10-03T00:00:00Z"), ZoneOffset.UTC));
+        fixed.cleanupInactive();
+
+        assertThat(oldest).doesNotExist();
+        assertThat(newest).exists();
+        assertThat(Files.readString(newest)).isEqualTo("abcdef");
+    }
+
+    @Test
+    void accountingIgnoresSymbolicLinksAndDoesNotFollowTheirTargets() throws Exception {
+        Path cacheDir = temp.resolve("symlink-accounting");
+        ExternalReaderMaterializationCache cache = cache(cacheDir, 5, Duration.ofHours(1));
+        cache.initialize();
+        Path foreign = Files.writeString(temp.resolve("external-large-file.txt"), "1234567890123456789");
+        Path link = cacheDir.resolve("book-link.fb2");
+        try {
+            Files.createSymbolicLink(link, foreign);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException e) {
+            Assumptions.assumeTrue(false, "Symbolic links unavailable on this platform");
+        }
+        try (ExternalReaderMaterializationCache.Lease lease = cache.materialize(bytes("ok"), "fb2")) {
+            assertThat(lease.path()).exists();
+        }
+        assertThat(Files.readString(foreign)).isEqualTo("1234567890123456789");
+    }
+
     private ExternalReaderMaterializationCache cache(Path dir, long maxBytes, Duration age) {
         return new ExternalReaderMaterializationCache(dir, maxBytes, maxBytes, age, Clock.systemUTC());
     }
