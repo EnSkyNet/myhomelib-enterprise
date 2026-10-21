@@ -233,7 +233,8 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         try {
             WatchService watchService = FileSystems.getDefault().newWatchService();
             state.folder().register(watchService, ENTRY_CREATE, ENTRY_MODIFY, ENTRY_DELETE);
-            WatchRegistration registration = new WatchRegistration(collectionId, state.folder(), watchService);
+            WatchRegistration registration = new WatchRegistration(collectionId, state.folder(), watchService,
+                    new WatchSettings(state.folder(), true, state.debounceSeconds(), state.stabilitySeconds()));
             watchers.put(collectionId, registration);
             Thread thread = new Thread(() -> watchLoop(registration), "incoming-folder-watch-" + collectionId);
             thread.setDaemon(true);
@@ -271,8 +272,10 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                     Path changed = registration.folder.resolve(relative).toAbsolutePath().normalize();
                     if (event.kind() == ENTRY_DELETE) {
                         markMissing(registration.collectionId, changed);
-                    } else if (isIncomingSupported(changed)) {
-                        scheduleCandidate(registration.collectionId, changed, -1);
+                    } else if (!registration.closed.get() && isIncomingSupported(changed)) {
+                        // The registration is recreated on configuration changes. Event bursts should not
+                        // issue one SQLite settings query per create/modify notification.
+                        scheduleCandidate(registration.collectionId, changed, -1, registration.settings);
                     }
                 }
                 if (!key.reset()) break;
@@ -542,13 +545,16 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         private final String collectionId;
         private final Path folder;
         private final WatchService watchService;
+        private final WatchSettings settings;
         private final AtomicBoolean closed = new AtomicBoolean();
         private volatile Thread thread;
 
-        private WatchRegistration(String collectionId, Path folder, WatchService watchService) {
+        private WatchRegistration(String collectionId, Path folder, WatchService watchService,
+                                  WatchSettings settings) {
             this.collectionId = collectionId;
             this.folder = folder;
             this.watchService = watchService;
+            this.settings = settings;
         }
 
         @Override
