@@ -361,7 +361,7 @@ class IncomingFolderWatchAdapterTest {
         String key = "c1\u0000" + file.toAbsolutePath().normalize();
         Files.writeString(file, "temporary");
         await(() -> pending.containsKey(key), Duration.ofSeconds(5));
-        assertThat(scheduler.getQueue()).isNotEmpty();
+        await(() -> !scheduler.getQueue().isEmpty(), Duration.ofSeconds(5));
 
         Files.delete(file);
         await(() -> !pending.containsKey(key), Duration.ofSeconds(5));
@@ -369,7 +369,7 @@ class IncomingFolderWatchAdapterTest {
 
         Files.writeString(file, "new-content");
         await(() -> pending.containsKey(key), Duration.ofSeconds(5));
-        assertThat(scheduler.getQueue()).isNotEmpty();
+        await(() -> !scheduler.getQueue().isEmpty(), Duration.ofSeconds(5));
     }
 
     @Test
