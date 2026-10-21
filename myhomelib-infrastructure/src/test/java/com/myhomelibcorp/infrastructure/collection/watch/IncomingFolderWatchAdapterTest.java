@@ -652,9 +652,11 @@ class IncomingFolderWatchAdapterTest {
             Files.writeString(incoming.resolve("crash-book-" + i + ".txt"), "disposable " + i);
         }
         assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:" + total);
-        assertThat(jdbc.queryForObject("""
+        // scanNow schedules observation asynchronously; the first 256 timers may not
+        // have persisted yet when scanNow returns. Wait for the actual SQLite state.
+        await(() -> jdbc.queryForObject("""
                 SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1' AND status='WAITING'
-                """, Integer.class)).isEqualTo(total);
+                """, Integer.class) == total, Duration.ofSeconds(30));
         adapter.shutdown();
         adapter = null;
 
