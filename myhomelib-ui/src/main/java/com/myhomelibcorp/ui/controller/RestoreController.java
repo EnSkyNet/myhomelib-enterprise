@@ -88,24 +88,17 @@ public class RestoreController {
         boolean hasPortableUserData = false;
 
         try {
-            Path safeBackupPath = SafeFilePublication.requireSafeDirectoryPath(backupPath, "Backup selection directory");
-            try (var stream = Files.list(safeBackupPath)) {
-            var list = stream.toList();
-            for (Path path : list) {
-                String name = path.getFileName().toString();
-                if (name.endsWith(".db") && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
-                    hasDb = true;
-                    addLog(UiText.text("ui.java.restore_controller.44cc2f53e0") + name);
-                } else if (name.equals("search-index") && Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
-                    addLog(UiText.text("ui.java.restore_controller.ab7894c6e5"));
-                } else if (name.equals("covers") && Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
-                    addLog(UiText.text("ui.java.restore_controller.023a4f1138"));
-                } else if (name.equals("user-data.json") && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
-                    hasPortableUserData = true;
-                    addLog(UiText.text("ui.java.restore_controller.bebeb0b699"));
-                }
+            BackupDirectoryPreviewScanner.Preview preview = BackupDirectoryPreviewScanner.scan(backupPath);
+            hasDb = preview.databaseCount() > 0;
+            hasPortableUserData = preview.portableUserData();
+            for (String name : preview.databaseNames()) {
+                addLog(UiText.text("ui.java.restore_controller.44cc2f53e0") + name);
             }
-            }
+            long omitted = preview.databaseCount() - preview.databaseNames().size();
+            if (omitted > 0) addLog("… +" + omitted);
+            if (preview.searchIndex()) addLog(UiText.text("ui.java.restore_controller.ab7894c6e5"));
+            if (preview.covers()) addLog(UiText.text("ui.java.restore_controller.023a4f1138"));
+            if (preview.portableUserData()) addLog(UiText.text("ui.java.restore_controller.bebeb0b699"));
         } catch (Exception e) {
             addLog(UiText.text("ui.java.restore_controller.ba15ce628e") + UiExceptionSupport.message(e));
         }
