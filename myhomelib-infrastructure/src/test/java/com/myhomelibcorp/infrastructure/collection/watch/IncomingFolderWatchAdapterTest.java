@@ -54,6 +54,61 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    void watchServiceEventUsesRegisteredSettingsWithoutQueryingSqlitePerEvent() throws Exception {
+        JdbcTemplate jdbc = spy(metadataJdbc());
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("event-cache"));
+        adapter.configure("c1", incoming, true, 2, 2);
+        clearInvocations(jdbc);
+
+        Files.writeString(incoming.resolve("watched.txt"), "event");
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        await(() -> !((java.util.Map<?, ?>) pendingField.get(adapter)).isEmpty(), Duration.ofSeconds(5));
+
+        long repeatedWatchSettingsQueries = mockingDetails(jdbc).getInvocations().stream()
+                .filter(invocation -> invocation.getMethod().getName().equals("query"))
+                .filter(invocation -> invocation.getArguments().length > 0)
+                .map(invocation -> invocation.getArguments()[0])
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .filter(sql -> sql.contains("SELECT folder_path, enabled, debounce_seconds, stability_seconds"))
+                .count();
+        assertThat(repeatedWatchSettingsQueries).isZero();
+    }
+
+    @Test
+    void reconfigureRefreshesWatcherRegistrationSettings() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path first = Files.createDirectory(tempDir.resolve("watched-first"));
+        Path second = Files.createDirectory(tempDir.resolve("watched-second"));
+        adapter.configure("c1", first, true, 1, 1);
+
+        var registrationsField = IncomingFolderWatchAdapter.class.getDeclaredField("watchers");
+        registrationsField.setAccessible(true);
+        var watchers = (java.util.Map<?, ?>) registrationsField.get(adapter);
+        Object firstRegistration = watchers.get("c1");
+        assertThat(firstRegistration).isNotNull();
+
+        adapter.configure("c1", second, true, 5, 6);
+        Object secondRegistration = watchers.get("c1");
+        assertThat(secondRegistration).isNotNull().isNotSameAs(firstRegistration);
+        var settingsField = secondRegistration.getClass().getDeclaredField("settings");
+        settingsField.setAccessible(true);
+        Object settings = settingsField.get(secondRegistration);
+        var debounce = settings.getClass().getDeclaredMethod("debounceSeconds");
+        var stability = settings.getClass().getDeclaredMethod("stabilitySeconds");
+        var folder = settings.getClass().getDeclaredMethod("folder");
+        folder.setAccessible(true);
+        debounce.setAccessible(true);
+        stability.setAccessible(true);
+        assertThat(folder.invoke(settings)).isEqualTo(second);
+        assertThat(debounce.invoke(settings)).isEqualTo(5);
+        assertThat(stability.invoke(settings)).isEqualTo(6);
+    }
+
+    @Test
     void stabilityGateThenContentFingerprintPreventsSecondImportCandidate() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         DomainEventPublisher events = mock(DomainEventPublisher.class);
