@@ -9,10 +9,21 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    # JavaFX major releases require a newer JDK; V34 stays on Java 21.
+    ignore:
+      - dependency-name: "javafx.version"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "org.openjfx:*"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 5
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    # All three CodeQL actions must use one version in every CI run.
+    groups:
+      codeql-actions:
+        patterns:
+          - "github/codeql-action/*"
     open-pull-requests-limit: 5

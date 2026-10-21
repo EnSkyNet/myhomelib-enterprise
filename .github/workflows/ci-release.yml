@@ -24,10 +24,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # vv7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python 3.12 for release security gate
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # vv7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
 
@@ -42,7 +42,7 @@ jobs:
           --out-dir target/github-release-codeql-gate
 
       - name: Set up JDK 21 with Maven cache
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # vv6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -54,7 +54,7 @@ jobs:
         run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Dependency-Check vulnerability database
-        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.m2/dependency-check-data-v12
           key: dependency-check-v12-${{ runner.os }}-${{ steps.nvd-cache-date.outputs.date }}-${{ hashFiles('pom.xml', 'security/dependency-check-suppressions.xml') }}
@@ -68,7 +68,7 @@ jobs:
         run: python3 tools/supply-chain-policy-check.py
 
       - name: Set up Python for vendor review
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # vv7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
 
@@ -130,17 +130,17 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # vv7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up JDK 21
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # vv6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: '21'
           distribution: 'temurin'
           cache: 'maven'
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # vv7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
 
@@ -393,10 +393,10 @@ jobs:
 
     steps:
       - name: Checkout source for version guard
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # vv7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # vv7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
 
@@ -417,7 +417,7 @@ jobs:
           }
 
       - name: Download all platform artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # vv8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: myhomelib-*
           path: release-downloads
@@ -444,7 +444,7 @@ jobs:
           )
 
       - name: Create GitHub Release once
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # vv3.0.3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: release-files/*
           generate_release_notes: true
