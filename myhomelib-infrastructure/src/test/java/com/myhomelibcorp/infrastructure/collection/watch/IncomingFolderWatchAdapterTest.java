@@ -63,8 +63,9 @@ class IncomingFolderWatchAdapterTest {
         var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
         var scheduler = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
         assertThat(pending.size()).isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+        // 256 per-file timers plus one shared retry watchdog, regardless of overflow size.
         assertThat(scheduler.getQueue().size())
-                .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+                .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 1);
 
         await(() -> jdbc.queryForObject("""
                 SELECT COUNT(*) FROM incoming_folder_file
@@ -84,7 +85,14 @@ class IncomingFolderWatchAdapterTest {
             Files.writeString(incoming.resolve("book-" + i + ".txt"), "data-" + i);
         }
         adapter.scanNow("c1");
+        var retryField = IncomingFolderWatchAdapter.class.getDeclaredField("overflowReplayWakeup");
+        retryField.setAccessible(true);
+        var wakeup = (java.util.concurrent.ScheduledFuture<?>) retryField.get(adapter);
+        assertThat(wakeup).isNotNull();
+        assertThat(wakeup.isCancelled()).isFalse();
         adapter.stopMonitoring("c1");
+        assertThat(wakeup.isCancelled()).isTrue();
+        assertThat(retryField.get(adapter)).isNull();
 
         var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
         pendingField.setAccessible(true);
@@ -96,6 +104,32 @@ class IncomingFolderWatchAdapterTest {
                 """, Integer.class)).isGreaterThan(0);
         Thread.sleep(250);
         assertThat(pending).isEmpty();
+    }
+
+    @Test
+    void repeatedOverflowUsesOnlyOneSharedRetryWakeup() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("single-watchdog"));
+        adapter.configure("c1", incoming, false, 3600, 3600);
+        int count = IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 16;
+        for (int i = 0; i < count; i++) {
+            Files.writeString(incoming.resolve("book-" + i + ".txt"), "test-" + i);
+        }
+        adapter.scanNow("c1");
+
+        var retryField = IncomingFolderWatchAdapter.class.getDeclaredField("overflowReplayWakeup");
+        retryField.setAccessible(true);
+        Object first = retryField.get(adapter);
+        assertThat(first).isNotNull();
+        adapter.scanNow("c1");
+        assertThat(retryField.get(adapter)).isSameAs(first);
+
+        var schedulerField = IncomingFolderWatchAdapter.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        var executor = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
+        assertThat(executor.getQueue().size())
+                .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 1);
     }
 
     @Test
