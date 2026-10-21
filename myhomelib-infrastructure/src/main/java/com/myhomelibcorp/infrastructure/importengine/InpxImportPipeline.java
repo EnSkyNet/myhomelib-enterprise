@@ -199,8 +199,12 @@ public class InpxImportPipeline {
                 ? indexExistingLocalFiles(root, cancelFlag)
                 : null;
         if (onlineCollection) {
-            log.info("Online local-file index prepared: {} existing files under {}",
-                    indexedLocalFiles == null ? 0 : indexedLocalFiles.size(), root);
+            if (indexedLocalFiles == null) {
+                log.info("Online local-file index unavailable or over memory limit under {}; using exact filesystem probes", root);
+            } else {
+                log.info("Online local-file index prepared: {} existing files under {}",
+                        indexedLocalFiles.size(), root);
+            }
         }
 
         log.info("Starting INPX import: {} (root: {}, batch: {}, sourceKey: {}, records: {}, emptyCatalog={}, emptyAuthors={})",
