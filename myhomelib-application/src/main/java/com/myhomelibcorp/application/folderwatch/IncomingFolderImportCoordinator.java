@@ -10,6 +10,8 @@ import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.domain.event.collection.CollectionOpenedEvent;
+import com.myhomelibcorp.shared.util.ThrowableMessages;
+import com.myhomelibcorp.shared.util.ThrowableText;
 import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.context.event.ContextRefreshedEvent;
 import lombok.RequiredArgsConstructor;
@@ -160,26 +162,13 @@ public class IncomingFolderImportCoordinator {
     }
 
     private static boolean isRetryableLifecycleFailure(Throwable failure) {
-        Throwable current = failure;
-        while (current != null) {
-            if (current instanceof LibraryOperationConflictException
-                    || current instanceof ImportFileUseCase.StaleImportCollectionException) {
-                return true;
-            }
-            if (current.getCause() == current) break;
-            current = current.getCause();
-        }
-        return false;
+        return ThrowableMessages.anyCause(failure, cause ->
+                cause instanceof LibraryOperationConflictException
+                        || cause instanceof ImportFileUseCase.StaleImportCollectionException);
     }
 
     private static boolean isStaleSourceFailure(Throwable failure) {
-        Throwable current = failure;
-        while (current != null) {
-            if (current instanceof StaleImportSourceException) return true;
-            if (current.getCause() == current) break;
-            current = current.getCause();
-        }
-        return false;
+        return ThrowableMessages.anyCause(failure, StaleImportSourceException.class::isInstance);
     }
 
     private boolean activeCollectionIs(String collectionId) {
@@ -188,11 +177,7 @@ public class IncomingFolderImportCoordinator {
     }
 
     private static String safeMessage(Throwable failure) {
-        if (failure == null) return "unknown error";
-        Throwable current = failure;
-        while (current.getCause() != null) current = current.getCause();
-        String message = current.getMessage();
-        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
+        return ThrowableText.rootMessage(failure, "unknown error");
     }
 
     @EventListener(ContextClosedEvent.class)
