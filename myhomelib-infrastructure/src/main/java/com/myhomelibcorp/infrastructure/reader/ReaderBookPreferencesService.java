@@ -17,6 +17,7 @@ import com.myhomelibcorp.domain.model.reader.ReaderPreferences;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.shared.util.ThrowableMessages;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -221,18 +222,13 @@ public class ReaderBookPreferencesService implements ReaderBookPreferencesPort, 
         }
     }
 
-    private static boolean isMissingSettingsTable(Throwable failure) {
-        Throwable current = failure;
-        while (current != null) {
-            String message = current.getMessage();
-            if (message != null) {
-                String normalized = message.toLowerCase(java.util.Locale.ROOT);
-                if (normalized.contains("no such table") && normalized.contains("settings")) return true;
-            }
-            if (current.getCause() == current) break;
-            current = current.getCause();
-        }
-        return false;
+    static boolean isMissingSettingsTable(Throwable failure) {
+        return ThrowableMessages.anyCause(failure, cause -> {
+            String message = cause.getMessage();
+            if (message == null) return false;
+            String normalized = message.toLowerCase(java.util.Locale.ROOT);
+            return normalized.contains("no such table") && normalized.contains("settings");
+        });
     }
 
     private long migrateLegacyFile(JdbcTemplate jdbc, Path safeLegacyFile) throws Exception {
