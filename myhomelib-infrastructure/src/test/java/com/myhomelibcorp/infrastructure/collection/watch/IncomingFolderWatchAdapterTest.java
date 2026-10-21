@@ -192,6 +192,67 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(value = 120)
+    void reconfigureWhileOverflowIsPendingDiscardsOldFolderAndProcessesOnlyNewFiles() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path oldFolder = Files.createDirectory(tempDir.resolve("old-overflow-folder"));
+        Path newFolder = Files.createDirectory(tempDir.resolve("new-overflow-folder"));
+        adapter.configure("c1", oldFolder, false, 3600, 3600);
+
+        var schedulerField = IncomingFolderWatchAdapter.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        var executor = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
+        var started = new java.util.concurrent.CountDownLatch(2);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        for (int i = 0; i < 2; i++) {
+            executor.submit(() -> {
+                started.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+        }
+        assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        final int oldCount = IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 32;
+        final int newCount = 24;
+        try {
+            for (int i = 0; i < oldCount; i++) {
+                Files.writeString(oldFolder.resolve("old-" + i + ".txt"), "old-test-" + i);
+            }
+            assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:" + oldCount);
+            for (int i = 0; i < newCount; i++) {
+                Files.writeString(newFolder.resolve("new-" + i + ".txt"), "new-test-" + i);
+            }
+            adapter.configure("c1", newFolder, false, 1, 1);
+            assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:" + newCount);
+            assertThat(jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM incoming_folder_file
+                     WHERE collection_id='c1' AND file_path LIKE ?
+                    """, Integer.class, oldFolder.toAbsolutePath().normalize() + "%")).isZero();
+        } finally {
+            release.countDown();
+        }
+
+        await(() -> jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file
+                 WHERE collection_id='c1' AND status='READY'
+                """, Integer.class) == newCount, Duration.ofSeconds(40));
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1'
+                """, Integer.class)).isEqualTo(newCount);
+
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
+        assertThat(pending.size()).isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+        assertThat(executor.getQueue().size())
+                .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 1);
+    }
+
+    @Test
     void bulkManualScanSchedulesAllSupportedFilesWithoutRetainingDirectorySnapshot() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
