@@ -6,7 +6,6 @@ import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.shared.util.BoundedIoSupport;
 import lombok.extern.slf4j.Slf4j;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -74,15 +73,19 @@ public final class LocalCopyDeletionRecoveryStore {
                 .collect(Collectors.joining(",")));
         properties.setProperty("contentSha256", contentHash);
 
-        ByteArrayOutputStream encoded = new ByteArrayOutputStream();
-        properties.store(encoded, "MyHomeLib pending local-copy deletion");
         Path workspace = SafeFilePublication.createPrivateWorkspace(
                 dir, ".local-copy-marker-work-", "local-copy deletion marker workspace");
         try {
             Path staged = workspace.resolve("marker.pending");
             try (OutputStream output = SafeFilePublication.openFreshOutputStream(
                     staged, "staged local-copy deletion marker")) {
-                encoded.writeTo(output);
+                properties.store(output, "MyHomeLib pending local-copy deletion");
+            }
+            // Recovery refuses to read markers above this bound. Fail before publishing
+            // one that would leave the staged deletion unrecoverable after a crash.
+            if (Files.size(staged) > MAX_MARKER_BYTES) {
+                throw new IOException("Local-copy deletion marker exceeds "
+                        + MAX_MARKER_BYTES + "-byte recovery read limit");
             }
             SafeFilePublication.publishReplacingIfUnchanged(
                     staged, marker, null, "local-copy deletion marker publication");
