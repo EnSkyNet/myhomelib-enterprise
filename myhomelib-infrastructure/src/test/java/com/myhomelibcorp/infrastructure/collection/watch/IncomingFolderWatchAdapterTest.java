@@ -636,6 +636,120 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(value = 180)
+    void hardKilledSqliteWriterRollsBackOpenTransactionAndReplaysCommittedClaims() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        jdbc.execute("PRAGMA journal_mode=WAL");
+        jdbc.execute("PRAGMA synchronous=FULL");
+        Path database = tempDir.resolve("meta.db");
+        Path incoming = Files.createDirectory(tempDir.resolve("crash-incoming-books"));
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        adapter.configure("c1", incoming, false, 3600, 3600);
+
+        // Force some candidates into durable SQLite overflow beyond 256 scheduled futures.
+        final int total = IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 32;
+        for (int i = 0; i < total; i++) {
+            Files.writeString(incoming.resolve("crash-book-" + i + ".txt"), "disposable " + i);
+        }
+        assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:" + total);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1' AND status='WAITING'
+                """, Integer.class)).isEqualTo(total);
+        adapter.shutdown();
+        adapter = null;
+
+        Path openTxnSignal = tempDir.resolve("uncommitted-open.signal");
+        Path openTxnLog = tempDir.resolve("uncommitted-worker.log");
+        Process uncommitted = startCrashWorker(database, "UNCOMMITTED", openTxnSignal, openTxnLog, total);
+        try {
+            await(() -> Files.exists(openTxnSignal) || !uncommitted.isAlive(), Duration.ofSeconds(30));
+            assertThat(Files.exists(openTxnSignal)).as(Files.readString(openTxnLog)).isTrue();
+            assertThat(uncommitted.isAlive()).as("worker must still hold a SQLite write transaction").isTrue();
+        } finally {
+            if (uncommitted.isAlive()) uncommitted.destroyForcibly();
+            assertThat(uncommitted.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+
+        JdbcTemplate fresh = reopenedMetadataJdbc(database);
+        assertThat(fresh.queryForObject("PRAGMA integrity_check", String.class)).isEqualTo("ok");
+        // A killed write transaction must roll back atomically: no candidate may disappear.
+        assertThat(fresh.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1' AND status='WAITING'
+                """, Integer.class)).isEqualTo(total);
+        assertThat(fresh.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1'
+                """, Integer.class)).isEqualTo(total);
+
+        // Starting a fresh adapter must replay the durable overflow, not drop late books.
+        fresh.update("""
+                UPDATE incoming_folder_watch SET enabled=1, debounce_seconds=1, stability_seconds=1
+                 WHERE collection_id='c1'
+                """);
+        adapter = new IncomingFolderWatchAdapter(fresh, mock(Flyway.class), mock(DomainEventPublisher.class));
+        adapter.startConfigured();
+        await(() -> fresh.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1' AND status='READY'
+                """, Integer.class) == total, Duration.ofSeconds(75));
+        assertThat(fresh.queryForObject("SELECT COUNT(*) FROM incoming_folder_file", Integer.class)).isEqualTo(total);
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        var schedulerField = IncomingFolderWatchAdapter.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
+        var scheduler = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
+        assertThat(pending.size()).isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+        assertThat(scheduler.getQueue().size())
+                .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 1);
+        adapter.shutdown();
+        adapter = null;
+
+        // A second abrupt JVM exit, this time just AFTER COMMIT, must not strand PROCESSING.
+        Path committedSignal = tempDir.resolve("committed.signal");
+        Path committedLog = tempDir.resolve("committed-worker.log");
+        Process committed = startCrashWorker(database, "COMMITTED", committedSignal, committedLog, total);
+        try {
+            assertThat(committed.waitFor(30, java.util.concurrent.TimeUnit.SECONDS))
+                    .as(Files.exists(committedLog) ? Files.readString(committedLog) : "child log missing").isTrue();
+            assertThat(committed.exitValue()).isEqualTo(83);
+            assertThat(Files.exists(committedSignal)).isTrue();
+        } finally {
+            if (committed.isAlive()) {
+                committed.destroyForcibly();
+                committed.waitFor(15, java.util.concurrent.TimeUnit.SECONDS);
+            }
+        }
+        fresh = reopenedMetadataJdbc(database);
+        assertThat(fresh.queryForObject("PRAGMA integrity_check", String.class)).isEqualTo("ok");
+        assertThat(fresh.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1' AND status='PROCESSING'
+                """, Integer.class)).isEqualTo(total);
+        // Disable automatic rescans to specifically prove the startup PROCESSING -> READY repair.
+        fresh.update("UPDATE incoming_folder_watch SET enabled=0 WHERE collection_id='c1'");
+        adapter = new IncomingFolderWatchAdapter(fresh, mock(Flyway.class), mock(DomainEventPublisher.class));
+        adapter.startConfigured();
+        assertThat(fresh.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1' AND status='READY'
+                """, Integer.class)).isEqualTo(total);
+        assertThat(fresh.queryForObject("SELECT COUNT(*) FROM incoming_folder_file", Integer.class)).isEqualTo(total);
+    }
+
+    private JdbcTemplate reopenedMetadataJdbc(Path database) {
+        SQLiteDataSource datasource = new SQLiteDataSource();
+        datasource.setUrl("jdbc:sqlite:" + database);
+        return new JdbcTemplate(datasource);
+    }
+
+    private Process startCrashWorker(Path database, String mode, Path signal, Path log, int expected)
+            throws Exception {
+        String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        String classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
+        return new ProcessBuilder(java, "-Dfile.encoding=UTF-8", "-cp", classpath,
+                IncomingFolderWatchCrashWorker.class.getName(),
+                database.toString(), mode, signal.toString(), Integer.toString(expected))
+                .redirectErrorStream(true).redirectOutput(log.toFile()).start();
+    }
+
+    @Test
     void processingClaimReturnsToReadyAfterRestart() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
