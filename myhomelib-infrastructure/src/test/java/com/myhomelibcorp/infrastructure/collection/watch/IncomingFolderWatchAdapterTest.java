@@ -29,6 +29,48 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(value = 180)
+    void tenThousandRealTestBooksStayInSqliteWithHardTimerBound() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("ten-thousand-test-books"));
+        // Keep files in their one-hour stability window: no unbounded hashing or import.
+        // Every book is a disposable tiny text fixture created in this JUnit temp directory.
+        adapter.configure("c1", incoming, false, 3600, 3600);
+        final int totalBooks = 10_001;
+        for (int i = 0; i < totalBooks; i++) {
+            Files.writeString(incoming.resolve(String.format(java.util.Locale.ROOT,
+                    "test-book-%05d.txt", i)), "Synthetic content " + i);
+        }
+
+        assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:" + totalBooks);
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        var schedulerField = IncomingFolderWatchAdapter.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
+        var scheduler = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
+        assertThat(pending.size()).isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+        assertThat(scheduler.getQueue().size())
+                .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 1);
+        await(() -> jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1'
+                """, Integer.class) == totalBooks, Duration.ofSeconds(30));
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file
+                 WHERE collection_id='c1' AND status='WAITING'
+                """, Integer.class)).isEqualTo(totalBooks);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file
+                 WHERE collection_id='c1' AND status='READY'
+                """, Integer.class)).isZero();
+
+        adapter.stopMonitoring("c1");
+        assertThat(pending).isEmpty();
+        assertThat(scheduler.getQueue()).isEmpty();
+    }
+
+    @Test
     void bulkManualScanSchedulesAllSupportedFilesWithoutRetainingDirectorySnapshot() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
