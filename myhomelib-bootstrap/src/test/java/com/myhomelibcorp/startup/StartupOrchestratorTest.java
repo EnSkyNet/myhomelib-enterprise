@@ -71,6 +71,38 @@ class StartupOrchestratorTest {
         verifyNoInteractions(migration, search, contentIndexing, backup, opds);
     }
 
+
+    @Test
+    void cyclicCauseInBestEffortStartupTaskProducesDegradedReport() throws Exception {
+        StartupCollectionResolver resolver = mock(StartupCollectionResolver.class);
+        RecoveryStartupTask recovery = mock(RecoveryStartupTask.class);
+        MigrationStartupTask migration = mock(MigrationStartupTask.class);
+        SearchStartupTask search = mock(SearchStartupTask.class);
+        ContentIndexingStartupTask contentIndexing = mock(ContentIndexingStartupTask.class);
+        BackupStartupTask backup = mock(BackupStartupTask.class);
+        OPDSStartupTask opds = mock(OPDSStartupTask.class);
+        when(resolver.resolve()).thenReturn(StartupTestFixtures.collection("c1"));
+        stub(recovery, "RecoveryStartupTask", StartupFailurePolicy.REQUIRED, StartupTaskResult.success("ok"));
+        stub(migration, "MigrationStartupTask", StartupFailurePolicy.REQUIRED, StartupTaskResult.success("ok"));
+        when(search.id()).thenReturn("SearchStartupTask");
+        when(search.failurePolicy()).thenReturn(StartupFailurePolicy.BEST_EFFORT);
+        IllegalStateException first = new IllegalStateException("search error");
+        IllegalStateException second = new IllegalStateException("nested cycle");
+        first.initCause(second);
+        second.initCause(first);
+        when(search.execute(any())).thenThrow(first);
+        stub(contentIndexing, "ContentIndexingStartupTask", StartupFailurePolicy.BEST_EFFORT, StartupTaskResult.skipped("none"));
+        stub(backup, "BackupStartupTask", StartupFailurePolicy.BEST_EFFORT, StartupTaskResult.skipped("none"));
+        stub(opds, "OPDSStartupTask", StartupFailurePolicy.BEST_EFFORT, StartupTaskResult.skipped("none"));
+
+        StartupReport report = new StartupOrchestrator(resolver, recovery, migration, search, contentIndexing, backup, opds).run();
+
+        assertThat(report.degraded()).isTrue();
+        assertThat(report.outcomes().get(2).status()).isEqualTo(StartupTaskOutcome.Status.DEGRADED);
+        assertThat(report.outcomes().get(2).detail()).isNotBlank();
+        verify(contentIndexing).execute(any());
+    }
+
     private static void stub(StartupTask task, String id, StartupFailurePolicy policy, StartupTaskResult result) throws Exception {
         when(task.id()).thenReturn(id);
         when(task.failurePolicy()).thenReturn(policy);

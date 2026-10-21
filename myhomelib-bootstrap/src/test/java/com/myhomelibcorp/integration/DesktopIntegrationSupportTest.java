@@ -51,6 +51,18 @@ class DesktopIntegrationSupportTest {
         assertThat(combiningCut).doesNotEndWith("e");
     }
 
+
+    @Test
+    void safeMessageHandlesCyclicCausesWithoutLosingSanitization() {
+        IllegalStateException first = new IllegalStateException("first");
+        IllegalStateException second = new IllegalStateException("leaf\\r\\nmarker");
+        first.initCause(second);
+        second.initCause(first);
+
+        assertThat(DesktopIntegrationSupport.safeMessage(first)).isEqualTo("leaf marker");
+        assertThat(DesktopIntegrationSupport.safeMessage(null)).isEqualTo("Невідома помилка");
+    }
+
     @Test
     void parsesPluginFieldsAndBoundsFileReads() throws Exception {
         assertThat(DesktopIntegrationSupport.parseEnumSet("AI_PROVIDER, DEVICE_PROVIDER", PluginService.class))
