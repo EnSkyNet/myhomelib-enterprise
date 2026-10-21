@@ -271,6 +271,10 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                     if (!(event.context() instanceof Path relative)) continue;
                     Path changed = registration.folder.resolve(relative).toAbsolutePath().normalize();
                     if (event.kind() == ENTRY_DELETE) {
+                        // The path no longer exists: release its debounce timer immediately instead
+                        // of retaining the path (and a scheduled task) for up to MAX_SECONDS.
+                        PendingTask abandoned = pending.remove(key(registration.collectionId, changed));
+                        if (abandoned != null) abandoned.cancel();
                         markMissing(registration.collectionId, changed);
                     } else if (!registration.closed.get() && isIncomingSupported(changed)) {
                         // The registration is recreated on configuration changes. Event bursts should not

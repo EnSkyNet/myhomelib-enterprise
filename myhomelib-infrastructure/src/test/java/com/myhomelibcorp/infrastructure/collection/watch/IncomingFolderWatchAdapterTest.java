@@ -78,6 +78,35 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    void deletingFileCancelsQueuedDebounceAndRecreationSchedulesNewOne() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("delete-debounce"));
+        adapter.configure("c1", incoming, true, 30, 30);
+
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
+        var schedulerField = IncomingFolderWatchAdapter.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        var scheduler = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
+
+        Path file = incoming.resolve("appearing.txt");
+        String key = "c1\u0000" + file.toAbsolutePath().normalize();
+        Files.writeString(file, "temporary");
+        await(() -> pending.containsKey(key), Duration.ofSeconds(5));
+        assertThat(scheduler.getQueue()).isNotEmpty();
+
+        Files.delete(file);
+        await(() -> !pending.containsKey(key), Duration.ofSeconds(5));
+        await(() -> scheduler.getQueue().isEmpty(), Duration.ofSeconds(5));
+
+        Files.writeString(file, "new-content");
+        await(() -> pending.containsKey(key), Duration.ofSeconds(5));
+        assertThat(scheduler.getQueue()).isNotEmpty();
+    }
+
+    @Test
     void reconfigureRefreshesWatcherRegistrationSettings() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
