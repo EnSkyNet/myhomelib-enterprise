@@ -116,22 +116,25 @@ public final class LocalCopyDeletionRecoveryStore {
             throw new IOException("Unsafe local-copy deletion recovery directory: " + dir, unsafe);
         }
 
-        List<Path> markers;
+        // A large interrupted batch can leave thousands of markers. Avoid retaining
+        // a separate list of every directory entry just to perform ordered recovery.
         try (var stream = Files.list(dir)) {
-            markers = stream.filter(path -> path.getFileName().toString().endsWith(EXTENSION)).toList();
-        }
-        if (markers.isEmpty()) return;
+            var markers = stream.filter(path -> path.getFileName().toString().endsWith(EXTENSION)).iterator();
+            if (!markers.hasNext()) return;
 
-        String url = "jdbc:sqlite:" + safeDatabase;
-        try (Connection connection = DriverManager.getConnection(url)) {
-            // JDBC reopens SQLite by pathname; refuse to reconcile recovery markers if the path
-            // became a symlink/reparse entry during that open. The database itself is intentionally
-            // mutated by recovery, so identity is checked structurally rather than by content hash.
-            SafeFilePublication.requireSafeRegularFile(safeDatabase, "opened collection database for local-copy recovery");
-            for (Path marker : markers) recoverMarkerIfOwned(collectionId, connection, marker);
-            SafeFilePublication.requireSafeRegularFile(safeDatabase, "collection database after local-copy recovery");
-        } catch (SQLException databaseFailure) {
-            throw new IOException("Cannot reconcile pending local-copy deletion against " + safeDatabase, databaseFailure);
+            String url = "jdbc:sqlite:" + safeDatabase;
+            try (Connection connection = DriverManager.getConnection(url)) {
+                // JDBC reopens SQLite by pathname; refuse to reconcile recovery markers if the path
+                // became a symlink/reparse entry during that open. The database itself is intentionally
+                // mutated by recovery, so identity is checked structurally rather than by content hash.
+                SafeFilePublication.requireSafeRegularFile(safeDatabase, "opened collection database for local-copy recovery");
+                while (markers.hasNext()) {
+                    recoverMarkerIfOwned(collectionId, connection, markers.next());
+                }
+                SafeFilePublication.requireSafeRegularFile(safeDatabase, "collection database after local-copy recovery");
+            } catch (SQLException databaseFailure) {
+                throw new IOException("Cannot reconcile pending local-copy deletion against " + safeDatabase, databaseFailure);
+            }
         }
     }
 
