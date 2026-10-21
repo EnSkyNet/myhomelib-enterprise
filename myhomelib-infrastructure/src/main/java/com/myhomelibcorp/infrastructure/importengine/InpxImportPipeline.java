@@ -41,6 +41,9 @@ import java.util.function.DoubleConsumer;
 public class InpxImportPipeline {
     private static final long SELECTIVE_PREVIEW_MIN_RECORDS = 100_000L;
     private static final long LARGE_CATALOG_BATCH_MIN_RECORDS = 100_000L;
+    // Keep file lookups bounded on low-memory systems; larger online trees use exact disk probes.
+    static final int MAX_LOCAL_PATH_INDEX_ENTRIES = 200_000;
+    static final int MAX_LOCAL_FILE_PROBE_CACHE_ENTRIES = 8_192;
     private final InpxReader reader;
     private final JdbcBatchWriter batchWriter;
     private final BulkImportOptimizer bulkOptimizer;
@@ -196,8 +199,12 @@ public class InpxImportPipeline {
                 ? indexExistingLocalFiles(root, cancelFlag)
                 : null;
         if (onlineCollection) {
-            log.info("Online local-file index prepared: {} existing files under {}",
-                    indexedLocalFiles == null ? 0 : indexedLocalFiles.size(), root);
+            if (indexedLocalFiles == null) {
+                log.info("Online local-file index unavailable or over memory limit under {}; using exact filesystem probes", root);
+            } else {
+                log.info("Online local-file index prepared: {} existing files under {}",
+                        indexedLocalFiles.size(), root);
+            }
         }
 
         log.info("Starting INPX import: {} (root: {}, batch: {}, sourceKey: {}, records: {}, emptyCatalog={}, emptyAuthors={})",
@@ -368,7 +375,7 @@ public class InpxImportPipeline {
         // cost a lookup; they cannot create duplicate author identities.
         BitSet seenInitialAuthorNames = fastInitialBaseline && authorTableInitiallyEmpty
                 ? InpxAuthorCacheSupport.newSeenFilter() : null;
-        Map<String, Boolean> localCache = new HashMap<>();
+        Map<String, Boolean> localCache = newBoundedLocalFileProbeCache();
         List<NormalizedBook> books = new ArrayList<>(effectiveBatch);
 
         long imported = 0;
@@ -528,7 +535,7 @@ public class InpxImportPipeline {
 
         Map<AuthorNameKey, Author> pendingAuthors = new LinkedHashMap<>();
         Map<String, Genre> pendingGenres = new LinkedHashMap<>();
-        Map<String, Boolean> localCache = new HashMap<>();
+        Map<String, Boolean> localCache = newBoundedLocalFileProbeCache();
         List<InpxBookNormalizer.CatalogPreview> previews = new ArrayList<>(effectiveBatch);
 
         long imported = 0;
@@ -955,6 +962,12 @@ public class InpxImportPipeline {
      * per-record check into an O(1) hash lookup. Files.walk does not follow directory symlinks.
      */
     private static Set<Path> indexExistingLocalFiles(Path root, AtomicBoolean cancelFlag) {
+        return indexExistingLocalFiles(root, cancelFlag, MAX_LOCAL_PATH_INDEX_ENTRIES);
+    }
+
+    /** Returns null on overflow, preserving exact on-disk checks instead of a partial index. */
+    static Set<Path> indexExistingLocalFiles(Path root, AtomicBoolean cancelFlag, int maxEntries) {
+        if (maxEntries <= 0) throw new IllegalArgumentException("maxEntries must be positive");
         if (root == null || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) return Set.of();
         Set<Path> result = new HashSet<>();
         try (var paths = Files.walk(root)) {
@@ -962,13 +975,28 @@ public class InpxImportPipeline {
             while (iterator.hasNext()) {
                 if (isCancelled(cancelFlag)) return Set.of();
                 Path path = iterator.next();
-                if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) result.add(path.toAbsolutePath().normalize());
+                if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                    result.add(path.toAbsolutePath().normalize());
+                    if (result.size() > maxEntries) {
+                        log.info("Local online-library index exceeded {} entries under {}; using exact filesystem probes to bound RAM", maxEntries, root);
+                        return null;
+                    }
+                }
             }
             return Collections.unmodifiableSet(result);
         } catch (IOException | RuntimeException e) {
             log.warn("Cannot pre-index local online-library files under {}; falling back to filesystem probes", root, e);
             return null;
         }
+    }
+
+    /** Repeated archive probes benefit from LRU hits without retaining every catalog path. */
+    static Map<String, Boolean> newBoundedLocalFileProbeCache() {
+        return new LinkedHashMap<String, Boolean>(256, 0.75f, true) {
+            @Override protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest) {
+                return size() > MAX_LOCAL_FILE_PROBE_CACHE_ENTRIES;
+            }
+        };
     }
 
     private static boolean isCancelled(AtomicBoolean cancelFlag) {
