@@ -30,6 +30,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.scheduling.annotation.EnableAsync;
 
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -72,20 +73,31 @@ public class MyHomeLibApp extends Application {
         return applicationContext;
     }
 
-    private static void configureEarlyJvmLocale() {
-        String code = "uk";
-        Path file = AppPaths.configDir().resolve("language.txt");
+    // language.txt normally contains one tiny BCP-47 tag. Never preload arbitrary-sized
+    // configuration into the heap before the JavaFX splash and Spring start.
+    static final int MAX_EARLY_LANGUAGE_FILE_BYTES = 4096;
+
+    static String readEarlyLanguageTag(Path file) {
         try {
-            if (Files.isRegularFile(file)) {
-                code = Files.readAllLines(file, StandardCharsets.UTF_8).stream()
-                        .map(String::trim)
-                        .filter(line -> !line.isBlank() && !line.startsWith("#"))
-                        .findFirst()
-                        .orElse(code);
+            if (!Files.isRegularFile(file) || Files.size(file) > MAX_EARLY_LANGUAGE_FILE_BYTES)
+                return "uk";
+            byte[] bytes;
+            try (InputStream input = Files.newInputStream(file)) {
+                bytes = input.readNBytes(MAX_EARLY_LANGUAGE_FILE_BYTES + 1);
             }
+            if (bytes.length > MAX_EARLY_LANGUAGE_FILE_BYTES) return "uk";
+            return new String(bytes, StandardCharsets.UTF_8).lines()
+                    .map(String::trim)
+                    .filter(line -> !line.isBlank() && !line.startsWith("#"))
+                    .findFirst().orElse("uk");
         } catch (Exception ignored) {
-            // LocalizationService will apply the authoritative setting after Spring starts.
+            // LocalizationService applies the authoritative language setting after startup.
+            return "uk";
         }
+    }
+
+    private static void configureEarlyJvmLocale() {
+        String code = readEarlyLanguageTag(AppPaths.configDir().resolve("language.txt"));
         Locale locale = Locale.forLanguageTag(code.replace('_', '-'));
         if (!locale.getLanguage().isBlank()) Locale.setDefault(locale);
     }
