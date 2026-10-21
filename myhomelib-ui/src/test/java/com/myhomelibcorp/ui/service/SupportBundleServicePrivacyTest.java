@@ -221,7 +221,7 @@ class SupportBundleServicePrivacyTest {
     @Test
     void boundedLogLineReaderPreservesCrLfAndBareCrSeparation() throws Exception {
         try (var reader = new java.io.BufferedReader(
-                new java.io.StringReader("first\\r\\nsecond\\rthird\\n\\nfourth"))) {
+                new java.io.StringReader("first\r\nsecond\rthird\n\nfourth"))) {
             assertThat(SupportBundleService.readBoundedDiagnosticLine(reader)).isEqualTo("first");
             assertThat(SupportBundleService.readBoundedDiagnosticLine(reader)).isEqualTo("second");
             assertThat(SupportBundleService.readBoundedDiagnosticLine(reader)).isEqualTo("third");
