@@ -61,6 +61,10 @@ class MetadataDatabaseMigrationTest {
                         "PRAGMA index_info('idx_incoming_folder_waiting_replay')").stream()
                 .map(row -> String.valueOf(row.get("name")))
                 .toList();
-        assertThat(orderedColumns).containsExactly("status", "collection_id", "file_path");
+        assertThat(orderedColumns).containsExactly("collection_id", "file_path");
+        String indexDefinition = jdbc.queryForObject(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_incoming_folder_waiting_replay'",
+                String.class);
+        assertThat(indexDefinition).contains("WHERE status='WAITING'");
     }
 }
