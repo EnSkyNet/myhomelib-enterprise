@@ -23,6 +23,42 @@ import static org.mockito.Mockito.when;
 class ReaderBookPreferencesServiceTest {
     @TempDir Path tempDir;
 
+    @Test
+    void missingSettingsTableRecognitionTraversesNestedExceptionCauses() {
+        RuntimeException failure = new IllegalStateException("outer",
+                new IllegalStateException("[SQLITE_ERROR] no such table: settings"));
+        assertThat(ReaderBookPreferencesService.isMissingSettingsTable(failure)).isTrue();
+        assertThat(ReaderBookPreferencesService.isMissingSettingsTable(
+                new IllegalStateException("no such table: books"))).isFalse();
+    }
+
+    @Test
+    void missingSettingsTableRecognitionStopsOnUnrelatedCauseCycle() {
+        RuntimeException first = new IllegalStateException("reader startup");
+        RuntimeException second = new IllegalStateException("unrelated failure");
+        first.initCause(second);
+        second.initCause(first);
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(3),
+                () -> assertThat(ReaderBookPreferencesService.isMissingSettingsTable(first)).isFalse());
+    }
+
+    @Test
+    void missingSettingsTableRecognitionFindsMessageInsideCycle() {
+        RuntimeException first = new IllegalStateException("outer");
+        RuntimeException second = new IllegalStateException("NO SUCH TABLE: settings");
+        RuntimeException third = new IllegalStateException("nested");
+        first.initCause(second);
+        second.initCause(third);
+        third.initCause(first);
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(3),
+                () -> assertThat(ReaderBookPreferencesService.isMissingSettingsTable(first)).isTrue());
+    }
+
+    @Test
+    void missingSettingsTableRecognitionHandlesNull() {
+        assertThat(ReaderBookPreferencesService.isMissingSettingsTable(null)).isFalse();
+    }
+
     @AfterEach
     void clean() {
         System.clearProperty("myhomelib.dataDir");
