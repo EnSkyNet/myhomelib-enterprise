@@ -594,24 +594,31 @@ public class BackupRestoreService {
     private record BackupManifest(String databaseFile, String databaseSha256,
                                   boolean metadataIncluded, String userDataSha256) { }
 
-    private Path findDbFile(Path backupDir, String preferredName) throws IOException {
+    /** Select a preferred or sole database without materializing/sorting the entire folder. */
+    static Path findDbFile(Path backupDir, String preferredName) throws IOException {
         SafeFilePublication.requireSafeDirectoryPath(backupDir, "Backup directory scan");
+        Path first = null;
+        Path second = null;
+        long count = 0;
         try (var stream = Files.list(backupDir)) {
-            List<Path> candidates = stream
-                    .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
-                    .filter(path -> path.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".db"))
-                    .sorted(java.util.Comparator.comparing(path -> path.getFileName().toString(), String.CASE_INSENSITIVE_ORDER))
-                    .toList();
-            if (candidates.isEmpty()) return null;
-            if (preferredName != null && !preferredName.isBlank()) {
-                for (Path candidate : candidates) {
-                    if (candidate.getFileName().toString().equalsIgnoreCase(preferredName)) return candidate;
-                }
+            var entries = stream.iterator();
+            while (entries.hasNext()) {
+                Path candidate = entries.next();
+                if (!Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)) continue;
+                String name = candidate.getFileName().toString();
+                if (!name.toLowerCase(java.util.Locale.ROOT).endsWith(".db")) continue;
+                if (preferredName != null && !preferredName.isBlank()
+                        && name.equalsIgnoreCase(preferredName)) return candidate;
+                if (first == null) first = candidate;
+                else if (second == null) second = candidate;
+                count++;
             }
-            if (candidates.size() == 1) return candidates.getFirst();
-            throw new IOException("Backup contains multiple SQLite databases and none matches the active collection: "
-                    + candidates.stream().map(path -> path.getFileName().toString()).toList());
         }
+        if (count == 0) return null;
+        if (count == 1) return first;
+        // Error diagnostics must stay bounded, even for backups containing millions of files.
+        throw new IOException("Backup contains multiple SQLite databases and none matches the active collection: "
+                + count + " .db files (examples: " + first.getFileName() + ", " + second.getFileName() + ")");
     }
 
     private void rebuildIndex() {
