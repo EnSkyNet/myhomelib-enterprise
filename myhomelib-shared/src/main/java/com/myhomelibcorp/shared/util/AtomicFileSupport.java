@@ -57,8 +57,12 @@ public final class AtomicFileSupport {
             // A failed writer may have produced only a partial staged file. Remove it
             // only if it is still the same safe file with the bytes just inspected.
             if (stagingHash == null && Files.exists(staging, LinkOption.NOFOLLOW_LINKS)) {
-                try { stagingHash = sha256(staging, "failed atomic-write staging"); }
-                catch (IOException ignored) { }
+                try {
+                    stagingHash = sha256(staging, "failed atomic-write staging");
+                } catch (IOException unsafeStaging) {
+                    // Cannot prove ownership after the writer failed: preserve evidence.
+                    stagingHash = null;
+                }
             }
             cleanupOwnedStaging(staging, stagingHash);
         }
