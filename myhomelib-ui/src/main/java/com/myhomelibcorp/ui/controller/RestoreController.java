@@ -167,19 +167,11 @@ public class RestoreController {
 
     private Path findDbFile(Path backupDir) {
         try {
-            Path safeBackupDir = SafeFilePublication.requireSafeDirectoryPath(backupDir, "Backup database scan directory");
-            try (var stream = Files.list(safeBackupDir)) {
-            for (Path path : stream.toList()) {
-                String name = path.getFileName().toString();
-                if (name.endsWith(".db") && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
-                    return path;
-                }
-            }
-            }
+            return BackupDirectoryPreviewScanner.firstDatabase(backupDir);
         } catch (Exception e) {
             log.warn("Помилка пошуку бази даних: {}", e.getMessage());
+            return null;
         }
-        return null;
     }
 
     private void startRestore(String backupPath, Path dbFile, BackupRestoreService.RestoreOptions options) {

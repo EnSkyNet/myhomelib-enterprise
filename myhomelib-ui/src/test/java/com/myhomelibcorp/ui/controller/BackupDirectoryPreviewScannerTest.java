@@ -50,6 +50,27 @@ class BackupDirectoryPreviewScannerTest {
     }
 
     @Test
+    void findsUppercaseDatabaseWithoutMaterializingHundredsOfOtherEntries() throws Exception {
+        for (int i = 0; i < 512; i++) {
+            Files.writeString(temp.resolve("unrelated-" + i + ".txt"), "synthetic");
+        }
+        Path database = Files.writeString(temp.resolve("COLLECTION.DB"), "sqlite-test");
+
+        assertThat(BackupDirectoryPreviewScanner.firstDatabase(temp)).isEqualTo(database);
+        var preview = BackupDirectoryPreviewScanner.scan(temp);
+        assertThat(preview.databaseCount()).isEqualTo(1);
+        assertThat(preview.databaseNames()).containsExactly("COLLECTION.DB");
+    }
+
+    @Test
+    void firstDatabaseIgnoresDirectoryNamedAsSqliteFile() throws Exception {
+        Files.createDirectory(temp.resolve("directory.DB"));
+        assertThat(BackupDirectoryPreviewScanner.firstDatabase(temp)).isNull();
+        Path actual = Files.writeString(temp.resolve("real.db"), "synthetic");
+        assertThat(BackupDirectoryPreviewScanner.firstDatabase(temp)).isEqualTo(actual);
+    }
+
+    @Test
     void missingBackupDirectoryIsRejected() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                 BackupDirectoryPreviewScanner.scan(temp.resolve("missing")))
