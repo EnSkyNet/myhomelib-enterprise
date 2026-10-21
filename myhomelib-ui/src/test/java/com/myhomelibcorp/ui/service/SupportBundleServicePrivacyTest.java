@@ -184,6 +184,53 @@ class SupportBundleServicePrivacyTest {
         assertThat(String.join("\n", entries.values())).doesNotContain("must-not-leak");
     }
 
+    @Test
+    void oversizedLogLineIsOmittedWithoutLeakingItsPrefixOrSuffix() throws Exception {
+        Path data = temp.resolve("bounded-logs");
+        Path logs = Files.createDirectories(data.resolve("logs"));
+        setProperty("myhomelib.dataDir", data.toString());
+        String huge = "password=top-secret-prefix " + "x".repeat(2_000_000) + " token=tail-secret";
+        Files.writeString(logs.resolve("huge.log"),
+                "safe before\n" + huge + "\nsafe after\n", StandardCharsets.UTF_8);
+
+        ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
+        when(settings.findByPrefix("")).thenReturn(Map.of());
+        SupportBundleService service = new SupportBundleService(settings);
+
+        Map<String, String> entries = textEntries(service.create(
+                temp.resolve("bounded-bundle.zip"), new SupportBundleOptions(true, false, false)));
+        String included = entries.get("logs/huge.log");
+        assertThat(included).contains("safe before", "safe after", "[oversized diagnostic line omitted]");
+        assertThat(included).doesNotContain("top-secret-prefix", "tail-secret");
+        assertThat(included.length()).isLessThan(512);
+    }
+
+    @Test
+    void boundedLogLineReaderAcceptsExactLimitAndDropsNextCharacter() throws Exception {
+        String withinLimit = "q".repeat(SupportBundleService.MAX_DIAGNOSTIC_LINE_CHARS);
+        try (var reader = new java.io.BufferedReader(
+                new java.io.StringReader(withinLimit + "\n" + withinLimit + "x\nnext"))) {
+            assertThat(SupportBundleService.readBoundedDiagnosticLine(reader)).isEqualTo(withinLimit);
+            assertThat(SupportBundleService.readBoundedDiagnosticLine(reader))
+                    .isEqualTo("[oversized diagnostic line omitted]");
+            assertThat(SupportBundleService.readBoundedDiagnosticLine(reader)).isEqualTo("next");
+            assertThat(SupportBundleService.readBoundedDiagnosticLine(reader)).isNull();
+        }
+    }
+
+    @Test
+    void boundedLogLineReaderPreservesCrLfAndBareCrSeparation() throws Exception {
+        try (var reader = new java.io.BufferedReader(
+                new java.io.StringReader("first\\r\\nsecond\\rthird\\n\\nfourth"))) {
+            assertThat(SupportBundleService.readBoundedDiagnosticLine(reader)).isEqualTo("first");
+            assertThat(SupportBundleService.readBoundedDiagnosticLine(reader)).isEqualTo("second");
+            assertThat(SupportBundleService.readBoundedDiagnosticLine(reader)).isEqualTo("third");
+            assertThat(SupportBundleService.readBoundedDiagnosticLine(reader)).isEqualTo("");
+            assertThat(SupportBundleService.readBoundedDiagnosticLine(reader)).isEqualTo("fourth");
+            assertThat(SupportBundleService.readBoundedDiagnosticLine(reader)).isNull();
+        }
+    }
+
     private void setProperty(String key, String value) {
         originalProperties.putIfAbsent(key, System.getProperty(key));
         System.setProperty(key, value);
