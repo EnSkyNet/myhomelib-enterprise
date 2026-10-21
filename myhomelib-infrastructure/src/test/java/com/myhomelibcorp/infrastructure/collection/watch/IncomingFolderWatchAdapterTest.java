@@ -71,6 +71,52 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(value = 120)
+    void restartDrainsDurableOverflowEvenWhenAllOriginalTimersWereCancelled() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        Path incoming = Files.createDirectory(tempDir.resolve("restart-overflow"));
+        // Before restart, files have a one-hour stability delay so that no book
+        // can become READY while the adapter is being torn down.
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        adapter.configure("c1", incoming, false, 3600, 3600);
+        int totalBooks = IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 104;
+        for (int i = 0; i < totalBooks; i++) {
+            Files.writeString(incoming.resolve("restart-book-" + i + ".txt"), "disposable-" + i);
+        }
+        assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:" + totalBooks);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1' AND status='WAITING'
+                """, Integer.class)).isGreaterThan(0);
+
+        adapter.shutdown();
+        // Simulate persisted configuration for an enabled watch on the next process start.
+        jdbc.update("""
+                UPDATE incoming_folder_watch
+                   SET enabled=1, debounce_seconds=1, stability_seconds=1
+                 WHERE collection_id='c1'
+                """);
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        adapter.startConfigured();
+
+        await(() -> jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1' AND status='READY'
+                """, Integer.class) == totalBooks, Duration.ofSeconds(60));
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1'
+                """, Integer.class)).isEqualTo(totalBooks);
+
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
+        var schedulerField = IncomingFolderWatchAdapter.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        var scheduler = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
+        assertThat(pending.size()).isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+        assertThat(scheduler.getQueue().size())
+                .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 1);
+    }
+
+    @Test
     void bulkManualScanSchedulesAllSupportedFilesWithoutRetainingDirectorySnapshot() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
