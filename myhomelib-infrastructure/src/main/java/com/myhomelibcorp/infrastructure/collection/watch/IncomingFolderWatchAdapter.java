@@ -40,6 +40,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
     /** Bound per-file ScheduledFutures on the 4 GB target; excess paths go into SQLite. */
     static final int MAX_PENDING_CANDIDATES = 256;
     private static final int REFILL_PAGE_SIZE = 128;
+    static final int OVERFLOW_RETRY_SECONDS = 10;
     private static final SupportedFormatRegistry FORMATS = SupportedFormatRegistry.standard();
 
     private final JdbcTemplate jdbc;
@@ -57,6 +58,8 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
     private final java.util.Set<String> queuedCollections = ConcurrentHashMap.newKeySet();
     private String resumeCollection = "";
     private String resumeFile = "";
+    /** One periodic retry per adapter, never one retry per overflowed file. Guarded by pendingLock. */
+    private ScheduledFuture<?> overflowReplayWakeup;
 
     public IncomingFolderWatchAdapter(@Qualifier("metadataJdbcTemplate") JdbcTemplate jdbc,
                                       @Qualifier("flywayMetadata") Flyway flywayMetadata,
@@ -268,6 +271,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                 entry.getValue().cancel();
                 return true;
             });
+            if (queuedCollections.isEmpty()) cancelOverflowRetryLocked();
         }
         WatchRegistration registration = watchers.remove(collectionId);
         if (registration != null) registration.close();
@@ -335,6 +339,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
             String candidateKey = key(collectionId, file);
             if (!pending.containsKey(candidateKey) && pending.size() >= MAX_PENDING_CANDIDATES) {
                 persistOverflowCandidate(collectionId, file);
+                ensureOverflowRetryLocked();
                 return;
             }
             registerPendingLocked(collectionId, file, delay);
@@ -446,6 +451,35 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                 }
             }
         }
+    }
+
+    /** A bounded watchdog for transient DB failures while replaying SQLite WAITING rows. */
+    private void ensureOverflowRetryLocked() {
+        if (scheduler.isShutdown() || overflowReplayWakeup != null) return;
+        overflowReplayWakeup = scheduler.scheduleWithFixedDelay(() -> {
+            if (queuedCollections.isEmpty()) return;
+            try {
+                refillPendingFromDatabase();
+                // Stop the periodic wakeup after every WAITING file has been processed.
+                Integer remaining = jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM incoming_folder_file WHERE status='WAITING'", Integer.class);
+                if (remaining != null && remaining == 0) {
+                    synchronized (pendingLock) {
+                        cancelOverflowRetryLocked();
+                    }
+                }
+            } catch (RuntimeException failure) {
+                // The normal completion hook may also hit SQLITE_BUSY. Retain exactly
+                // one timer and retry instead of abandoning all persisted overflow paths.
+                log.warn("Cannot replay incoming-folder SQLite backlog yet: {}", safeMessage(failure));
+            }
+        }, OVERFLOW_RETRY_SECONDS, OVERFLOW_RETRY_SECONDS, TimeUnit.SECONDS);
+    }
+
+    private void cancelOverflowRetryLocked() {
+        ScheduledFuture<?> wakeup = overflowReplayWakeup;
+        overflowReplayWakeup = null;
+        if (wakeup != null) wakeup.cancel(false);
     }
 
     private static int compareQueuedPath(String collection, String path,
@@ -651,6 +685,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         // many timers. Cancel them too before the temporary SQLite DB is closed/deleted.
         synchronized (pendingLock) {
             queuedCollections.clear();
+            cancelOverflowRetryLocked();
             pending.values().forEach(PendingTask::cancel);
             pending.clear();
         }
