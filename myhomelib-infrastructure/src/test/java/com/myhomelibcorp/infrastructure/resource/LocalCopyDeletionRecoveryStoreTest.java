@@ -101,6 +101,45 @@ class LocalCopyDeletionRecoveryStoreTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(180)
+    void startupRecoveryStreamsHundredsOfMarkersWhileRestoringEveryBook() throws Exception {
+        final int count = 320;
+        Path root = Files.createDirectories(temp.resolve("library-batched-recovery"));
+        Path database = temp.resolve("catalog-batched-recovery.db");
+        var ids = new java.util.ArrayList<BookId>();
+        for (int i = 0; i < count; i++) ids.add(BookId.generate());
+
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+             var statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE books (id TEXT PRIMARY KEY, local INTEGER NOT NULL)");
+            connection.setAutoCommit(false);
+            try (var insert = connection.prepareStatement("INSERT INTO books(id, local) VALUES (?, 1)")) {
+                for (BookId id : ids) {
+                    insert.setString(1, id.asString());
+                    insert.addBatch();
+                }
+                insert.executeBatch();
+            }
+            connection.commit();
+        }
+
+        for (int i = 0; i < count; i++) {
+            Path book = root.resolve("book-" + i + ".fb2");
+            Files.writeString(book, "recover " + i);
+            resolver.stagePhysicalFileForDeletion(book, root, "collection-test", List.of(ids.get(i)));
+        }
+        assertThat(pendingMarkers()).hasSize(count);
+
+        LocalCopyDeletionRecoveryStore.recoverForDatabase("collection-test", database);
+
+        assertThat(pendingMarkers()).isEmpty();
+        for (int i = 0; i < count; i++) {
+            assertThat(Files.readString(root.resolve("book-" + i + ".fb2")))
+                    .isEqualTo("recover " + i);
+        }
+    }
+
+    @Test
     void startupRecoveryRestoresBytesWhenCatalogTransactionDidNotCommit() throws Exception {
         BookId id = BookId.generate();
         Path root = Files.createDirectories(temp.resolve("library"));
