@@ -92,7 +92,7 @@ class IncomingFolderWatchAdapterTest {
         var scheduler = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
 
         Path file = incoming.resolve("appearing.txt");
-        String key = "c1\\u0000" + file.toAbsolutePath().normalize();
+        String key = "c1\u0000" + file.toAbsolutePath().normalize();
         Files.writeString(file, "temporary");
         await(() -> pending.containsKey(key), Duration.ofSeconds(5));
         assertThat(scheduler.getQueue()).isNotEmpty();
