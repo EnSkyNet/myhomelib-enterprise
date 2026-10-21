@@ -34,6 +34,9 @@ import java.util.zip.ZipOutputStream;
 public class SupportBundleService {
     static final long MAX_LOG_FILE = 10L * 1024 * 1024;
     static final long MAX_TOTAL_LOGS = 30L * 1024 * 1024;
+    // A broken log line may span the entire 10 MiB file. Never retain it as a String.
+    static final int MAX_DIAGNOSTIC_LINE_CHARS = 16 * 1024;
+    private static final String OMITTED_DIAGNOSTIC_LINE = "[oversized diagnostic line omitted]";
     private static final long MAX_RELEASE_FILE = 2L * 1024 * 1024;
     private static final Set<String> SECRET_WORDS = Set.of(
             "password", "passwd", "secret", "token", "apikey", "api_key", "credential", "auth", "encryption.key");
@@ -289,7 +292,7 @@ public class SupportBundleService {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                 Files.newInputStream(safeFile, LinkOption.NOFOLLOW_LINKS), decoder))) {
             String line;
-            while ((line = reader.readLine()) != null) {
+            while ((line = readBoundedDiagnosticLine(reader)) != null) {
                 byte[] sanitized = (sanitizer.sanitizeLine(line) + "\n").getBytes(StandardCharsets.UTF_8);
                 zip.write(sanitized);
             }
@@ -297,6 +300,36 @@ public class SupportBundleService {
         long finalSize = Files.size(SafeFilePublication.requireSafeRegularFile(file, "support bundle input after read"));
         if (finalSize != expectedSize) throw new IOException("Diagnostic input changed while bundling: " + file);
         zip.closeEntry();
+    }
+
+    /**
+     * Return a normalized line without allocating its entire contents on malformed or
+     * attacker-controlled log files. Omit the full oversized line, not a prefix that could
+     * expose credentials or split redaction tokens across chunks.
+     */
+    static String readBoundedDiagnosticLine(BufferedReader reader) throws IOException {
+        StringBuilder line = new StringBuilder(256);
+        boolean tooLong = false;
+        boolean seen = false;
+        for (int ch; (ch = reader.read()) != -1;) {
+            seen = true;
+            if (ch == '\n') break;
+            if (ch == '\r') {
+                reader.mark(1);
+                int following = reader.read();
+                if (following != '\n' && following != -1) reader.reset();
+                break;
+            }
+            if (!tooLong) {
+                if (line.length() < MAX_DIAGNOSTIC_LINE_CHARS) {
+                    line.append((char) ch);
+                } else {
+                    tooLong = true;
+                }
+            }
+        }
+        if (!seen) return null;
+        return tooLong ? OMITTED_DIAGNOSTIC_LINE : line.toString();
     }
 
     private void line(StringBuilder out, String key, String value) {
