@@ -33,6 +33,8 @@ import java.io.StringWriter;
 @Component
 public final class JdkApplicationUpdateAdapter implements ApplicationUpdatePort {
     private static final long MAX_MANIFEST=1_048_576L;
+    /** Prevent malformed or replaced update journals from exhausting a 4 GB target heap. */
+    static final int MAX_PENDING_PLAN_BYTES = 8 * 1024 * 1024;
     private final ObjectMapper mapper;
     private final HttpClient http;
     private final ApplicationSettingsPort settings;
@@ -145,7 +147,15 @@ public final class JdkApplicationUpdateAdapter implements ApplicationUpdatePort 
     }
     @Override public Optional<UpdatePlan> pendingPlan() throws Exception {
         Path path=planPath(); if(!Files.exists(path,LinkOption.NOFOLLOW_LINKS))return Optional.empty(); AtomicFileSupport.requireSafeRegularFile(path,"update plan");
-        Properties p=new Properties();p.load(new StringReader(Files.readString(path,StandardCharsets.UTF_8)));
+        // Size on disk is a fast fail, but the capped read also protects if another
+        // process grows or swaps the file after the initial metadata check.
+        if(Files.size(path)>MAX_PENDING_PLAN_BYTES)throw new SecurityException("Application update plan exceeds size limit");
+        byte[] bounded;
+        try(InputStream input=Files.newInputStream(path)){
+            bounded=input.readNBytes(MAX_PENDING_PLAN_BYTES+1);
+        }
+        if(bounded.length>MAX_PENDING_PLAN_BYTES)throw new SecurityException("Application update plan exceeds size limit");
+        Properties p=new Properties();p.load(new StringReader(new String(bounded,StandardCharsets.UTF_8)));
         ReleaseManifest m=new ReleaseManifest(req(p,"productId"),req(p,"version"),UpdateChannel.valueOf(req(p,"channel")),req(p,"platform"),req(p,"arch"),
                 URI.create(req(p,"artifactUrl")),Long.parseLong(req(p,"artifactLength")),req(p,"sha256"),req(p,"signature"),req(p,"keyId"),req(p,"minimumUpdaterVersion"),p.getProperty("releaseNotes",""));
         return Optional.of(new UpdatePlan(m,Path.of(req(p,"stagedArtifact")),Path.of(req(p,"installationPath")),Path.of(req(p,"backupPath")),Path.of(req(p,"healthMarker")),
