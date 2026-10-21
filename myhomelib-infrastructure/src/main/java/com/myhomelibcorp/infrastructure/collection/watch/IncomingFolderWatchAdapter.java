@@ -460,13 +460,12 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
             if (queuedCollections.isEmpty()) return;
             try {
                 refillPendingFromDatabase();
-                // Stop the periodic wakeup after every WAITING file has been processed.
-                Integer remaining = jdbc.queryForObject(
-                        "SELECT COUNT(*) FROM incoming_folder_file WHERE status='WAITING'", Integer.class);
-                if (remaining != null && remaining == 0) {
-                    synchronized (pendingLock) {
-                        cancelOverflowRetryLocked();
-                    }
+                // Inactive/paused collections can retain WAITING rows indefinitely.
+                // Only active registrations and explicitly enrolled manual scans should
+                // keep a recurring timer alive. Probe per-collection using the V12 partial
+                // WAITING index; no full COUNT(*) over an unrelated backlog.
+                synchronized (pendingLock) {
+                    if (!hasEligibleWaitingRowsLocked()) cancelOverflowRetryLocked();
                 }
             } catch (RuntimeException failure) {
                 // The normal completion hook may also hit SQLITE_BUSY. Retain exactly
@@ -474,6 +473,19 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                 log.warn("Cannot replay incoming-folder SQLite backlog yet: {}", safeMessage(failure));
             }
         }, OVERFLOW_RETRY_SECONDS, OVERFLOW_RETRY_SECONDS, TimeUnit.SECONDS);
+    }
+
+    /** Must be called with pendingLock held; at most one indexed EXISTS query per enrollment. */
+    private boolean hasEligibleWaitingRowsLocked() {
+        for (String collectionId : queuedCollections) {
+            Integer exists = jdbc.queryForObject("""
+                    SELECT EXISTS(
+                        SELECT 1 FROM incoming_folder_file
+                         WHERE collection_id=? AND status='WAITING')
+                    """, Integer.class, collectionId);
+            if (exists != null && exists != 0) return true;
+        }
+        return false;
     }
 
     private void cancelOverflowRetryLocked() {
