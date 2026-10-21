@@ -248,6 +248,7 @@ public class ApplicationThemeService {
             }
         }
         if (eligible <= 8) return;
+        Generated cutoff = retained.peek();
         Set<Path> keep = new HashSet<>();
         for (Generated candidate : retained) keep.add(candidate.path());
         try (var paths = Files.list(cacheDir)) {
@@ -255,6 +256,9 @@ public class ApplicationThemeService {
             while (iterator.hasNext()) {
                 Path path = iterator.next();
                 if (keep.contains(path) || !path.getFileName().toString().startsWith(GENERATED_MARKER))
+                    continue;
+                // A newer stylesheet may have been created after the first scan. Never remove it.
+                if (oldestFirst.compare(new Generated(path, lastModified(path)), cutoff) > 0)
                     continue;
                 try {
                     Path safe = SafeFilePublication.requireSafeRegularFile(
