@@ -16,6 +16,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -23,6 +25,7 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,10 +43,12 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
     /** Bound per-file ScheduledFutures on the 4 GB target; excess paths go into SQLite. */
     static final int MAX_PENDING_CANDIDATES = 256;
     private static final int REFILL_PAGE_SIZE = 128;
+    private static final int SCAN_WRITE_PAGE_SIZE = 128;
     static final int OVERFLOW_RETRY_SECONDS = 10;
     private static final SupportedFormatRegistry FORMATS = SupportedFormatRegistry.standard();
 
     private final JdbcTemplate jdbc;
+    private final TransactionTemplate scanWriteTransaction;
     private final DomainEventPublisher events;
     // Cancelled debounce tasks must not sit in the delay queue for up to an hour.
     private final ScheduledThreadPoolExecutor scheduler = new ScheduledThreadPoolExecutor(2, runnable -> {
@@ -65,6 +70,8 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                                       @Qualifier("flywayMetadata") Flyway flywayMetadata,
                                       DomainEventPublisher events) {
         this.jdbc = jdbc;
+        this.scanWriteTransaction = new TransactionTemplate(new DataSourceTransactionManager(
+                java.util.Objects.requireNonNull(jdbc.getDataSource(), "metadataDataSource")));
         java.util.Objects.requireNonNull(flywayMetadata, "flywayMetadata");
         this.events = events;
         scheduler.setRemoveOnCancelPolicy(true);
@@ -159,22 +166,46 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         queuedCollections.add(collectionId);
         WatchSettings scanSettings = new WatchSettings(state.folder(), state.enabled(),
                 state.debounceSeconds(), state.stabilitySeconds());
+        List<Path> firstCandidates = new ArrayList<>(MAX_PENDING_CANDIDATES);
+        List<Path> page = new ArrayList<>(SCAN_WRITE_PAGE_SIZE);
         try (var stream = Files.list(folder)) {
-            // Do not materialize every path: incoming directories may contain hundreds of
-            // thousands of books. Process each directory entry as the stream yields it.
+            // Persist at most 128 paths per transaction, then release the SQLite writer.
+            // Do not start the first 256 timer workers until staging finishes: an immediate
+            // observer otherwise races the scanner for SQLite's single writer lock.
             var iterator = stream.filter(IncomingFolderWatchAdapter::isSafeIncomingRegularFile)
                     .filter(IncomingFolderWatchAdapter::isIncomingSupported).iterator();
             while (iterator.hasNext()) {
-                scheduleCandidate(collectionId, iterator.next(), 0, scanSettings);
+                Path candidate = iterator.next();
+                page.add(candidate);
+                if (firstCandidates.size() < MAX_PENDING_CANDIDATES) firstCandidates.add(candidate);
                 scheduled++;
+                if (page.size() == SCAN_WRITE_PAGE_SIZE) persistScanPage(collectionId, page);
             }
+            if (!page.isEmpty()) persistScanPage(collectionId, page);
         } catch (IOException failure) {
             updateWatchStatus(collectionId, "SCAN_ERROR: " + safeMessage(failure), true);
             throw new IllegalStateException("Cannot scan incoming folder", failure);
         }
+        // Every staged path (including the first 256) now has durable WAITING evidence.
+        // A failed/deleted observer cannot silently drop a discovered incoming file.
+        for (Path candidate : firstCandidates) {
+            scheduleCandidate(collectionId, candidate, 0, scanSettings);
+        }
         refillPendingFromDatabase();
+        if (scheduled > MAX_PENDING_CANDIDATES) {
+            synchronized (pendingLock) {
+                if (queuedCollections.contains(collectionId)) ensureOverflowRetryLocked();
+            }
+        }
         updateWatchStatus(collectionId, "SCAN_SCHEDULED:" + scheduled, true);
         return findState(collectionId).orElseThrow();
+    }
+
+    private void persistScanPage(String collectionId, List<Path> page) {
+        scanWriteTransaction.executeWithoutResult(status -> {
+            for (Path file : page) persistOverflowCandidate(collectionId, file);
+        });
+        page.clear();
     }
 
     @Override

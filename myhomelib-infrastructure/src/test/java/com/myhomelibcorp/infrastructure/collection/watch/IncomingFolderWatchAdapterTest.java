@@ -29,6 +29,67 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(value = 45)
+    void bulkScanCommitsAllCandidatesBeforeAnyObserverCanRun() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("durable-batch-scan"));
+        adapter.configure("c1", incoming, false, 3600, 3600);
+
+        var schedulerField = IncomingFolderWatchAdapter.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        var scheduler = (java.util.concurrent.ScheduledThreadPoolExecutor) schedulerField.get(adapter);
+        var started = new java.util.concurrent.CountDownLatch(2);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        for (int i = 0; i < 2; i++) {
+            scheduler.submit(() -> {
+                started.countDown();
+                try { release.await(); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            });
+        }
+        assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        int total = IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 44;
+        try {
+            for (int i = 0; i < total; i++) {
+                Files.writeString(incoming.resolve("staged-" + i + ".txt"), "synthetic-" + i);
+            }
+            assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:" + total);
+
+            // The original implementation persisted only overflow paths here.
+            // The first 256 pending timers had no durable row until their worker ran.
+            assertThat(jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1'
+                    """, Integer.class)).isEqualTo(total);
+            assertThat(jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM incoming_folder_file
+                     WHERE collection_id='c1' AND status='WAITING'
+                    """, Integer.class)).isEqualTo(total);
+            var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+            pendingField.setAccessible(true);
+            var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
+            assertThat(pending.size()).isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+            assertThat(scheduler.getQueue().size())
+                    .isLessThanOrEqualTo(IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES + 1);
+
+            // A repeat scan must not reset unchanged imported file identity.
+            String imported = incoming.resolve("staged-299.txt").toAbsolutePath().normalize().toString();
+            jdbc.update("""
+                    UPDATE incoming_folder_file SET status='IMPORTED', fingerprint='already-imported'
+                     WHERE collection_id='c1' AND file_path=?
+                    """, imported);
+            assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:" + total);
+            assertThat(jdbc.queryForObject("""
+                    SELECT fingerprint FROM incoming_folder_file
+                     WHERE collection_id='c1' AND file_path=? AND status='IMPORTED'
+                    """, String.class, imported)).isEqualTo("already-imported");
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
     @org.junit.jupiter.api.Timeout(value = 180)
     void tenThousandRealTestBooksStayInSqliteWithHardTimerBound() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();

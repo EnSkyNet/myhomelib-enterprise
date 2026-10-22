@@ -8,6 +8,10 @@ on:
       - master
     paths:
       - .github/workflows/windows-test-portable.yml
+      # Retest packaged Windows Portable when the incoming-folder SQLite backlog
+      # fix changes; do not publish a release or bypass the production Maven gate.
+      - myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/collection/watch/IncomingFolderWatchAdapter.java
+      - myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/collection/watch/IncomingFolderWatchAdapterTest.java
   workflow_dispatch:
 
 permissions:
