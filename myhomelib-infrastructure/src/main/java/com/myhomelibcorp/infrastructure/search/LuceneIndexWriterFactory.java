@@ -107,17 +107,30 @@ final class LuceneIndexWriterFactory {
         }
     }
 
-    private static void deleteDirectory(Path path) throws IOException {
+    // Package-private for deterministic filesystem regressions.
+    static void deleteDirectory(Path path) throws IOException {
         if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return;
         Path safeRoot = SafeFilePublication.requireSafeDirectoryPath(
                 path, "Lucene incompatible-index cleanup");
-        try (var stream = Files.walk(safeRoot)) {
-            for (Path item : stream.sorted((a, b) -> b.compareTo(a)).toList()) {
-                // Files.walk does not follow links by default. A link nested in our index is safe
-                // to unlink, but the root and all of its parents were verified immediately above.
-                Files.deleteIfExists(item);
+        // Files.walkFileTree does not follow symlinks by default. Delete children before
+        // their parent without sorting or retaining all index paths in heap.
+        Files.walkFileTree(safeRoot, new java.nio.file.SimpleFileVisitor<>() {
+            @Override
+            public java.nio.file.FileVisitResult visitFile(
+                    Path file, java.nio.file.attribute.BasicFileAttributes attributes) throws IOException {
+                // An in-tree symlink is unlinked as a leaf, never traversed.
+                Files.deleteIfExists(file);
+                return java.nio.file.FileVisitResult.CONTINUE;
             }
-        }
+
+            @Override
+            public java.nio.file.FileVisitResult postVisitDirectory(Path directory, IOException failure)
+                    throws IOException {
+                if (failure != null) throw failure;
+                Files.deleteIfExists(directory);
+                return java.nio.file.FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     record OpenedIndex(Directory directory, IndexWriter writer, SearcherManager searcherManager) { }
