@@ -3,10 +3,12 @@ package com.myhomelibcorp.converter.toolchain.workspace;
 import com.myhomelibcorp.converter.toolchain.fs.ConversionPathSafety;
 
 import java.io.IOException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.util.Comparator;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 
 /** Fail-closed cleanup for converter workspaces. Never traverses a replaced symlink/reparse path. */
 public final class WorkspaceCleaner {
@@ -24,18 +26,39 @@ public final class WorkspaceCleaner {
             // was replaced after workspace creation, retain the workspace instead of risking a walk
             // through an attacker-controlled link/reparse point.
             ConversionPathSafety.requireSafeDirectoryPath(absolute, "Conversion workspace cleanup");
-            try (var walk = Files.walk(absolute)) {
-                walk.sorted(Comparator.reverseOrder()).forEach(path -> {
-                    try { Files.deleteIfExists(path); }
-                    catch (IOException ignored) {
-                        // Best-effort cleanup only. The application must never trade path safety for
-                        // aggressive deletion of temporary files.
+            // Stream files in post-order rather than sorting every workspace path in memory.
+            // The default walker does not follow nested symlinks.
+            Files.walkFileTree(absolute, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    deleteIfExistsBestEffort(file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException failure) {
+                    // Do not follow or retry an inaccessible filesystem entry.
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(Path directory, IOException failure) {
+                    if (failure == null) {
+                        deleteIfExistsBestEffort(directory);
                     }
-                });
-            }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
         } catch (IOException ignored) {
             // Fail closed: leave the workspace behind for a later safe cleanup/restart rather than
             // traversing a path whose filesystem identity is no longer trustworthy.
+        }
+    }
+
+    private static void deleteIfExistsBestEffort(Path path) {
+        try { Files.deleteIfExists(path); }
+        catch (IOException ignored) {
+            // Windows may hold a file open; retain it and any non-empty parent for later cleanup.
         }
     }
 }
