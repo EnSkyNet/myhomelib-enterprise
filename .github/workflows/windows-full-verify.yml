@@ -7,6 +7,7 @@ on:
       - master
     paths:
       - .github/workflows/windows-full-verify.yml
+      - .github/workflows/windows-test-portable.yml
       - tools/windows-isolated.ps1
       - tools/windows-test-isolation/**
       # Validate Java/Maven changes on native Windows, not only edits to this workflow.
