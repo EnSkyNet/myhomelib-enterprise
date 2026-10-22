@@ -55,6 +55,12 @@ jobs:
           python tools/supply-chain-policy-check.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Provision pinned and SHA-256-verified Windows FB2 converter
+        shell: pwsh
+        run: |
+          .\tools\provision-test-portable-fbc.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build Windows native-runtime Portable archive
         shell: pwsh
         run: |
