@@ -97,7 +97,7 @@ final class HttpResumeSupport {
         String value = response.headers().firstValue("Content-Range").orElse("").trim();
         Matcher matcher = CONTENT_RANGE.matcher(value);
         if (!matcher.matches()) {
-            throw invalidContentRange(uri, value, expectedStart, null);
+            throw invalidContentRange(uri, expectedStart, null);
         }
         try {
             long actualStart = Long.parseLong(matcher.group(1));
@@ -105,17 +105,17 @@ final class HttpResumeSupport {
             Long total = "*".equals(matcher.group(3)) ? null : Long.parseLong(matcher.group(3));
             if (actualStart != expectedStart || actualEnd < actualStart
                     || (total != null && (total <= actualEnd || actualStart >= total))) {
-                throw invalidContentRange(uri, value, expectedStart, actualStart);
+                throw invalidContentRange(uri, expectedStart, actualStart);
             }
             long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
             if (contentLength >= 0) {
                 long rangeLength = actualEnd - actualStart + 1L;
                 if (rangeLength <= 0 || contentLength != rangeLength) {
-                    throw invalidContentRange(uri, value, expectedStart, actualStart);
+                    throw invalidContentRange(uri, expectedStart, actualStart);
                 }
             }
         } catch (NumberFormatException e) {
-            throw invalidContentRange(uri, value, expectedStart, null);
+            throw invalidContentRange(uri, expectedStart, null);
         }
     }
 
@@ -165,8 +165,11 @@ final class HttpResumeSupport {
         return offset + length;
     }
 
-    private static IOException invalidContentRange(URI uri, String value, long expectedStart, Long actualStart) {
-        String detail = actualStart == null ? value : actualStart + " (очікувалось " + expectedStart + ")";
+    private static IOException invalidContentRange(URI uri, long expectedStart, Long actualStart) {
+        // The server controls Content-Range. Never persist its raw text in diagnostics:
+        // a broken or malicious response can put credentials or unbounded data there.
+        String detail = actualStart == null
+                ? "invalid response header" : actualStart + " (очікувалось " + expectedStart + ")";
         return new IOException("Некоректний Content-Range для resume "
                 + SensitiveDataSanitizer.sanitizeUri(uri) + ": " + detail);
     }
