@@ -129,6 +129,23 @@ class HttpResumeSupportTest {
                 .hasMessageContaining("validator");
     }
 
+
+    @Test
+    void malformedRangeNeverEchoesUntrustedHeaderOrUrlCredentials() {
+        URI uri = URI.create("https://user:SECRET_PASSWORD@example.test/book?api%5Fkey=SECRET_QUERY");
+        for (String header : List.of(
+                "bytes 0-1/2;token=SECRET_HEADER",
+                "Bearer SECRET_HEADER",
+                "not-a-range SECRET_HEADER")) {
+            HttpResponse<?> response = response(206, Map.of("Content-Range", List.of(header)));
+            assertThatThrownBy(() -> HttpResumeSupport.validateContentRange(response, 0, uri))
+                    .isInstanceOf(IOException.class)
+                    .satisfies(error -> assertThat(error.getMessage())
+                            .contains("Content-Range")
+                            .doesNotContain("SECRET_HEADER", "SECRET_PASSWORD", "SECRET_QUERY"));
+        }
+    }
+
     @Test
     void expectedTotalSaturatesOnHeaderArithmeticOverflow() {
         HttpResponse<?> response = response(200, Map.of("Content-Length", List.of(Long.toString(Long.MAX_VALUE))));
