@@ -31,10 +31,7 @@ public final class WorkspaceCleaner {
             Files.walkFileTree(absolute, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    try { Files.deleteIfExists(file); }
-                    catch (IOException ignored) {
-                        // Preserve best-effort cleanup: locked files may survive on Windows.
-                    }
+                    deleteIfExistsBestEffort(file);
                     return FileVisitResult.CONTINUE;
                 }
 
@@ -47,10 +44,7 @@ public final class WorkspaceCleaner {
                 @Override
                 public FileVisitResult postVisitDirectory(Path directory, IOException failure) {
                     if (failure == null) {
-                        try { Files.deleteIfExists(directory); }
-                        catch (IOException ignored) {
-                            // A directory with locked children must be retained.
-                        }
+                        deleteIfExistsBestEffort(directory);
                     }
                     return FileVisitResult.CONTINUE;
                 }
@@ -58,6 +52,13 @@ public final class WorkspaceCleaner {
         } catch (IOException ignored) {
             // Fail closed: leave the workspace behind for a later safe cleanup/restart rather than
             // traversing a path whose filesystem identity is no longer trustworthy.
+        }
+    }
+
+    private static void deleteIfExistsBestEffort(Path path) {
+        try { Files.deleteIfExists(path); }
+        catch (IOException ignored) {
+            // Windows may hold a file open; retain it and any non-empty parent for later cleanup.
         }
     }
 }
