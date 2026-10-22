@@ -72,6 +72,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\smoke-portable.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $smokeReport = 'target/windows-portable-acceptance/portable-smoke.json'
+          if (-not (Test-Path -LiteralPath $smokeReport -PathType Leaf)) { throw "Missing Windows portable smoke report: $smokeReport" }
+          $smoke = Get-Content -LiteralPath $smokeReport -Raw | ConvertFrom-Json
+          if ($smoke.overall -ne 'PASS') { throw "Windows portable smoke report does not confirm PASS" }
 
       - name: Restrict payload to a single test-only ZIP and create checksums
         shell: pwsh
@@ -109,6 +113,8 @@ jobs:
             dist/MyHomeLib-R18-*-portable-windows-*.zip
             dist/SHA256SUMS
             target/release-candidate-integrity/release-candidate-integrity-windows.json
-            target/release-candidate-integrity/release-candidate-integrity-windows.json.sha256
+            target/release-candidate-integrity/release-candidate-integrity-windows.json.sha
+            target/windows-portable-acceptance/portable-smoke.json
+            target/windows-portable-acceptance/portable-smoke.md256
             target/windows-portable-acceptance/portable-smoke.json
             target/windows-portable-acceptance/portable-smoke.md
