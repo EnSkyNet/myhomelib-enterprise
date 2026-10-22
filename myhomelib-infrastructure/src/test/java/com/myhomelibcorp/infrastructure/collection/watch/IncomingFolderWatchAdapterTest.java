@@ -6,6 +6,7 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -924,10 +925,18 @@ class IncomingFolderWatchAdapterTest {
     }
 
     private JdbcTemplate metadataJdbc() {
-        SQLiteDataSource ds = new SQLiteDataSource();
+        // Production MetadataDatabaseConfig applies the same connection-local
+        // foreign-key and 15-second SQLITE_BUSY wait to every pooled connection.
+        // A zero-timeout test DataSource makes the real WatchService + SQLite
+        // concurrent replay regression fail at the first short writer lock.
+        SQLiteConfig config = new SQLiteConfig();
+        config.enforceForeignKeys(true);
+        config.setBusyTimeout(15_000);
+        SQLiteDataSource ds = new SQLiteDataSource(config);
         ds.setUrl("jdbc:sqlite:" + tempDir.resolve("meta.db"));
         JdbcTemplate jdbc = new JdbcTemplate(ds);
-        jdbc.execute("PRAGMA foreign_keys=ON");
+        assertThat(jdbc.queryForObject("PRAGMA busy_timeout", Integer.class)).isEqualTo(15_000);
+        assertThat(jdbc.queryForObject("PRAGMA foreign_keys", Integer.class)).isEqualTo(1);
         jdbc.execute("CREATE TABLE collections(id TEXT PRIMARY KEY, name TEXT NOT NULL)");
         jdbc.update("INSERT INTO collections(id,name) VALUES('c1','Test')");
         jdbc.execute("""
