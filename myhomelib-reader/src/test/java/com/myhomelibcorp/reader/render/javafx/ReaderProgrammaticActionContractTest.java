@@ -144,22 +144,33 @@ class ReaderProgrammaticActionContractTest {
     }
 
     @Test
-    void readerToolbarFullscreenButtonTogglesOwningStage() throws Exception {
+    void readerToolbarFullscreenButtonRequestsFullscreenForOwningStage() throws Exception {
         ReaderCanvas canvas = mock(ReaderCanvas.class);
         ReaderEngine engine = mock(ReaderEngine.class);
         when(canvas.getEngine()).thenReturn(engine);
         when(engine.getSettings()).thenReturn(ReaderSettings.defaultSettings());
-        ReaderToolbar toolbar = fx(() -> new ReaderToolbar(canvas, key -> key));
+        AtomicReference<Stage> requestedStage = new AtomicReference<>();
+        AtomicReference<Boolean> requestedFullScreen = new AtomicReference<>();
+        ReaderToolbar toolbar = fx(() -> new ReaderToolbar(canvas, key -> key, (owner, enabled) -> {
+            requestedStage.set(owner);
+            requestedFullScreen.set(enabled);
+        }));
 
         fx(() -> {
+            // Detached toolbar must not send a fullscreen request.
+            toolbar.getFullscreenButton().fire();
+            assertThat(requestedStage.get()).isNull();
+
             stage = new Stage();
             stage.setScene(new Scene(new StackPane(toolbar), 640, 480));
-            stage.show();
             assertThat(stage.isFullScreen()).isFalse();
             toolbar.getFullscreenButton().fire();
             return null;
         });
-        assertThat(fx(() -> stage.isFullScreen())).isTrue();
+        assertThat(requestedStage).hasValue(stage);
+        assertThat(requestedFullScreen).hasValue(true);
+        // The host OS may reject fullscreen in a non-interactive CI session.
+        // The real Stage transition remains part of physical Windows acceptance.
     }
 
     @Test

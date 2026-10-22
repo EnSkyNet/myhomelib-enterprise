@@ -13,14 +13,17 @@ import javafx.scene.control.ToolBar;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import javafx.stage.Stage;
 
 @Slf4j
 public class ReaderToolbar extends ToolBar {
 
     private final ReaderCanvas canvas;
     private final Function<String, String> text;
+    private final BiConsumer<Stage, Boolean> fullScreenRequest;
 
     // Навігація
     @Getter private final Button backButton;
@@ -74,8 +77,16 @@ public class ReaderToolbar extends ToolBar {
     private boolean ttsPaused;
 
     public ReaderToolbar(ReaderCanvas canvas, Function<String, String> text) {
+        this(canvas, text, Stage::setFullScreen);
+    }
+
+    // Allows the request to be verified without relying on fullscreen support
+    // in non-interactive Windows CI sessions. Production always uses Stage.
+    ReaderToolbar(ReaderCanvas canvas, Function<String, String> text,
+                  BiConsumer<Stage, Boolean> fullScreenRequest) {
         this.canvas = canvas;
         this.text = text == null ? Function.identity() : text;
+        this.fullScreenRequest = java.util.Objects.requireNonNull(fullScreenRequest);
 
         setPadding(new Insets(4, 8, 4, 8));
         setStyle("-fx-background-color: #e0e0e0; -fx-border-color: #cccccc; -fx-border-width: 0 0 1 0;");
@@ -279,8 +290,8 @@ public class ReaderToolbar extends ToolBar {
     }
 
     private void toggleFullscreen() {
-        if (getScene() != null && getScene().getWindow() instanceof javafx.stage.Stage stage) {
-            stage.setFullScreen(!stage.isFullScreen());
+        if (getScene() != null && getScene().getWindow() instanceof Stage stage) {
+            fullScreenRequest.accept(stage, !stage.isFullScreen());
         }
     }
 
