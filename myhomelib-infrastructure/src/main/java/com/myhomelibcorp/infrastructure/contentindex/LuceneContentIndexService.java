@@ -40,8 +40,11 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.FileVisitResult;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -491,16 +494,43 @@ public final class LuceneContentIndexService implements ContentIndexPort {
         return total;
     }
 
-    private static void deleteTreeQuietly(Path path) {
+    // Package-private for filesystem regressions: cleanup must not retain every index path.
+    static void deleteTreeQuietly(Path path) {
         if (path == null || !Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return;
         try {
-            SafeFilePublication.requireSafeDirectoryPath(path, "Content index cleanup directory");
-            try (var stream = Files.walk(path)) {
-                for (Path item : stream.sorted((a, b) -> b.compareTo(a)).toList()) {
-                    if (Files.isSymbolicLink(item)) return;
-                    Files.deleteIfExists(item);
+            Path safeRoot = SafeFilePublication.requireSafeDirectoryPath(
+                    path, "Content index cleanup directory");
+            // Preserve ALL index evidence when an unexpected link or special file is present:
+            // preflight without mutating anything, and without collecting paths in memory.
+            Files.walkFileTree(safeRoot, new SimpleFileVisitor<>() {
+                @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    if (!attrs.isRegularFile() || Files.isSymbolicLink(file)) {
+                        throw new IOException("Unsafe content index cleanup entry: " + file);
+                    }
+                    return FileVisitResult.CONTINUE;
                 }
-            }
+            });
+            // A second streaming walk deletes only validated regular files, then directories.
+            // Recheck each entry in case it has been replaced after preflight.
+            Files.walkFileTree(safeRoot, new SimpleFileVisitor<>() {
+                @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    if (!attrs.isRegularFile() || Files.isSymbolicLink(file)) {
+                        throw new IOException("Unsafe content index cleanup entry: " + file);
+                    }
+                    Files.deleteIfExists(file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override public FileVisitResult postVisitDirectory(Path directory, IOException failure)
+                        throws IOException {
+                    if (failure != null) throw failure;
+                    if (Files.isSymbolicLink(directory)) {
+                        throw new IOException("Unsafe content index cleanup directory: " + directory);
+                    }
+                    Files.deleteIfExists(directory);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
         } catch (IOException ignored) { /* preserve unexpected replacement as evidence */ }
     }
 
