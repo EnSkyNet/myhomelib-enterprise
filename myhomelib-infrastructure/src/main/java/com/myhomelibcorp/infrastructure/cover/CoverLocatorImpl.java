@@ -12,7 +12,7 @@ import java.nio.file.Paths;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
-import java.util.stream.Collectors;
+import java.util.regex.Pattern;
 import java.util.Locale;
 
 @Component
@@ -23,12 +23,12 @@ public class CoverLocatorImpl implements CoverLocator {
     private final ZipArchiveReader archiveReader;
     private final BookResourcePort bookResourcePort; // <-- НОВА ЗАЛЕЖНІСТЬ
 
-    private final Function<String, String> normalize = s -> {
-        if (s == null) return "";
-        return s.toLowerCase(Locale.ROOT)
-                .replaceAll("[\\s_\\-]+", "")
-                .replaceAll("[^a-zа-я0-9.]", "");
-    };
+    // Compile once: archives can contain tens of thousands of file names.
+    // Unicode letter/number classes preserve Ukrainian і, ї, є, ґ and other scripts.
+    private static final Pattern NON_NAME_CHARACTERS = Pattern.compile("[^\\p{L}\\p{N}.]");
+
+    private final Function<String, String> normalize = value ->
+            value == null ? "" : NON_NAME_CHARACTERS.matcher(value.toLowerCase(Locale.ROOT)).replaceAll("");
 
     @Override
     public Optional<Path> locateCoverFile(BookDto book) {
@@ -63,7 +63,7 @@ public class CoverLocatorImpl implements CoverLocator {
         }
 
         log.info("Знайдено {} записів у архіві, перші 5: {}", entries.size(),
-                entries.stream().limit(5).collect(Collectors.toList()));
+                entries.stream().limit(5).toList());
 
         String archiveEntry = book.getArchiveEntry();
         String fileName = book.getFileName();
@@ -73,18 +73,22 @@ public class CoverLocatorImpl implements CoverLocator {
         if (archiveEntry != null && !archiveEntry.isBlank()) {
             log.debug("Шукаємо за archiveEntry: '{}'", archiveEntry);
             String normalizedArchive = normalize.apply(archiveEntry);
-            for (String entry : entries) {
-                if (normalize.apply(entry).equals(normalizedArchive)) {
-                    log.debug("Знайдено за нормалізованим archiveEntry: {}", entry);
-                    return Optional.of(entry);
+            if (!normalizedArchive.isEmpty()) {
+                for (String entry : entries) {
+                    if (normalize.apply(entry).equals(normalizedArchive)) {
+                        log.debug("Знайдено за нормалізованим archiveEntry: {}", entry);
+                        return Optional.of(entry);
+                    }
                 }
             }
             String fileNameFromEntry = Paths.get(archiveEntry).getFileName().toString();
             String normalizedFileName = normalize.apply(fileNameFromEntry);
-            for (String entry : entries) {
-                if (normalize.apply(entry).contains(normalizedFileName)) {
-                    log.debug("Знайдено за ім'ям файлу з archiveEntry: {}", entry);
-                    return Optional.of(entry);
+            if (!normalizedFileName.isEmpty()) {
+                for (String entry : entries) {
+                    if (normalize.apply(entry).contains(normalizedFileName)) {
+                        log.debug("Знайдено за ім'ям файлу з archiveEntry: {}", entry);
+                        return Optional.of(entry);
+                    }
                 }
             }
         }
@@ -93,19 +97,23 @@ public class CoverLocatorImpl implements CoverLocator {
         if (fileName != null && !fileName.isBlank()) {
             log.debug("Шукаємо за fileName: '{}'", fileName);
             String normalizedFileName = normalize.apply(fileName);
-            for (String entry : entries) {
-                if (normalize.apply(entry).contains(normalizedFileName)) {
-                    log.debug("Знайдено за нормалізованим fileName: {}", entry);
-                    return Optional.of(entry);
+            if (!normalizedFileName.isEmpty()) {
+                for (String entry : entries) {
+                    if (normalize.apply(entry).contains(normalizedFileName)) {
+                        log.debug("Знайдено за нормалізованим fileName: {}", entry);
+                        return Optional.of(entry);
+                    }
                 }
             }
             String baseName = fileName.replaceFirst("\\.[^.]+$", "");
             if (!baseName.equals(fileName)) {
                 String normalizedBase = normalize.apply(baseName);
-                for (String entry : entries) {
-                    if (normalize.apply(entry).contains(normalizedBase)) {
-                        log.debug("Знайдено за базовою назвою: {}", entry);
-                        return Optional.of(entry);
+                if (!normalizedBase.isEmpty()) {
+                    for (String entry : entries) {
+                        if (normalize.apply(entry).contains(normalizedBase)) {
+                            log.debug("Знайдено за базовою назвою: {}", entry);
+                            return Optional.of(entry);
+                        }
                     }
                 }
             }
@@ -115,10 +123,12 @@ public class CoverLocatorImpl implements CoverLocator {
         if (title != null && !title.isBlank()) {
             String normalizedTitle = normalize.apply(title);
             log.debug("Шукаємо за назвою книги: '{}'", normalizedTitle);
-            for (String entry : entries) {
-                if (normalize.apply(entry).contains(normalizedTitle)) {
-                    log.debug("Знайдено за назвою книги: {}", entry);
-                    return Optional.of(entry);
+            if (!normalizedTitle.isEmpty()) {
+                for (String entry : entries) {
+                    if (normalize.apply(entry).contains(normalizedTitle)) {
+                        log.debug("Знайдено за назвою книги: {}", entry);
+                        return Optional.of(entry);
+                    }
                 }
             }
         }
