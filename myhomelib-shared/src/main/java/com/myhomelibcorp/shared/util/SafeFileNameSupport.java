@@ -10,6 +10,8 @@ import java.util.Objects;
 
 /** Cross-platform sanitization and validation for filesystem path components. */
 public final class SafeFileNameSupport {
+    private static final int MAX_COLLISION_COMPONENT_BYTES = 240;
+
     private SafeFileNameSupport() { }
 
     /**
@@ -60,17 +62,18 @@ public final class SafeFileNameSupport {
     public static Path validateRelativePath(Path relative) {
         Objects.requireNonNull(relative, "relative");
         if (relative.isAbsolute()) throw new IllegalArgumentException("Path must be relative: " + relative);
-        Path normalized = relative.normalize();
-        if (normalized.getNameCount() == 0 || normalized.toString().isBlank()) {
-            throw new IllegalArgumentException("Relative path must not be empty");
-        }
-        for (Path component : normalized) {
+        // Verify the unnormalized components: normalization must not erase
+        // input traversal such as shelf/../book.fb2 before validation.
+        for (Path component : relative) {
             String name = component.toString();
             if (name.isBlank() || ".".equals(name) || "..".equals(name)) {
                 throw new IllegalArgumentException("Unsafe relative path: " + relative);
             }
         }
-        if (normalized.startsWith("..")) throw new IllegalArgumentException("Path escapes root: " + relative);
+        Path normalized = relative.normalize();
+        if (normalized.getNameCount() == 0 || normalized.toString().isBlank()) {
+            throw new IllegalArgumentException("Relative path must not be empty");
+        }
         return normalized;
     }
 
@@ -88,13 +91,24 @@ public final class SafeFileNameSupport {
         String stem = dot > 0 ? fileName.substring(0, dot) : fileName;
         String ext = dot > 0 ? fileName.substring(dot) : "";
         Path parent = desiredTarget.getParent();
-        Path candidate = (parent == null ? Path.of("") : parent).resolve(stem + " [" + suffix + "]" + ext);
+        Path candidate = collisionCandidate(parent, stem, ext, " [" + suffix + "]");
         int counter = 2;
         while (Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
-            candidate = (parent == null ? Path.of("") : parent)
-                    .resolve(stem + " [" + suffix + "-" + counter++ + "]" + ext);
+            candidate = collisionCandidate(parent, stem, ext, " [" + suffix + "-" + counter++ + "]");
         }
         return candidate;
+    }
+
+    /** Keep the extension and stable collision token, trimming only the stem by UTF-8 bytes. */
+    private static Path collisionCandidate(Path parent, String stem, String extension, String marker) {
+        int suffixBytes = (marker + extension).getBytes(StandardCharsets.UTF_8).length;
+        int stemBudget = MAX_COLLISION_COMPONENT_BYTES - suffixBytes;
+        if (stemBudget < 1) {
+            throw new IllegalArgumentException("Collision suffix and extension exceed safe filename limit");
+        }
+        String clippedStem = truncateUtf8(stem, stemBudget);
+        if (clippedStem.isEmpty()) clippedStem = "_";
+        return (parent == null ? Path.of("") : parent).resolve(clippedStem + marker + extension);
     }
 
     public static String normalizeNfc(String value) {
@@ -104,11 +118,13 @@ public final class SafeFileNameSupport {
     private static boolean isWindowsReserved(String value) {
         String upper = value.toUpperCase(Locale.ROOT);
         int dot = upper.indexOf('.');
-        String stem = dot < 0 ? upper : upper.substring(0, dot);
+        // Win32 treats a space before the extension as a trailing device-name space.
+        String stem = (dot < 0 ? upper : upper.substring(0, dot)).stripTrailing();
         if (stem.equals("CON") || stem.equals("PRN") || stem.equals("AUX") || stem.equals("NUL")) return true;
         if (stem.length() == 4 && (stem.startsWith("COM") || stem.startsWith("LPT"))) {
             char digit = stem.charAt(3);
-            return digit >= '1' && digit <= '9';
+            // Windows also reserves the ISO-8859-1 superscript digits 1, 2 and 3.
+            return digit >= '1' && digit <= '9' || digit == '\u00B9' || digit == '\u00B2' || digit == '\u00B3';
         }
         return false;
     }
