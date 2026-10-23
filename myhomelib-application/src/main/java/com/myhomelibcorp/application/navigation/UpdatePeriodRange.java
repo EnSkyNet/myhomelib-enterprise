@@ -8,6 +8,15 @@ public record UpdatePeriodRange(LocalDate from, LocalDate to) {
         if (parts.length != 3) return null;
         int n;
         try { n = Integer.parseInt(parts[2]); } catch (NumberFormatException e) { return null; }
+        // Calendar-month dropdown IDs encode YYYYMM and must not mean rolling months.
+        if ("calendar".equals(parts[1])) {
+            int year = n / 100;
+            int month = n % 100;
+            if (year < 1900 || year > today.getYear() || month < 1 || month > 12) return null;
+            java.time.YearMonth selected = java.time.YearMonth.of(year, month);
+            if (selected.isAfter(java.time.YearMonth.from(today))) return null;
+            return new UpdatePeriodRange(selected.atDay(1), selected.atEndOfMonth());
+        }
         return switch (parts[1]) {
             case "day" -> n >= 1 && n <= 6 ? new UpdatePeriodRange(today.minusDays(n - 1L), today) : null;
             case "week" -> n >= 1 && n <= 4 ? new UpdatePeriodRange(today.minusWeeks(n).plusDays(1), today) : null;
