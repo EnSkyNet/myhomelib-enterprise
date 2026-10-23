@@ -181,10 +181,10 @@ public class NavigationPanelController {
         }
         updatesYearComboBox.getItems().setAll(years);
 
-        updatesDayComboBox.setOnAction(event -> selectUpdatePeriod(updatesDayComboBox));
-        updatesWeekComboBox.setOnAction(event -> selectUpdatePeriod(updatesWeekComboBox));
-        updatesMonthComboBox.setOnAction(event -> selectUpdatePeriod(updatesMonthComboBox));
-        updatesYearComboBox.setOnAction(event -> selectUpdatePeriod(updatesYearComboBox));
+        updatesDayComboBox.valueProperty().addListener((obs, old, selected) -> selectUpdatePeriod(updatesDayComboBox));
+        updatesWeekComboBox.valueProperty().addListener((obs, old, selected) -> selectUpdatePeriod(updatesWeekComboBox));
+        updatesMonthComboBox.valueProperty().addListener((obs, old, selected) -> selectUpdatePeriod(updatesMonthComboBox));
+        updatesYearComboBox.valueProperty().addListener((obs, old, selected) -> selectUpdatePeriod(updatesYearComboBox));
     }
 
     private void selectUpdatePeriod(ComboBox<UpdateOption> selectedBox) {
@@ -202,14 +202,6 @@ public class NavigationPanelController {
         }
         if (onNodeSelected != null) {
             onNodeSelected.accept(NavigationNodeDto.of(NavigationMode.UPDATES, option.id(), option.label()));
-        }
-    }
-
-    @FXML
-    private void onOpenCatalogUpdates() {
-        if (onNodeSelected != null) {
-            onNodeSelected.accept(NavigationNodeDto.of(NavigationMode.UPDATES,
-                    "updates", "Сповіщення каталогу"));
         }
     }
 
