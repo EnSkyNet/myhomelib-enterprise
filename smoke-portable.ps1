@@ -82,7 +82,10 @@ $result = [ordered]@{
     profileWriteDetected = $false
     profileWritesAfterNative = @()
     profileWritesAfterCmd = @()
+    wshControlExitCode = $null
+    wshControlProfileWrites = @()
     profileWritesAfterVbs = @()
+    profileWritesIntroducedByVbs = @()
     overall = "FAIL"
     note = ""
 }
@@ -203,11 +206,56 @@ try {
     Write-Host "Synthetic profile after CMD: $($result.profileWritesAfterCmd -join '; ')"
     if ($result.cmdLauncherExitCode -ne 0) { throw "Start-MyHomeLib.cmd smoke failed with exit code $($result.cmdLauncherExitCode)" }
 
+    # The Windows Script Host itself may initialize an OS-owned cache under
+    # LOCALAPPDATA. First prove that native EXE and CMD left the synthetic
+    # profile empty, then run an independent harmless WSH control under the
+    # SAME redirected profile. This never invokes MyHomeLib.
+    if ($result.profileWritesAfterNative.Count -gt 0 -or $result.profileWritesAfterCmd.Count -gt 0) {
+        throw "Native/CMD launcher wrote into the synthetic profile before WSH control"
+    }
     $cscript = Join-Path $env:SystemRoot "System32\cscript.exe"
+    $wshControl = Join-Path $tempRoot "wsh-host-only-control.vbs"
+    @'
+Option Explicit
+Dim shell, fso, exitCode
+Set shell = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
+exitCode = shell.Run("cmd.exe /d /c exit 0", 1, True)
+WScript.Quit exitCode
+'@ | Set-Content -LiteralPath $wshControl -Encoding ascii
+    & $cscript //nologo $wshControl
+    $result.wshControlExitCode = $LASTEXITCODE
+    if ($result.wshControlExitCode -ne 0) {
+        throw "Harmless Windows Script Host control failed with exit code $($result.wshControlExitCode)"
+    }
+    $result.wshControlProfileWrites = @(Get-SyntheticProfileWrites -Root $syntheticHome)
+    Write-Host "Synthetic profile after WSH-only control: $($result.wshControlProfileWrites -join '; ')"
+    # No arbitrary paths or files can be excused as host-owned. The only
+    # permitted baseline is the known EMPTY Windows Script Host cache tree.
+    $allowedWshHostDirs = @(
+        'AppData [directory]',
+        'AppData\Local [directory]',
+        'AppData\Local\Microsoft [directory]',
+        'AppData\Local\Microsoft\Windows [directory]',
+        'AppData\Local\Microsoft\Windows\Caches [directory]'
+    )
+    foreach ($entry in $result.wshControlProfileWrites) {
+        if ($entry -cnotin $allowedWshHostDirs) {
+            throw "WSH control unexpectedly wrote a non-cache path: $entry"
+        }
+    }
+    # Launch the REAL packaged compatibility VBS and fail on every new
+    # profile entry compared with the independently established WSH baseline.
+    # The baseline is not deleted or silently ignored; it is reported.
     & $cscript //nologo $vbsLauncher --release-smoke
     $result.vbsLauncherExitCode = $LASTEXITCODE
     $result.profileWritesAfterVbs = @(Get-SyntheticProfileWrites -Root $syntheticHome)
     Write-Host "Synthetic profile after VBS: $($result.profileWritesAfterVbs -join '; ')"
+    $result.profileWritesIntroducedByVbs = @(
+        Compare-Object -ReferenceObject @($result.wshControlProfileWrites) -DifferenceObject @($result.profileWritesAfterVbs) |
+            ForEach-Object { "$($_.SideIndicator) $($_.InputObject)" }
+    )
+    Write-Host "VBS-specific profile changes versus WSH-only control: $($result.profileWritesIntroducedByVbs -join '; ')"
     if ($result.vbsLauncherExitCode -ne 0) { throw "MyHomeLib.vbs smoke failed with exit code $($result.vbsLauncherExitCode)" }
 
     Pop-Location
@@ -216,11 +264,11 @@ try {
     $dataDir = Join-Path $launcherDir "data"
     $result.portableDataCreated = Test-Path $dataDir -PathType Container
     if (-not $result.portableDataCreated) { throw "Portable data directory was not created beside launcher: $dataDir" }
-    $result.syntheticHomeWriteDetected = @((Get-ChildItem -Force -Path $syntheticHome -ErrorAction SilentlyContinue)).Count -gt 0
+    $result.syntheticHomeWriteDetected = ($result.profileWritesAfterNative.Count -gt 0 -or $result.profileWritesAfterCmd.Count -gt 0 -or $result.profileWritesIntroducedByVbs.Count -gt 0)
     $result.workingDirectoryWriteDetected = @((Get-ChildItem -Force -Path $cwd -ErrorAction SilentlyContinue)).Count -gt 0
     $result.profileWriteDetected = [bool]($result.syntheticHomeWriteDetected -or $result.workingDirectoryWriteDetected)
     if ($result.syntheticHomeWriteDetected) {
-        throw "Portable launch wrote outside the launcher tree into the synthetic user profile. Native: $($result.profileWritesAfterNative -join '; '); CMD: $($result.profileWritesAfterCmd -join '; '); VBS: $($result.profileWritesAfterVbs -join '; ')"
+        throw "Portable launch wrote outside the launcher tree into the synthetic user profile. Native: $($result.profileWritesAfterNative -join '; '); CMD: $($result.profileWritesAfterCmd -join '; '); VBS delta beyond independently measured WSH-only control: $($result.profileWritesIntroducedByVbs -join '; ')"
     }
     if ($result.workingDirectoryWriteDetected) { throw "Portable launch wrote outside the launcher tree into the working directory" }
 
@@ -263,7 +311,10 @@ finally {
         "- Any profile/outside-launcher write detected: $($result.profileWriteDetected)",
         "- Synthetic profile after native EXE: $($result.profileWritesAfterNative -join '; ')",
         "- Synthetic profile after CMD: $($result.profileWritesAfterCmd -join '; ')",
+        "- WSH-only control exit code: $($result.wshControlExitCode)",
+        "- WSH-only control profile baseline: $($result.wshControlProfileWrites -join '; ')",
         "- Synthetic profile after VBS: $($result.profileWritesAfterVbs -join '; ')",
+        "- VBS-specific profile delta: $($result.profileWritesIntroducedByVbs -join '; ')",
         "- Note: $($result.note)"
     ) | Set-Content -Path $markdownPath -Encoding utf8
     Remove-Item -Recurse -Force $tempRoot -ErrorAction SilentlyContinue
