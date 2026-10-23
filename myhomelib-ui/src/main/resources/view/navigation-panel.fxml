@@ -42,9 +42,6 @@
         <Label text="Оновлення за рік"/>
         <ComboBox fx:id="updatesYearComboBox" promptText="Виберіть рік"
                   maxWidth="1.7976931348623157E308"/>
-        <Separator/>
-        <Button text="Сповіщення каталогу" onAction="#onOpenCatalogUpdates"
-                maxWidth="1.7976931348623157E308"/>
     </VBox>
 
     <ListView fx:id="navigationListView" VBox.vgrow="ALWAYS"/>
