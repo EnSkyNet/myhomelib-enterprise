@@ -80,8 +80,23 @@ $result = [ordered]@{
     syntheticHomeWriteDetected = $false
     workingDirectoryWriteDetected = $false
     profileWriteDetected = $false
+    profileWritesAfterNative = @()
+    profileWritesAfterCmd = @()
+    profileWritesAfterVbs = @()
     overall = "FAIL"
     note = ""
+}
+# Capture only relative names within the synthetic profile. This is a fail-closed
+# diagnostic: never delete, ignore, or reclassify a profile write as acceptable.
+function Get-SyntheticProfileWrites {
+    param([string]$Root)
+    return @(
+        Get-ChildItem -LiteralPath $Root -Force -Recurse -ErrorAction Stop |
+            ForEach-Object {
+                $relative = $_.FullName.Substring($Root.Length).TrimStart([char]'\\')
+                if ($_.PSIsContainer) { "$relative [directory]" } else { "$relative [file]" }
+            }
+    )
 }
 try {
     New-Item -ItemType Directory -Force $extract, $syntheticHome, $cwd | Out-Null
@@ -128,6 +143,8 @@ try {
         $env:JPACKAGE_DEBUG = $oldJpackageDebug
     }
     $result.launcherExitCode = $process.ExitCode
+    $result.profileWritesAfterNative = @(Get-SyntheticProfileWrites -Root $syntheticHome)
+    Write-Host "Synthetic profile after native EXE: $($result.profileWritesAfterNative -join '; ')"
     if ($process.ExitCode -ne 0) {
         $nativeDiagnostics = @(
             ("stdout: " + $(if (Test-Path -LiteralPath $nativeStdout) { Get-Content -LiteralPath $nativeStdout -Raw } else { "<missing>" })),
@@ -182,11 +199,15 @@ try {
 
     & $cmdLauncher --release-smoke
     $result.cmdLauncherExitCode = $LASTEXITCODE
+    $result.profileWritesAfterCmd = @(Get-SyntheticProfileWrites -Root $syntheticHome)
+    Write-Host "Synthetic profile after CMD: $($result.profileWritesAfterCmd -join '; ')"
     if ($result.cmdLauncherExitCode -ne 0) { throw "Start-MyHomeLib.cmd smoke failed with exit code $($result.cmdLauncherExitCode)" }
 
     $cscript = Join-Path $env:SystemRoot "System32\cscript.exe"
     & $cscript //nologo $vbsLauncher --release-smoke
     $result.vbsLauncherExitCode = $LASTEXITCODE
+    $result.profileWritesAfterVbs = @(Get-SyntheticProfileWrites -Root $syntheticHome)
+    Write-Host "Synthetic profile after VBS: $($result.profileWritesAfterVbs -join '; ')"
     if ($result.vbsLauncherExitCode -ne 0) { throw "MyHomeLib.vbs smoke failed with exit code $($result.vbsLauncherExitCode)" }
 
     Pop-Location
@@ -198,7 +219,9 @@ try {
     $result.syntheticHomeWriteDetected = @((Get-ChildItem -Force -Path $syntheticHome -ErrorAction SilentlyContinue)).Count -gt 0
     $result.workingDirectoryWriteDetected = @((Get-ChildItem -Force -Path $cwd -ErrorAction SilentlyContinue)).Count -gt 0
     $result.profileWriteDetected = [bool]($result.syntheticHomeWriteDetected -or $result.workingDirectoryWriteDetected)
-    if ($result.syntheticHomeWriteDetected) { throw "Portable launch wrote outside the launcher tree into the synthetic user profile" }
+    if ($result.syntheticHomeWriteDetected) {
+        throw "Portable launch wrote outside the launcher tree into the synthetic user profile. Native: $($result.profileWritesAfterNative -join '; '); CMD: $($result.profileWritesAfterCmd -join '; '); VBS: $($result.profileWritesAfterVbs -join '; ')"
+    }
     if ($result.workingDirectoryWriteDetected) { throw "Portable launch wrote outside the launcher tree into the working directory" }
 
     $result.overall = "PASS"
@@ -238,6 +261,9 @@ finally {
         "- Synthetic profile write detected: $($result.syntheticHomeWriteDetected)",
         "- Working-directory write detected: $($result.workingDirectoryWriteDetected)",
         "- Any profile/outside-launcher write detected: $($result.profileWriteDetected)",
+        "- Synthetic profile after native EXE: $($result.profileWritesAfterNative -join '; ')",
+        "- Synthetic profile after CMD: $($result.profileWritesAfterCmd -join '; ')",
+        "- Synthetic profile after VBS: $($result.profileWritesAfterVbs -join '; ')",
         "- Note: $($result.note)"
     ) | Set-Content -Path $markdownPath -Encoding utf8
     Remove-Item -Recurse -Force $tempRoot -ErrorAction SilentlyContinue
