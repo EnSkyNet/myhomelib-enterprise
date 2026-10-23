@@ -61,6 +61,19 @@ require(
     "acceptanceSessionId",
     "hostFingerprintSha256",
 )
+# PowerShell treats $home and $HOME as the same read-only automatic variable.
+# A case-insensitive $home assignment aborts the extracted Portable smoke before
+# its JSON/Markdown acceptance reports can be written.
+import re
+
+portable_smoke = Path("smoke-portable.ps1").read_text(encoding="utf-8")
+assert re.search(r"(?i)\\$home\\b", portable_smoke) is None, (
+    "smoke-portable.ps1: do not assign/reference PowerShell's read-only $HOME"
+)
+assert "$syntheticHome" in portable_smoke, (
+    "smoke-portable.ps1: synthetic profile path is required"
+)
+
 require(
     "tools/windows-acceptance-evidence-check.py",
     "DPI_SCALES = (100, 125, 150, 200)",
