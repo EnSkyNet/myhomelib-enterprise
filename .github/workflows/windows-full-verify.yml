@@ -8,6 +8,8 @@ on:
     paths:
       - .github/workflows/windows-full-verify.yml
       - .github/workflows/windows-test-portable.yml
+      # Validate extracted Portable smoke changes on native Windows before PR merge.
+      - smoke-portable.ps1
       - tools/windows-isolated.ps1
       - tools/windows-test-isolation/**
       # Validate Java/Maven changes on native Windows, not only edits to this workflow.
