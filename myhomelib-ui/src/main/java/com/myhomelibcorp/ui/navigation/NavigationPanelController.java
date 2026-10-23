@@ -18,6 +18,9 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
+import javafx.scene.control.Label;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
 import javafx.scene.Node;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
@@ -29,6 +32,10 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Locale;
+import java.time.LocalDate;
+import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.function.Consumer;
 
 @Component
@@ -48,6 +55,19 @@ public class NavigationPanelController {
     @FXML private TextField listSearchField;
     @FXML private ComboBox<NavigationMode> navigationModeComboBox;
     @FXML private Button loadMoreAuthorsButton;
+    @FXML private HBox navigationSearchRow;
+    @FXML private VBox updatesPeriodPanel;
+    @FXML private ComboBox<UpdateOption> updatesDayComboBox;
+    @FXML private ComboBox<UpdateOption> updatesWeekComboBox;
+    @FXML private ComboBox<UpdateOption> updatesMonthComboBox;
+    @FXML private ComboBox<UpdateOption> updatesYearComboBox;
+
+    /** Stable callback IDs are parsed by UpdatePeriodRange, not by localized labels. */
+    private record UpdateOption(String id, String label) {
+        @Override public String toString() { return label; }
+    }
+
+    private boolean suppressUpdatesSelection;
 
     private List<NavigationNodeDto> allNodes = List.of();
     private NavigationMode currentMode = NavigationMode.AUTHORS;
@@ -73,6 +93,7 @@ public class NavigationPanelController {
     public void initialize() {
         configureModeSelector();
         configureList();
+        configureUpdatePeriodSelectors();
 
         listSearchField.textProperty().addListener((obs, old, query) -> {
             if (suppressListSearchListener) return;
@@ -121,6 +142,85 @@ public class NavigationPanelController {
                 loadMode(newMode);
             }
         });
+    }
+
+    private void configureUpdatePeriodSelectors() {
+        List<UpdateOption> days = new ArrayList<>();
+        for (int day = 1; day <= 6; day++) {
+            String unit = day == 1 ? "день" : day <= 4 ? "дні" : "днів";
+            days.add(new UpdateOption("updates-day-" + day, "За " + day + " " + unit));
+        }
+        updatesDayComboBox.getItems().setAll(days);
+
+        List<UpdateOption> weeks = new ArrayList<>();
+        for (int week = 1; week <= 4; week++) {
+            weeks.add(new UpdateOption("updates-week-" + week,
+                    "За " + week + " " + (week == 1 ? "тиждень" : "тижні")));
+        }
+        updatesWeekComboBox.getItems().setAll(weeks);
+
+        // A concrete calendar month, not a rolling 30-day period.
+        // Offer the last five years in a bounded list; older history remains available by year.
+        YearMonth latest = YearMonth.now();
+        DateTimeFormatter monthFormat = DateTimeFormatter.ofPattern("LLLL yyyy",
+                Locale.forLanguageTag(localizationService.language()));
+        List<UpdateOption> months = new ArrayList<>();
+        for (int offset = 0; offset < 60; offset++) {
+            YearMonth month = latest.minusMonths(offset);
+            String label = month.format(monthFormat);
+            label = label.substring(0, 1).toUpperCase(Locale.forLanguageTag(localizationService.language()))
+                    + label.substring(1);
+            months.add(new UpdateOption("updates-calendar-" +
+                    String.format(Locale.ROOT, "%04d%02d", month.getYear(), month.getMonthValue()), label));
+        }
+        updatesMonthComboBox.getItems().setAll(months);
+
+        List<UpdateOption> years = new ArrayList<>();
+        for (int year = LocalDate.now().getYear(); year >= 1900; year--) {
+            years.add(new UpdateOption("updates-year-" + year, Integer.toString(year)));
+        }
+        updatesYearComboBox.getItems().setAll(years);
+
+        updatesDayComboBox.setOnAction(event -> selectUpdatePeriod(updatesDayComboBox));
+        updatesWeekComboBox.setOnAction(event -> selectUpdatePeriod(updatesWeekComboBox));
+        updatesMonthComboBox.setOnAction(event -> selectUpdatePeriod(updatesMonthComboBox));
+        updatesYearComboBox.setOnAction(event -> selectUpdatePeriod(updatesYearComboBox));
+    }
+
+    private void selectUpdatePeriod(ComboBox<UpdateOption> selectedBox) {
+        if (suppressUpdatesSelection || currentMode != NavigationMode.UPDATES) return;
+        UpdateOption option = selectedBox.getValue();
+        if (option == null) return;
+        suppressUpdatesSelection = true;
+        try {
+            for (ComboBox<UpdateOption> box : List.of(
+                    updatesDayComboBox, updatesWeekComboBox, updatesMonthComboBox, updatesYearComboBox)) {
+                if (box != selectedBox) box.getSelectionModel().clearSelection();
+            }
+        } finally {
+            suppressUpdatesSelection = false;
+        }
+        if (onNodeSelected != null) {
+            onNodeSelected.accept(NavigationNodeDto.of(NavigationMode.UPDATES, option.id(), option.label()));
+        }
+    }
+
+    @FXML
+    private void onOpenCatalogUpdates() {
+        if (onNodeSelected != null) {
+            onNodeSelected.accept(NavigationNodeDto.of(NavigationMode.UPDATES,
+                    "updates", "Сповіщення каталогу"));
+        }
+    }
+
+    private void updatePeriodPanelVisibility(NavigationMode mode) {
+        boolean updates = mode == NavigationMode.UPDATES;
+        updatesPeriodPanel.setVisible(updates);
+        updatesPeriodPanel.setManaged(updates);
+        navigationSearchRow.setVisible(!updates);
+        navigationSearchRow.setManaged(!updates);
+        navigationListView.setVisible(!updates);
+        navigationListView.setManaged(!updates);
     }
 
     private void configureList() {
@@ -253,7 +353,8 @@ public class NavigationPanelController {
         updateNavigationTitle();
         boolean modeChanged = currentMode != mode;
         currentMode = mode;
-        alphabetToolbarController.setAllOptionEnabled(mode != NavigationMode.AUTHORS);
+        updatePeriodPanelVisibility(mode);
+        alphabetToolbarController.setAllOptionEnabled(mode != NavigationMode.AUTHORS && mode != NavigationMode.UPDATES);
         if (modeChanged) {
             currentLetter = mode == NavigationMode.AUTHORS ? null : '*';
             alphabetToolbarController.clearSelection();
@@ -272,7 +373,14 @@ public class NavigationPanelController {
             return;
         }
         resetAuthorPaging();
-        loadNodes(mode, mode == NavigationMode.AUTHORS ? currentLetter : null);
+        if (mode == NavigationMode.UPDATES) {
+            ++loadGeneration; // Cancel old async navigation responses; periods are UI-only options.
+            allNodes = List.of();
+            navigationListView.getItems().clear();
+            navigationListView.setDisable(false);
+            return;
+        }
+        loadNodes(mode, null);
     }
 
     private void resolveFirstAuthorInitialAndLoad() {
@@ -587,7 +695,7 @@ public class NavigationPanelController {
             case ALL_BOOKS -> modeLabel(NavigationMode.ALL_BOOKS);
             case ALREADY_READ -> modeLabel(NavigationMode.ALREADY_READ);
             case HISTORY -> modeLabel(NavigationMode.HISTORY);
-            case UPDATES -> modeLabel(NavigationMode.UPDATES);
+            case UPDATES -> node.label();
             case LANGUAGES -> languageLabel(node.id());
             case GENRES -> localizationService.genreName(node.id(), node.label());
             case GROUPS -> groupLabel(node.label());
@@ -682,6 +790,10 @@ public class NavigationPanelController {
 
         currentLetter = '*';
         loadMode(mode);
+        if (mode == NavigationMode.UPDATES) {
+            pendingSelectionMode = null;
+            pendingSelectionId = null;
+        }
     }
 
     private void applyPendingSelection() {
