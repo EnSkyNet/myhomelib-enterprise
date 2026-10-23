@@ -18,7 +18,7 @@
 
     <Separator/>
 
-    <HBox spacing="4">
+    <HBox fx:id="navigationSearchRow" spacing="4">
         <TextField fx:id="listSearchField" promptText="ui.fxml.navigation_panel.search"
                    HBox.hgrow="ALWAYS"
                    style="-fx-background-radius: 4; -fx-border-radius: 4;"/>
@@ -26,6 +26,23 @@
             <tooltip><Tooltip text="ui.fxml.navigation_panel.clear_search"/></tooltip>
         </Button>
     </HBox>
+
+    <!-- Updates use four independently labelled dropdowns instead of a flat list.
+         The selected period opens the existing date-filtered book search. -->
+    <VBox fx:id="updatesPeriodPanel" spacing="9" visible="false" managed="false">
+        <Label text="Оновлення за день"/>
+        <ComboBox fx:id="updatesDayComboBox" promptText="Виберіть 1–6 днів"
+                  maxWidth="1.7976931348623157E308"/>
+        <Label text="Оновлення за тиждень"/>
+        <ComboBox fx:id="updatesWeekComboBox" promptText="Виберіть 1–4 тижні"
+                  maxWidth="1.7976931348623157E308"/>
+        <Label text="Оновлення за місяць"/>
+        <ComboBox fx:id="updatesMonthComboBox" promptText="Виберіть місяць і рік"
+                  maxWidth="1.7976931348623157E308"/>
+        <Label text="Оновлення за рік"/>
+        <ComboBox fx:id="updatesYearComboBox" promptText="Виберіть рік"
+                  maxWidth="1.7976931348623157E308"/>
+    </VBox>
 
     <ListView fx:id="navigationListView" VBox.vgrow="ALWAYS"/>
     <Button fx:id="loadMoreAuthorsButton"
