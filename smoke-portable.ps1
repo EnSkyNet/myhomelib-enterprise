@@ -40,7 +40,7 @@ $markdownPath = [IO.Path]::ChangeExtension($ReportPath, ".md")
 $unicodeLeaf = "Моя бібліотека Ω 日本"
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) (("myhomelib-portable-smoke-" + [Guid]::NewGuid().ToString("N")))
 $extract = Join-Path $tempRoot ("extract " + $unicodeLeaf)
-$home = Join-Path $tempRoot ("home " + $unicodeLeaf)
+$syntheticHome = Join-Path $tempRoot ("home " + $unicodeLeaf)
 $cwd = Join-Path $tempRoot ("cwd " + $unicodeLeaf)
 $oldJavaToolOptions = $env:JAVA_TOOL_OPTIONS
 $oldUserProfile = $env:USERPROFILE
@@ -65,7 +65,7 @@ $result = [ordered]@{
     archive = $Archive
     archiveSha256 = (Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant()
     extractPath = $extract
-    syntheticHome = $home
+    syntheticHome = $syntheticHome
     workingDirectory = $cwd
     launcher = $null
     cmdLauncher = $null
@@ -84,7 +84,7 @@ $result = [ordered]@{
     note = ""
 }
 try {
-    New-Item -ItemType Directory -Force $extract, $home, $cwd | Out-Null
+    New-Item -ItemType Directory -Force $extract, $syntheticHome, $cwd | Out-Null
     Expand-Archive -Path $Archive -DestinationPath $extract -Force
     $launcher = Join-Path $extract "MyHomeLib\MyHomeLib.exe"
     $result.launcher = $launcher
@@ -106,11 +106,11 @@ try {
 
     # Redirect the common Windows/Java profile locations into the synthetic home.
     # Any file created there is evidence that portable mode leaked outside the launcher tree.
-    $env:USERPROFILE = $home
-    $env:HOME = $home
-    $env:APPDATA = Join-Path $home "AppData\Roaming"
-    $env:LOCALAPPDATA = Join-Path $home "AppData\Local"
-    $env:JAVA_TOOL_OPTIONS = "-Duser.home=`"$home`""
+    $env:USERPROFILE = $syntheticHome
+    $env:HOME = $syntheticHome
+    $env:APPDATA = Join-Path $syntheticHome "AppData\Roaming"
+    $env:LOCALAPPDATA = Join-Path $syntheticHome "AppData\Local"
+    $env:JAVA_TOOL_OPTIONS = "-Duser.home=`"$syntheticHome`""
     $result.profileEnvironmentRedirected = $true
     Push-Location $cwd
     $pushed = $true
@@ -133,7 +133,7 @@ try {
     $dataDir = Join-Path $launcherDir "data"
     $result.portableDataCreated = Test-Path $dataDir -PathType Container
     if (-not $result.portableDataCreated) { throw "Portable data directory was not created beside launcher: $dataDir" }
-    $result.syntheticHomeWriteDetected = @((Get-ChildItem -Force -Path $home -ErrorAction SilentlyContinue)).Count -gt 0
+    $result.syntheticHomeWriteDetected = @((Get-ChildItem -Force -Path $syntheticHome -ErrorAction SilentlyContinue)).Count -gt 0
     $result.workingDirectoryWriteDetected = @((Get-ChildItem -Force -Path $cwd -ErrorAction SilentlyContinue)).Count -gt 0
     $result.profileWriteDetected = [bool]($result.syntheticHomeWriteDetected -or $result.workingDirectoryWriteDetected)
     if ($result.syntheticHomeWriteDetected) { throw "Portable launch wrote outside the launcher tree into the synthetic user profile" }
