@@ -8,6 +8,17 @@ on:
       - master
     paths:
       - .github/workflows/windows-test-portable.yml
+      # Retest Portable whenever its launch, smoke, packaging or evidence scripts change.
+      - smoke-portable.ps1
+      - smoke-desktop.ps1
+      - package-portable.ps1
+      - package-desktop.ps1
+      - checksums.ps1
+      - tools/smoke-runtime-tools.ps1
+      - tools/windows-acceptance-harness-check.py
+      - tools/release-candidate-integrity.py
+      - tools/stage23-cross-platform-release-check.py
+      - tools/provision-test-portable-fbc.ps1
       # Retest packaged Windows Portable when the incoming-folder SQLite backlog
       # fix changes; do not publish a release or bypass the production Maven gate.
       - myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/collection/watch/IncomingFolderWatchAdapter.java
