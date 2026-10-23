@@ -114,9 +114,30 @@ try {
     $result.profileEnvironmentRedirected = $true
     Push-Location $cwd
     $pushed = $true
-    $process = Start-Process -FilePath $launcher -ArgumentList "--release-smoke" -Wait -PassThru
+    # The Windows jpackage GUI launcher does not attach a console. Capture its
+    # native diagnostics so a Unicode-path failure cannot be an opaque exit 1.
+    # Keep diagnostic files outside the synthetic profile and working directory.
+    $nativeStdout = Join-Path $tempRoot "native-launcher-stdout.txt"
+    $nativeStderr = Join-Path $tempRoot "native-launcher-stderr.txt"
+    $oldJpackageDebug = $env:JPACKAGE_DEBUG
+    try {
+        $env:JPACKAGE_DEBUG = "true"
+        $process = Start-Process -FilePath $launcher -ArgumentList "--release-smoke" -Wait -PassThru `
+            -RedirectStandardOutput $nativeStdout -RedirectStandardError $nativeStderr
+    } finally {
+        $env:JPACKAGE_DEBUG = $oldJpackageDebug
+    }
     $result.launcherExitCode = $process.ExitCode
-    if ($process.ExitCode -ne 0) { throw "Extracted native portable launcher smoke failed with exit code $($process.ExitCode)" }
+    if ($process.ExitCode -ne 0) {
+        $nativeDiagnostics = @(
+            "stdout: " + $(if (Test-Path -LiteralPath $nativeStdout) { Get-Content -LiteralPath $nativeStdout -Raw } else { "<missing>" })
+            "stderr: " + $(if (Test-Path -LiteralPath $nativeStderr) { Get-Content -LiteralPath $nativeStderr -Raw } else { "<missing>" })
+        ) -join [Environment]::NewLine
+        # Never turn a failed smoke into PASS; include the bounded native output
+        # in the CI error and the FAIL JSON/Markdown report.
+        $nativeDiagnostics = $nativeDiagnostics.Substring(0, [Math]::Min(16000, $nativeDiagnostics.Length))
+        throw "Extracted native portable launcher smoke failed with exit code $($process.ExitCode). Native diagnostics: $nativeDiagnostics"
+    }
 
     & $cmdLauncher --release-smoke
     $result.cmdLauncherExitCode = $LASTEXITCODE
