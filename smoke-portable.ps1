@@ -130,8 +130,8 @@ try {
     $result.launcherExitCode = $process.ExitCode
     if ($process.ExitCode -ne 0) {
         $nativeDiagnostics = @(
-            "stdout: " + $(if (Test-Path -LiteralPath $nativeStdout) { Get-Content -LiteralPath $nativeStdout -Raw } else { "<missing>" })
-            "stderr: " + $(if (Test-Path -LiteralPath $nativeStderr) { Get-Content -LiteralPath $nativeStderr -Raw } else { "<missing>" })
+            ("stdout: " + $(if (Test-Path -LiteralPath $nativeStdout) { Get-Content -LiteralPath $nativeStdout -Raw } else { "<missing>" })),
+            ("stderr: " + $(if (Test-Path -LiteralPath $nativeStderr) { Get-Content -LiteralPath $nativeStderr -Raw } else { "<missing>" }))
         ) -join [Environment]::NewLine
         # Never turn a failed smoke into PASS; include the bounded native output
         # in the CI error and the FAIL JSON/Markdown report.
