@@ -136,7 +136,48 @@ try {
         # Never turn a failed smoke into PASS; include the bounded native output
         # in the CI error and the FAIL JSON/Markdown report.
         $nativeDiagnostics = $nativeDiagnostics.Substring(0, [Math]::Min(16000, $nativeDiagnostics.Length))
-        throw "Extracted native portable launcher smoke failed with exit code $($process.ExitCode). Native diagnostics: $nativeDiagnostics"
+        # Diagnostic probes are only run after the mandatory native launcher has failed.
+        # Never convert a probe PASS into an acceptance PASS or skip this gate.
+        # Compare the same Unicode image with/without JAVA_TOOL_OPTIONS, then
+        # the same extracted image through an ASCII junction (no copy/repackaging).
+        $probeNotes = [System.Collections.Generic.List[string]]::new()
+        $savedProbeJavaToolOptions = $env:JAVA_TOOL_OPTIONS
+        $savedProbeJpackageDebug = $env:JPACKAGE_DEBUG
+        $asciiAlias = Join-Path $tempRoot "ascii-launch"
+        try {
+            New-Item -ItemType Junction -Path $asciiAlias -Target $launcherDir -ErrorAction Stop | Out-Null
+        } catch {
+            $probeNotes.Add("ASCII junction unavailable: $($_.Exception.Message)")
+        }
+        $probeCases = @(
+            @{ name = "unicode-no-java-options"; file = $launcher; clearJavaOptions = $true },
+            @{ name = "ascii-alias-with-java-options"; file = (Join-Path $asciiAlias "MyHomeLib.exe"); clearJavaOptions = $false },
+            @{ name = "ascii-alias-no-java-options"; file = (Join-Path $asciiAlias "MyHomeLib.exe"); clearJavaOptions = $true }
+        )
+        foreach ($probeCase in $probeCases) {
+            if (-not (Test-Path -LiteralPath $probeCase.file -PathType Leaf)) {
+                $probeNotes.Add("$($probeCase.name): launcher unavailable")
+                continue
+            }
+            try {
+                if ($probeCase.clearJavaOptions) {
+                    Remove-Item Env:JAVA_TOOL_OPTIONS -ErrorAction SilentlyContinue
+                } else {
+                    $env:JAVA_TOOL_OPTIONS = $savedProbeJavaToolOptions
+                }
+                $env:JPACKAGE_DEBUG = "true"
+                $probeProcess = Start-Process -FilePath $probeCase.file -ArgumentList "--release-smoke" -Wait -PassThru
+                $probeNotes.Add("$($probeCase.name): exit=$($probeProcess.ExitCode)")
+            } catch {
+                $probeNotes.Add("$($probeCase.name): exception=$($_.Exception.Message)")
+            } finally {
+                $env:JAVA_TOOL_OPTIONS = $savedProbeJavaToolOptions
+                $env:JPACKAGE_DEBUG = $savedProbeJpackageDebug
+            }
+        }
+        $probeSummary = $probeNotes -join "; "
+        Write-Host "Unicode native launcher failure isolation: $probeSummary"
+        throw "Extracted native portable launcher smoke failed with exit code $($process.ExitCode). Native diagnostics: $nativeDiagnostics. Isolation probes: $probeSummary"
     }
 
     & $cmdLauncher --release-smoke
