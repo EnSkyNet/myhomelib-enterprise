@@ -93,7 +93,7 @@ function Get-SyntheticProfileWrites {
     return @(
         Get-ChildItem -LiteralPath $Root -Force -Recurse -ErrorAction Stop |
             ForEach-Object {
-                $relative = $_.FullName.Substring($Root.Length).TrimStart([char]'\\')
+                $relative = $_.FullName.Substring($Root.Length).TrimStart([IO.Path]::DirectorySeparatorChar)
                 if ($_.PSIsContainer) { "$relative [directory]" } else { "$relative [file]" }
             }
     )
