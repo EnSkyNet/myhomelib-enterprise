@@ -10,6 +10,9 @@ on:
       - .github/workflows/windows-test-portable.yml
       # Validate extracted Portable smoke changes on native Windows before PR merge.
       - smoke-portable.ps1
+      # Packaging/manifest edits must also receive isolated native Windows verification.
+      - package-portable.ps1
+      - tools/windows-portable-utf8.manifest
       - tools/windows-isolated.ps1
       - tools/windows-test-isolation/**
       # Validate Java/Maven changes on native Windows, not only edits to this workflow.

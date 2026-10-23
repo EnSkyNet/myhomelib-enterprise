@@ -72,5 +72,37 @@ Get-ChildItem -Path "dist" -Filter "MyHomeLib-R18-$Version-portable-windows-*.zi
 # Remove a stale pre-R18-name Windows portable for the same version so release
 # collection cannot accidentally publish two portable candidates.
 Get-ChildItem -Path "dist" -Filter "myhomelib-$Version-windows-*.zip" -File -ErrorAction SilentlyContinue | Remove-Item -Force
+# The jpackage GUI executable can exit 1 before Java starts when extracted
+# under Unicode directory names. ASCII junction probes pass on the same image.
+# Opt the *native process* into UTF-8 for Win32 ANSI APIs (Windows 10 1903+).
+# This is a test-only packaging change, not a smoke bypass or fallback launcher.
+$utf8Manifest = Join-Path $PSScriptRoot "tools\\windows-portable-utf8.manifest"
+if (-not (Test-Path -LiteralPath $utf8Manifest -PathType Leaf)) {
+    throw "Windows native launcher UTF-8 manifest is missing: $utf8Manifest"
+}
+$mtCommand = Get-Command "mt.exe" -ErrorAction SilentlyContinue
+$mtPath = if ($null -ne $mtCommand) { $mtCommand.Source } else { "" }
+if ([string]::IsNullOrWhiteSpace($mtPath)) {
+    $kitsBin = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\\10\\bin"
+    $candidates = @(Get-ChildItem -Path (Join-Path $kitsBin "*\\x64\\mt.exe") -File -ErrorAction SilentlyContinue |
+        Sort-Object -Property FullName -Descending)
+    if ($candidates.Count -gt 0) { $mtPath = $candidates[0].FullName }
+}
+if ([string]::IsNullOrWhiteSpace($mtPath) -or -not (Test-Path -LiteralPath $mtPath -PathType Leaf)) {
+    throw "Windows SDK mt.exe is required to embed the UTF-8 launcher manifest"
+}
+& $mtPath -manifest $utf8Manifest "-outputresource:$launcher;#1"
+if ($LASTEXITCODE -ne 0) { throw "Failed to embed native launcher UTF-8 manifest (mt.exe exit $LASTEXITCODE)" }
+$manifestProof = Join-Path $PSScriptRoot "target\\windows-portable-native-manifest.xml"
+& $mtPath "-inputresource:$launcher;#1" "-out:$manifestProof"
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $manifestProof -PathType Leaf)) {
+    throw "Cannot read back embedded UTF-8 native launcher manifest"
+}
+[xml]$embeddedManifest = Get-Content -LiteralPath $manifestProof -Raw
+$activeCodePage = $embeddedManifest.SelectSingleNode("//*[local-name()='activeCodePage']")
+if ($null -eq $activeCodePage -or $activeCodePage.InnerText.Trim() -ne "UTF-8") {
+    throw "Embedded native launcher manifest does not declare UTF-8 activeCodePage"
+}
+Write-Host "Windows Portable native launcher UTF-8 manifest embedded and verified."
 Compress-Archive -Path $image -DestinationPath $archive -CompressionLevel Optimal
 Write-Host "Portable desktop archive: $archive"
