@@ -8,6 +8,12 @@ on:
       - master
     paths:
       - .github/workflows/windows-test-portable.yml
+      # Build a new testable Portable whenever any production Java module changes.
+      # * matches a single module name; ** includes its nested source resources.
+      - 'myhomelib-*/src/main/**'
+      - pom.xml
+      - .mvn/**
+      - mvnw
       # Retest Portable whenever its launch, smoke, packaging or evidence scripts change.
       - smoke-portable.ps1
       - smoke-desktop.ps1
