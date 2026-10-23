@@ -8,6 +8,11 @@ on:
       - master
     paths:
       - .github/workflows/windows-test-portable.yml
+      # Rebuild test-only Portable for production code changes, including the Updates sidebar.
+      - 'myhomelib-*/src/main/**'
+      - pom.xml
+      - .mvn/**
+      - mvnw
       # Retest Portable whenever its launch, smoke, packaging or evidence scripts change.
       - smoke-portable.ps1
       - smoke-desktop.ps1
