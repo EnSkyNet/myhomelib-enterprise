@@ -72,20 +72,44 @@ jobs:
           .\package-portable.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Smoke native launcher, bundled converters and extracted Portable
+      # Keep each smoke in its own Actions step. PowerShell scripts which only call
+      # cmdlets do not necessarily set $LASTEXITCODE; checking it after a .ps1 can
+      # exit the whole step with code 0 before the remaining checks run.
+      - name: Smoke packaged native desktop launcher
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          & pwsh -NoProfile -NonInteractive -File .\smoke-desktop.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Packaged desktop launcher smoke failed with exit code $LASTEXITCODE" }
+
+      - name: Smoke bundled FB2 to EPUB conversion and EPUBCheck
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          & pwsh -NoProfile -NonInteractive -File .\tools\smoke-runtime-tools.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Packaged runtime tools smoke failed with exit code $LASTEXITCODE" }
+
+      - name: Smoke extracted Unicode-path Windows Portable
         shell: pwsh
         timeout-minutes: 15
         run: |
-          .\smoke-desktop.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .\tools\smoke-runtime-tools.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .\smoke-portable.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & pwsh -NoProfile -NonInteractive -File .\smoke-portable.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Extracted Unicode portable smoke failed with exit code $LASTEXITCODE" }
           $smokeReport = 'target/windows-portable-acceptance/portable-smoke.json'
-          if (-not (Test-Path -LiteralPath $smokeReport -PathType Leaf)) { throw "Missing Windows portable smoke report: $smokeReport" }
+          $smokeMarkdown = 'target/windows-portable-acceptance/portable-smoke.md'
+          foreach ($report in @($smokeReport, $smokeMarkdown)) {
+            if (-not (Test-Path -LiteralPath $report -PathType Leaf)) {
+              throw "Missing Windows Portable smoke evidence after execution: $report"
+            }
+            if ((Get-Item -LiteralPath $report).Length -le 0) {
+              throw "Empty Windows Portable smoke evidence after execution: $report"
+            }
+          }
           $smoke = Get-Content -LiteralPath $smokeReport -Raw | ConvertFrom-Json
-          if ($smoke.overall -ne 'PASS') { throw "Windows portable smoke report does not confirm PASS" }
+          if ($smoke.overall -ne 'PASS' -or -not $smoke.markerPresent -or -not $smoke.bundledRuntimePresent -or -not $smoke.portableDataCreated) {
+            throw "Extracted Windows Portable smoke report has failed or incomplete acceptance evidence"
+          }
+          Write-Host "All three separate Windows Portable smoke stages passed."
 
       - name: Restrict payload to a single test-only ZIP and create checksums
         shell: pwsh
