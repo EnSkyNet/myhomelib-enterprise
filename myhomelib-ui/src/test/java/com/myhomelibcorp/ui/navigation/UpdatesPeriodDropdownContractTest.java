@@ -24,8 +24,7 @@ class UpdatesPeriodDropdownContractTest {
                 "fx:id=\"updatesWeekComboBox\"",
                 "fx:id=\"updatesMonthComboBox\"",
                 "fx:id=\"updatesYearComboBox\"",
-                "fx:id=\"navigationSearchRow\"",
-                "onAction=\"#onOpenCatalogUpdates\"");
+                "fx:id=\"navigationSearchRow\"");
         assertThat(controller).contains(
                 "updatePeriodPanelVisibility(mode)",
                 "navigationListView.setVisible(!updates)",
@@ -34,6 +33,7 @@ class UpdatesPeriodDropdownContractTest {
                 "navigationSearchRow.setManaged(!updates)",
                 "case UPDATES -> node.label()",
                 "if (mode == NavigationMode.UPDATES) {",
+                "updatesDayComboBox.valueProperty().addListener(",
                 "selectUpdatePeriod(updatesDayComboBox)",
                 "selectUpdatePeriod(updatesWeekComboBox)",
                 "selectUpdatePeriod(updatesMonthComboBox)",
