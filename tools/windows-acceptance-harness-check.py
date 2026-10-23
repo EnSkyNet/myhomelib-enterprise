@@ -67,7 +67,7 @@ require(
 import re
 
 portable_smoke = Path("smoke-portable.ps1").read_text(encoding="utf-8")
-assert re.search(r"(?i)\\$home\\b", portable_smoke) is None, (
+assert re.search(r"(?i)\$home\b", portable_smoke) is None, (
     "smoke-portable.ps1: do not assign/reference PowerShell's read-only $HOME"
 )
 assert "$syntheticHome" in portable_smoke, (
