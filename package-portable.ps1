@@ -18,19 +18,31 @@ try {
     $env:MHL_REQUIRE_FBC = $previousRequireFbc
 }
 $image = "dist\MyHomeLib"
-if (-not (Test-Path $image -PathType Container)) { throw "jpackage app-image not found: $image" }
-$launcher = Join-Path $image "MyHomeLib.exe"
-if (-not (Test-Path $launcher -PathType Leaf)) { throw "jpackage launcher not found: $launcher" }
-# A portable archive must be portable immediately after extraction.  The marker
+if (-not (Test-Path -LiteralPath $image -PathType Container)) { throw "jpackage app-image not found: $image" }
+
+# Work on a private copy: the native jpackage launcher may be read-locked by
+# Windows scanning/inspection. Never patch the original desktop app-image in place.
+$portableStageRoot = Join-Path $PSScriptRoot "target\windows-portable-stage"
+Remove-Item -LiteralPath $portableStageRoot -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Path $portableStageRoot -Force | Out-Null
+Copy-Item -LiteralPath $image -Destination $portableStageRoot -Recurse -Force
+$portableImage = Join-Path $portableStageRoot (Split-Path $image -Leaf)
+if (-not (Test-Path -LiteralPath $portableImage -PathType Container)) {
+    throw "Portable staging copy was not created: $portableImage"
+}
+$launcher = Join-Path $portableImage "MyHomeLib.exe"
+if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { throw "Staged jpackage launcher not found: $launcher" }
+
+# A portable archive must be portable immediately after extraction. The marker
 # is intentionally created beside the native launcher, which is the location
 # used by AppPaths even when the process starts from an unrelated working dir.
-$marker = Join-Path (Split-Path $launcher -Parent) "myhomelib2.ini"
+$marker = Join-Path $portableImage "myhomelib2.ini"
 Set-Content -Path $marker -Value "" -NoNewline -Encoding ascii
 
 # Keep the historical portable entry points expected by the Windows acceptance
 # contract. They are compatibility launchers only: the jpackage app-image already
 # contains its own Java 21 runtime, so neither launcher depends on system Java.
-$cmdLauncher = Join-Path (Split-Path $launcher -Parent) "Start-MyHomeLib.cmd"
+$cmdLauncher = Join-Path $portableImage "Start-MyHomeLib.cmd"
 @'
 @echo off
 setlocal
@@ -40,7 +52,7 @@ set "MHL_EXIT_CODE=%ERRORLEVEL%"
 exit /b %MHL_EXIT_CODE%
 '@ | Set-Content -Path $cmdLauncher -Encoding ascii
 
-$vbsLauncher = Join-Path (Split-Path $launcher -Parent) "MyHomeLib.vbs"
+$vbsLauncher = Join-Path $portableImage "MyHomeLib.vbs"
 @'
 Option Explicit
 Dim shell, fso, baseDir, commandLine, index, exitCode
@@ -58,6 +70,7 @@ Function QuoteArgument(value)
     QuoteArgument = Chr(34) & Replace(CStr(value), Chr(34), Chr(34) & Chr(34)) & Chr(34)
 End Function
 '@ | Set-Content -Path $vbsLauncher -Encoding ascii
+
 $rawArch = if ($env:PROCESSOR_ARCHITECTURE) { $env:PROCESSOR_ARCHITECTURE.ToLowerInvariant() } else { "unknown" }
 $portableArch = switch -Regex ($rawArch) {
     '^(amd64|x86_64)$' { 'x64'; break }
@@ -65,44 +78,50 @@ $portableArch = switch -Regex ($rawArch) {
     '^(x86|i[3-6]86)$' { 'x86'; break }
     default { ($rawArch -replace '[^a-z0-9._-]', '-') }
 }
-# R18 has a single canonical Windows portable artifact name.  Keeping this
-# stable is part of the release contract used by smoke/evidence tooling.
+# R18 has a single canonical Windows portable artifact name. Keeping this
+# stable is part of the acceptance contract used by smoke/evidence tooling.
 $archive = "dist\MyHomeLib-R18-$Version-portable-windows-$portableArch.zip"
 Get-ChildItem -Path "dist" -Filter "MyHomeLib-R18-$Version-portable-windows-*.zip" -File -ErrorAction SilentlyContinue | Remove-Item -Force
 # Remove a stale pre-R18-name Windows portable for the same version so release
 # collection cannot accidentally publish two portable candidates.
 Get-ChildItem -Path "dist" -Filter "myhomelib-$Version-windows-*.zip" -File -ErrorAction SilentlyContinue | Remove-Item -Force
-# The jpackage GUI executable can exit 1 before Java starts when extracted
-# under Unicode directory names. ASCII junction probes pass on the same image.
-# Opt the *native process* into UTF-8 for Win32 ANSI APIs (Windows 10 1903+).
-# This is a test-only packaging change, not a smoke bypass or fallback launcher.
-$utf8Manifest = Join-Path $PSScriptRoot "tools\\windows-portable-utf8.manifest"
+
+# Opt the native process into UTF-8 for Win32 ANSI APIs (Windows 10 1903+).
+# The patched file lives in the isolated Portable staging copy, not the desktop image.
+$utf8Manifest = Join-Path $PSScriptRoot "tools\windows-portable-utf8.manifest"
 if (-not (Test-Path -LiteralPath $utf8Manifest -PathType Leaf)) {
     throw "Windows native launcher UTF-8 manifest is missing: $utf8Manifest"
 }
 $mtCommand = Get-Command "mt.exe" -ErrorAction SilentlyContinue
 $mtPath = if ($null -ne $mtCommand) { $mtCommand.Source } else { "" }
 if ([string]::IsNullOrWhiteSpace($mtPath)) {
-    $kitsBin = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\\10\\bin"
-    $candidates = @(Get-ChildItem -Path (Join-Path $kitsBin "*\\x64\\mt.exe") -File -ErrorAction SilentlyContinue |
+    $kitsBin = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+    $candidates = @(Get-ChildItem -Path (Join-Path $kitsBin "*\x64\mt.exe") -File -ErrorAction SilentlyContinue |
         Sort-Object -Property FullName -Descending)
     if ($candidates.Count -gt 0) { $mtPath = $candidates[0].FullName }
 }
 if ([string]::IsNullOrWhiteSpace($mtPath) -or -not (Test-Path -LiteralPath $mtPath -PathType Leaf)) {
     throw "Windows SDK mt.exe is required to embed the UTF-8 launcher manifest"
 }
-& $mtPath -manifest $utf8Manifest "-outputresource:$launcher;#1"
-if ($LASTEXITCODE -ne 0) { throw "Failed to embed native launcher UTF-8 manifest (mt.exe exit $LASTEXITCODE)" }
-$manifestProof = Join-Path $PSScriptRoot "target\\windows-portable-native-manifest.xml"
+# Copy-Item can preserve read-only attributes from the app-image; explicitly make
+# the staged PE writable before mt.exe replaces its resource section.
+[System.IO.File]::SetAttributes($launcher, [System.IO.FileAttributes]::Normal)
+$outputResourceArgument = "-outputresource:$launcher;#1"
+& $mtPath -manifest $utf8Manifest $outputResourceArgument
+if ($LASTEXITCODE -ne 0) { throw "Failed to embed native launcher UTF-8 manifest (mt.exe exit $LASTEXITCODE) at staged path $launcher" }
+$manifestProof = Join-Path $PSScriptRoot "target\windows-portable-native-manifest.xml"
+New-Item -ItemType Directory -Path (Split-Path -Parent $manifestProof) -Force | Out-Null
+Remove-Item -LiteralPath $manifestProof -Force -ErrorAction SilentlyContinue
 & $mtPath "-inputresource:$launcher;#1" "-out:$manifestProof"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $manifestProof -PathType Leaf)) {
-    throw "Cannot read back embedded UTF-8 native launcher manifest"
+    throw "Cannot read back embedded UTF-8 native launcher manifest from staged path $launcher"
 }
 [xml]$embeddedManifest = Get-Content -LiteralPath $manifestProof -Raw
 $activeCodePage = $embeddedManifest.SelectSingleNode("//*[local-name()='activeCodePage']")
 if ($null -eq $activeCodePage -or $activeCodePage.InnerText.Trim() -ne "UTF-8") {
     throw "Embedded native launcher manifest does not declare UTF-8 activeCodePage"
 }
-Write-Host "Windows Portable native launcher UTF-8 manifest embedded and verified."
-Compress-Archive -Path $image -DestinationPath $archive -CompressionLevel Optimal
+Write-Host "Windows Portable native launcher UTF-8 manifest embedded and verified in isolated staging copy."
+
+Compress-Archive -Path $portableImage -DestinationPath $archive -CompressionLevel Optimal
 Write-Host "Portable desktop archive: $archive"
