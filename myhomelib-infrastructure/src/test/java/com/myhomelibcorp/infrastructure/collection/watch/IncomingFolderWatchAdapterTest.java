@@ -675,6 +675,36 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    void importedFingerprintExistenceIsScopedToCollectionAndAnotherFile() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path path = tempDir.resolve("imported-one.txt").toAbsolutePath().normalize();
+        String sameFingerprint = "synthetic-fingerprint-a";
+        String timestamp = Instant.now().toString();
+        jdbc.update("""
+                INSERT INTO incoming_folder_watch(collection_id, folder_path, enabled, updated_at)
+                VALUES('c1', ?, 0, ?)
+                """, tempDir.toString(), timestamp);
+        jdbc.update("""
+                INSERT INTO incoming_folder_file(collection_id,file_path,fingerprint,status,detected_at,updated_at)
+                VALUES('c1', ?, ?, 'IMPORTED', ?, ?)
+                """, path.toString(), sameFingerprint, timestamp, timestamp);
+
+        // Query the real adapter method rather than copying its SQL into a test.
+        var probe = IncomingFolderWatchAdapter.class.getDeclaredMethod(
+                "alreadyImportedFingerprint", String.class, Path.class, String.class);
+        probe.setAccessible(true);
+        assertThat((Boolean) probe.invoke(adapter, "c1", path, sameFingerprint))
+                .as("an imported file cannot make itself a duplicate").isFalse();
+        assertThat((Boolean) probe.invoke(adapter, "c1", tempDir.resolve("different.txt"), sameFingerprint))
+                .as("a second path with identical imported bytes is a duplicate").isTrue();
+        assertThat((Boolean) probe.invoke(adapter, "c1", tempDir.resolve("different.txt"), "other-fingerprint"))
+                .as("nonmatching hashes do not indicate a duplicate").isFalse();
+        assertThat((Boolean) probe.invoke(adapter, "c2", tempDir.resolve("different.txt"), sameFingerprint))
+                .as("an imported book from another collection is not a duplicate").isFalse();
+    }
+
+    @Test
     void changingFileDuringStabilityWindowDelaysReadyPublication() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         DomainEventPublisher events = mock(DomainEventPublisher.class);
