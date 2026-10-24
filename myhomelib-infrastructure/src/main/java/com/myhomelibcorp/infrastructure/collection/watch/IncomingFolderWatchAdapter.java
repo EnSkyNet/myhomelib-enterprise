@@ -635,11 +635,16 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
     }
 
     private boolean alreadyImportedFingerprint(String collectionId, Path file, String fingerprint) {
-        Integer count = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM incoming_folder_file
-                 WHERE collection_id=? AND fingerprint=? AND status='IMPORTED' AND file_path<>?
+        // The (collection_id, fingerprint, status) index can stop at the first
+        // *other* imported path. COUNT(*) needlessly visits every duplicate
+        // fingerprint in large libraries even though only existence matters.
+        Integer found = jdbc.queryForObject("""
+                SELECT EXISTS(
+                    SELECT 1 FROM incoming_folder_file
+                     WHERE collection_id=? AND fingerprint=? AND status='IMPORTED' AND file_path<>?
+                )
                 """, Integer.class, collectionId, fingerprint, normalize(file));
-        return count != null && count > 0;
+        return found != null && found != 0;
     }
 
     private void markMissing(String collectionId, Path file) {
