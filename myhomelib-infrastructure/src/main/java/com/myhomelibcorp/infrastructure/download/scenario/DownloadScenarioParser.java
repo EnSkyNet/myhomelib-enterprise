@@ -99,6 +99,20 @@ public final class DownloadScenarioParser {
         }
     }
 
+    /**
+     * Recovers the historical bare HTTP(S) URL stored in ConnectionScript when
+     * migrated collections have no separately persisted URL. Only an entire
+     * standalone URL line is accepted; GET/POST arguments and macros are not.
+     */
+    public static String legacyBaseUrl(String script) {
+        if (script == null || script.isBlank()) return null;
+        for (String line : script.replace("\r\n", "\n").replace('\r', '\n').split("\n")) {
+            String candidate = line.trim();
+            if (isLegacyUrlPreamble(candidate)) return candidate;
+        }
+        return null;
+    }
+
     private static boolean isLegacyUrlPreamble(String raw) {
         if (firstWhitespace(raw) >= 0) return false;
         try {
