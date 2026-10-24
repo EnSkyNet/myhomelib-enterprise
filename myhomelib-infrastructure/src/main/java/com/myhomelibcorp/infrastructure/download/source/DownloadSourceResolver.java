@@ -80,6 +80,18 @@ public class DownloadSourceResolver {
             return DownloadMode.DIRECT_HTTP;
         }
 
+        // Older MyHomeLib collection.info may store only a bare HTTP(S) URL
+        // in ConnectionScript, without a persisted Collection.url and without
+        // executable GET/POST commands. The downloader already accepts this
+        // historical base URL; source resolution must agree with it.
+        String legacyUrl = collection == null ? null
+                : DownloadScenarioParser.legacyBaseUrl(collection.getConnectionScript());
+        if (legacyUrl != null) {
+            log.info("Download mode resolved: DIRECT_HTTP for collection {} (legacy script URL present)",
+                    collectionId);
+            return DownloadMode.DIRECT_HTTP;
+        }
+
         // 4. Немає ні виконуваного сценарію, ні URL
         String errorMessage = String.format(
                 "Не вдалося визначити джерело завантаження для колекції «%s» (id: %s): " +

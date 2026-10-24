@@ -34,6 +34,25 @@ class DownloadSourceResolverTest {
     }
 
     @Test
+    void missingCollectionUrlWithOnlyLegacyHttpPreambleUsesDirectHttp() throws Exception {
+        Collection collection = collectionWithUrlAndScript(null,
+                "https://server/books/");
+        List<DownloadScenarioCommand> commands = DownloadScenarioParser.parse(collection.getConnectionScript());
+        assertThat(commands).isEmpty();
+        assertThat(resolver.resolve(collection, commands)).isEqualTo(DownloadMode.DIRECT_HTTP);
+        assertThat(resolver.resolve(collection)).isEqualTo(DownloadMode.DIRECT_HTTP);
+    }
+
+    @Test
+    void barePreambleNeverTreatsUnsupportedSchemeAsOnlineDownloadSource() {
+        Collection collection = collectionWithUrlAndScript(null,
+                "file:///private/books/");
+        assertThatThrownBy(() -> resolver.resolve(collection))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Не вдалося визначити джерело завантаження");
+    }
+
+    @Test
     void urlWithGetCommand_shouldBeConnectionScript() throws Exception {
         Collection collection = collectionWithUrlAndScript(
                 "https://server/",

@@ -502,6 +502,26 @@ class HttpOnlineBookDownloadAdapterTest {
     }
 
     @Test
+    void legacyBareUrlOnlyWithoutCollectionUrlDownloadsBook() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = server(exchange -> {
+            requests.incrementAndGet();
+            assertThat(exchange.getRequestURI().getPath()).isEqualTo("/legacy.txt");
+            respond(exchange, 200, "standalone-url-book");
+        });
+        Collection collection = new Collection(
+                "online", "Online", temp, null, 1, null, null,
+                null, "", baseUrl());
+        HttpOnlineBookDownloadAdapter adapter =
+                new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
+
+        adapter.download(book("legacy-only", "legacy.txt", "", ""), collection, null, null);
+
+        assertThat(requests.get()).isEqualTo(1);
+        assertThat(Files.readString(temp.resolve("legacy.txt"))).isEqualTo("standalone-url-book");
+    }
+
+    @Test
     void forceRefreshReplacesExistingCopyOnlyAfterSuccessfulValidation() throws Exception {
         Files.writeString(temp.resolve("fresh.txt"), "old-copy", StandardCharsets.UTF_8);
         AtomicInteger requests = new AtomicInteger();
