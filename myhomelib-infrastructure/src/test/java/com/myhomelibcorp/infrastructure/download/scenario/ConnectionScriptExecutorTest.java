@@ -141,6 +141,33 @@ class ConnectionScriptExecutorTest {
     }
 
     @Test
+    void exhaustedGateway502RetainsStatusAndRetryCountForDownloadError() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/offline", exchange -> {
+            requests.incrementAndGet();
+            exchange.sendResponseHeaders(502, -1);
+            exchange.close();
+        });
+        server.start();
+
+        MemorySettings cfg = settings();
+        cfg.put("online.retryCount", "2");
+        cfg.put("online.retryBaseDelayMs", "100");
+        cfg.put("online.retryJitterPercent", "0");
+        BookDto book = BookDto.builder().id("1").fileName("book.txt").build();
+
+        assertThatThrownBy(() -> executor(cfg).execute(
+                "GET " + baseUrl() + "offline\nCHECK", book, collection(null, null), temp,
+                "book.txt", temp.resolve("book.txt"), false, null, ignored -> { }))
+                .isInstanceOf(DownloadScenarioException.class)
+                .hasMessageContaining("HTTP 502")
+                .hasMessageContaining("after 3 attempts");
+        assertThat(requests.get()).isEqualTo(3);
+        assertThat(Files.exists(temp.resolve("book.txt"))).isFalse();
+    }
+
+    @Test
     void permanent404IsNotRetried() throws Exception {
         AtomicInteger requests = new AtomicInteger();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
