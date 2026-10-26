@@ -192,7 +192,9 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
              var statement = connection.createStatement();
              var result = statement.executeQuery("PRAGMA integrity_check")) {
             SafeFilePublication.requireSafeRegularFile(safeDatabase, "SQLite database opened path");
-            // Full integrity_check validates index/table consistency; quick_check does not.\n            // A backup selected for rollback must be fully validated before swapping files.\n            if (!result.next() || !"ok".equalsIgnoreCase(result.getString(1)) || result.next()) {
+            // Full integrity_check validates index/table consistency; quick_check does not.
+            // A backup selected for rollback must be fully validated before swapping files.
+            if (!result.next() || !"ok".equalsIgnoreCase(result.getString(1)) || result.next()) {
                 throw new IOException("SQLite integrity_check failed for " + databaseFile);
             }
         } catch (IOException e) {
