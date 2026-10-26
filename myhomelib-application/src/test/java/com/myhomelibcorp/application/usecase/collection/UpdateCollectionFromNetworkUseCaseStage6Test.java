@@ -18,6 +18,7 @@ import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.application.service.DeferredImportIndexMaintenanceService;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.shared.util.CatalogUpdateRecoveryFiles;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
@@ -78,6 +79,71 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
         lifecycleOrder.verify(f.statistics).invalidate();
         lifecycleOrder.verify(f.statistics).refreshStatistics();
         lifecycleOrder.verify(f.state).recordApplied("remote-collection:collection-42", "20260825");
+    }
+
+    @Test
+    void marksRemoteVersionAppliedOnlyAfterRecoveryIntentIsCommitted(@TempDir Path tempDir) throws Exception {
+        Fixture f = new Fixture();
+        String id = "version-commit-order";
+        String key = "remote-collection:" + id;
+        Collection collection = collection(id, tempDir);
+        Path downloaded = tempDir.resolve("version-order.inpx");
+        Files.write(downloaded, new byte[] {1, 2, 3});
+        AtomicBoolean importerSawPendingIntent = new AtomicBoolean(false);
+
+        when(f.lifecycle.getCurrentCollection()).thenReturn(collection);
+        when(f.state.get(key)).thenReturn(CatalogSourceState.empty(key));
+        when(f.downloader.downloadUpdates(eq(collection), anyString(), anyString(),
+                any(AtomicBoolean.class), any(DoubleConsumer.class), any(Consumer.class)))
+                .thenReturn(RemoteCatalogUpdatePlan.of(
+                        List.of(RemoteCatalogPackage.of(downloaded, "https://example.test/catalog", "20261026", false)),
+                        "20261026"));
+        when(f.importer.execute(any(ImportContext.class))).thenAnswer(ignored -> {
+            importerSawPendingIntent.set(CatalogUpdateRecoveryFiles.isPending(id));
+            return new ImportResult(1, 0, 0, 0, 1, ImportStatus.SUCCESS,
+                    ImportChangeSet.empty(false), List.of());
+        });
+        doAnswer(ignored -> {
+            assertThat(CatalogUpdateRecoveryFiles.isPending(id)).isFalse();
+            return null;
+        }).when(f.state).recordApplied(key, "20261026");
+
+        f.useCase.execute(collection, "https://example.test/catalog", null, null);
+
+        assertThat(importerSawPendingIntent).isTrue();
+        verify(f.state).recordApplied(key, "20261026");
+        verify(f.backup, never()).restoreDatabaseSnapshot(any(), any());
+    }
+
+    @Test
+    void metadataFailureAfterRecoveryCommitDoesNotRestoreAlreadyCommittedCatalog(@TempDir Path tempDir)
+            throws Exception {
+        Fixture f = new Fixture();
+        String id = "version-write-failure";
+        String key = "remote-collection:" + id;
+        Collection collection = collection(id, tempDir);
+        Path downloaded = tempDir.resolve("version-failure.inpx");
+        Files.write(downloaded, new byte[] {1, 2, 3});
+
+        when(f.lifecycle.getCurrentCollection()).thenReturn(collection);
+        when(f.state.get(key)).thenReturn(CatalogSourceState.empty(key));
+        when(f.downloader.downloadUpdates(eq(collection), anyString(), anyString(),
+                any(AtomicBoolean.class), any(DoubleConsumer.class), any(Consumer.class)))
+                .thenReturn(RemoteCatalogUpdatePlan.of(
+                        List.of(RemoteCatalogPackage.of(downloaded, "https://example.test/catalog", "20261026", false)),
+                        "20261026"));
+        when(f.importer.execute(any(ImportContext.class))).thenReturn(
+                new ImportResult(1, 0, 0, 0, 1, ImportStatus.SUCCESS,
+                        ImportChangeSet.empty(false), List.of()));
+        doThrow(new IllegalStateException("metadata-write-failed"))
+                .when(f.state).recordApplied(key, "20261026");
+
+        assertThatThrownBy(() -> f.useCase.execute(
+                collection, "https://example.test/catalog", null, null))
+                .isInstanceOf(CatalogUpdateFailureException.class)
+                .hasMessageContaining("metadata-write-failed");
+        assertThat(CatalogUpdateRecoveryFiles.isPending(id)).isFalse();
+        verify(f.backup, never()).restoreDatabaseSnapshot(any(), any());
     }
 
     @Test
