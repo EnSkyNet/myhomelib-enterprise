@@ -63,6 +63,26 @@ class CollectionManagerCrashRecoveryTest {
     }
 
     @Test
+    void partiallyWrittenPendingMarkerStillRollsBackInterruptedCatalogUpdate() throws Exception {
+        Path target = temp.resolve("partial-marker-library.db");
+        createDatabase(target, "partial-update");
+        Path checkpoint = CatalogUpdateRecoveryFiles.checkpoint("partial-marker");
+        Files.createDirectories(checkpoint.getParent());
+        createDatabase(checkpoint, "baseline-before-update");
+
+        // Model process death during marker creation. Even an incomplete marker is a pending
+        // recovery intent; startup must never accept the partially imported live catalog.
+        Files.writeString(CatalogUpdateRecoveryFiles.marker("partial-marker"), "operation=");
+
+        manager = newManager();
+        manager.switchToCollection(collection("partial-marker", target));
+
+        assertThat(readState(manager.getCurrentJdbcTemplate())).isEqualTo("baseline-before-update");
+        assertThat(CatalogUpdateRecoveryFiles.isPending("partial-marker")).isFalse();
+        assertThat(Files.exists(checkpoint)).isFalse();
+    }
+
+    @Test
     void rejectsIndexCorruptCheckpointAlthoughSqliteQuickCheckReportsOk() throws Exception {
         Path target = temp.resolve("original-catalog.db");
         createDatabase(target, "current-safe-catalog");
