@@ -55,6 +55,14 @@ class CatalogUpdateForkedCrashRecoveryTest {
                 assertThat(child.exitValue()).as(point + ": " + output).isEqualTo(83);
                 assertThat(output).contains("Crash test worker: Аварійне завершення",
                         "Crash test worker stderr: Аварійне завершення");
+                if (!"BEFORE_MARKER".equals(point) && !"AFTER_MARKER_REMOVAL".equals(point)) {
+                    assertThat(CatalogUpdateRecoveryFiles.isPending(collectionId)).as(point).isTrue();
+                }
+                if ("AFTER_SQLITE_COMMIT".equals(point) || "AFTER_MARKER_REMOVAL".equals(point)) {
+                    Path wal = Path.of(target.toString() + "-wal");
+                    assertThat(wal).as(point).isRegularFile();
+                    assertThat(Files.size(wal)).as(point + " committed WAL size").isPositive();
+                }
 
                 // Simulate next application start before any connection opens the SQLite file.
                 Collection collection = new Collection(collectionId, collectionId, null,
