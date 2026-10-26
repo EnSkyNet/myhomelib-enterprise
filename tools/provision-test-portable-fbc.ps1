@@ -38,7 +38,14 @@ try {
     # Preserve license/source attribution alongside the separately executed GPLv3 converter.
     $license = Join-Path $target "LICENSE"
     if (-not (Test-Path -LiteralPath $license -PathType Leaf)) {
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/rupor-github/fb2cng/$version/LICENSE" -OutFile $license
+        # Bundled official GPLv3 LICENSE from the pinned upstream v1.9.4 tag.
+        # Remote raw.githubusercontent.com repeatedly rate-limits Actions with HTTP 429.
+        # The executable asset remains an official release download, SHA-256 verified above.
+        $upstreamLicense = Join-Path $PSScriptRoot "converters\fbc-license-v1.9.4.txt"
+        if (-not (Test-Path -LiteralPath $upstreamLicense -PathType Leaf)) {
+            throw "Pinned fb2cng GPLv3 license file is missing from source"
+        }
+        Copy-Item -LiteralPath $upstreamLicense -Destination $license -Force
     }
     if (-not (Test-Path -LiteralPath $license -PathType Leaf) -or (Get-Item -LiteralPath $license).Length -lt 1000) {
         throw "Upstream fb2cng GPLv3 license is missing or incomplete"

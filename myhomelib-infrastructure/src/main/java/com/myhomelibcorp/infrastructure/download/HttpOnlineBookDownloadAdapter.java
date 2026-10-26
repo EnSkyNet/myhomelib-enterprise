@@ -543,23 +543,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
     private static String effectiveBaseUrl(Collection collection) {
         if (collection == null) return null;
         if (collection.getUrl() != null && !collection.getUrl().isBlank()) return collection.getUrl().trim();
-        String script = collection.getConnectionScript();
-        if (script == null || script.isBlank()) return null;
-        for (String line : script.replace("\r\n", "\n").replace('\r', '\n').split("\n")) {
-            String candidate = line.trim();
-            if (candidate.isEmpty() || candidate.chars().anyMatch(Character::isWhitespace)) continue;
-            try {
-                URI uri = URI.create(candidate);
-                String scheme = uri.getScheme();
-                if (uri.getHost() != null && scheme != null
-                        && (scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
-                    return candidate;
-                }
-            } catch (IllegalArgumentException ignored) {
-                // Not the legacy URL preamble; continue looking.
-            }
-        }
-        return null;
+        return DownloadScenarioParser.legacyBaseUrl(collection.getConnectionScript());
     }
 
     private static Collection collectionWithEffectiveUrl(Collection collection, String baseUrl) {
