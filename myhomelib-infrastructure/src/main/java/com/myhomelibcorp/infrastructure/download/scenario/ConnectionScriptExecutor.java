@@ -311,6 +311,11 @@ public final class ConnectionScriptExecutor {
             } catch (NonRetryableRequestException e) {
                 log.error("  Non-retryable error: {}", e.getMessage());
                 throw new DownloadScenarioException(e.getMessage());
+            } catch (DownloadScenarioException e) {
+                // Keep the actionable server HTTP status and retry count. This
+                // exception is an IOException; the generic catch below must not
+                // replace e.g. "HTTP 502 ... after 3 attempts" with its class name.
+                throw e;
             } catch (IOException e) {
                 log.warn("  IO error: {}", e.getMessage());
                 last = e;
