@@ -186,14 +186,14 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
         }
         Path safeDatabase = SafeFilePublication.requireSafeRegularFile(databaseFile, "SQLite database validation source");
         SafeFilePublication.FileSnapshot before =
-                SafeFilePublication.snapshot(safeDatabase, "SQLite database before quick_check");
+                SafeFilePublication.snapshot(safeDatabase, "SQLite database before integrity_check");
         String url = "jdbc:sqlite:" + safeDatabase.toAbsolutePath().normalize();
         try (var connection = DriverManager.getConnection(url);
              var statement = connection.createStatement();
-             var result = statement.executeQuery("PRAGMA quick_check")) {
+             var result = statement.executeQuery("PRAGMA integrity_check")) {
             SafeFilePublication.requireSafeRegularFile(safeDatabase, "SQLite database opened path");
-            if (!result.next() || !"ok".equalsIgnoreCase(result.getString(1))) {
-                throw new IOException("SQLite quick_check failed for " + databaseFile);
+            // Full integrity_check validates index/table consistency; quick_check does not.\n            // A backup selected for rollback must be fully validated before swapping files.\n            if (!result.next() || !"ok".equalsIgnoreCase(result.getString(1)) || result.next()) {
+                throw new IOException("SQLite integrity_check failed for " + databaseFile);
             }
         } catch (IOException e) {
             throw e;
