@@ -63,6 +63,71 @@ class CollectionManagerCrashRecoveryTest {
     }
 
     @Test
+    void rejectsIndexCorruptCheckpointAlthoughSqliteQuickCheckReportsOk() throws Exception {
+        Path target = temp.resolve("original-catalog.db");
+        createDatabase(target, "current-safe-catalog");
+        Path checkpoint = CatalogUpdateRecoveryFiles.checkpoint("corrupt-checkpoint");
+        Files.createDirectories(checkpoint.getParent());
+        createDatabase(checkpoint, "baseline-before-update");
+
+        // Synthetic corruption of one B-tree index payload byte: the page remains
+        // structurally valid and PRAGMA quick_check says "ok", but the index no
+        // longer matches its source table. This fixture never touches user data.
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + checkpoint.toAbsolutePath());
+             var statement = connection.createStatement()) {
+            statement.execute("CREATE INDEX idx_recovery_value ON recovery_state(value)");
+        }
+        int indexRootPage;
+        int pageSize;
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + checkpoint.toAbsolutePath());
+             var statement = connection.createStatement()) {
+            try (var index = statement.executeQuery(
+                    "SELECT rootpage FROM sqlite_master WHERE name='idx_recovery_value'")) {
+                assertThat(index.next()).isTrue();
+                indexRootPage = index.getInt(1);
+            }
+            try (var size = statement.executeQuery("PRAGMA page_size")) {
+                assertThat(size.next()).isTrue();
+                pageSize = size.getInt(1);
+            }
+        }
+        try (var bytes = new java.io.RandomAccessFile(checkpoint.toFile(), "rw")) {
+            long pageStart = (indexRootPage - 1L) * pageSize;
+            bytes.seek(pageStart);
+            assertThat(bytes.readUnsignedByte()).isEqualTo(0x0a); // leaf index B-tree
+            bytes.seek(pageStart + 8);
+            int cellOffset = bytes.readUnsignedShort();
+            // Index record layout for one short TEXT key with rowid:
+            // varint payload len, header size, text serial type, rowid serial type, TEXT.
+            bytes.seek(pageStart + cellOffset + 4);
+            assertThat(bytes.readUnsignedByte()).isEqualTo((int) 'b');
+            bytes.seek(pageStart + cellOffset + 4);
+            bytes.writeByte('Z');
+        }
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + checkpoint.toAbsolutePath());
+             var statement = connection.createStatement()) {
+            try (var quick = statement.executeQuery("PRAGMA quick_check")) {
+                assertThat(quick.next()).isTrue();
+                assertThat(quick.getString(1)).isEqualTo("ok");
+            }
+            try (var full = statement.executeQuery("PRAGMA integrity_check")) {
+                assertThat(full.next()).isTrue();
+                assertThat(full.getString(1)).contains("missing from index");
+            }
+        }
+        CatalogUpdateRecoveryFiles.markPending("corrupt-checkpoint", "catalog-update-test");
+        org.junit.jupiter.api.Assertions.assertThrows(IOException.class,
+                () -> CollectionCrashRecovery.recoverBeforeOpen(
+                        collection("corrupt-checkpoint", target), target));
+        org.junit.jupiter.api.Assertions.assertThrows(IOException.class,
+                () -> new com.myhomelibcorp.infrastructure.adapter.CollectionBackupAdapter(
+                        mock(CollectionManager.class)).validateDatabaseFile(checkpoint));
+        assertThat(readState(target)).isEqualTo("current-safe-catalog");
+        assertThat(Files.exists(checkpoint)).isTrue();
+        assertThat(CatalogUpdateRecoveryFiles.isPending("corrupt-checkpoint")).isTrue();
+    }
+
+    @Test
     void rollsBackInterruptedUserRestoreWhenPreviousDatabaseStillExists() throws Exception {
         Path target = temp.resolve("restore.db");
         createDatabase(target, "candidate-not-committed");

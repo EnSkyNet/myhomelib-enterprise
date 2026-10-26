@@ -306,17 +306,19 @@ final class CollectionCrashRecovery {
     private static void validateDatabase(Path database) throws IOException {
         Path safe = SafeFilePublication.requireSafeRegularFile(database, "SQLite recovery database");
         SafeFilePublication.FileSnapshot before =
-                SafeFilePublication.snapshot(safe, "SQLite recovery database before quick_check");
+                SafeFilePublication.snapshot(safe, "SQLite recovery database before integrity_check");
         if (before.size() <= 0L) {
             throw new IOException("SQLite recovery database is missing or empty: " + safe);
         }
         String url = "jdbc:sqlite:" + safe;
         try (var connection = DriverManager.getConnection(url);
              var statement = connection.createStatement();
-             var result = statement.executeQuery("PRAGMA quick_check")) {
+             var result = statement.executeQuery("PRAGMA integrity_check")) {
             SafeFilePublication.requireSafeRegularFile(safe, "SQLite recovery database opened path");
-            if (!result.next() || !"ok".equalsIgnoreCase(result.getString(1))) {
-                throw new IOException("SQLite quick_check failed for recovery database: " + safe);
+            // quick_check does not verify that index entries correspond to table rows.
+            // Fail closed before replacing a live catalog with a corrupt checkpoint.
+            if (!result.next() || !"ok".equalsIgnoreCase(result.getString(1)) || result.next()) {
+                throw new IOException("SQLite integrity_check failed for recovery database: " + safe);
             }
         } catch (IOException e) {
             throw e;
@@ -324,7 +326,7 @@ final class CollectionCrashRecovery {
             throw new IOException("Cannot validate SQLite recovery database: " + safe, e);
         }
         SafeFilePublication.FileSnapshot after =
-                SafeFilePublication.snapshot(safe, "SQLite recovery database after quick_check");
+                SafeFilePublication.snapshot(safe, "SQLite recovery database after integrity_check");
         if (before.size() != after.size() || !before.sha256().equalsIgnoreCase(after.sha256())) {
             throw new IOException("SQLite recovery database changed while validation was in progress: " + safe);
         }
