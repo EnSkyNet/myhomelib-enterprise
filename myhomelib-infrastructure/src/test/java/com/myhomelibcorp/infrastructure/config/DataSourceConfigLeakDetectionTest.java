@@ -7,9 +7,13 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
 
 class DataSourceConfigLeakDetectionTest {
 
@@ -38,6 +42,36 @@ class DataSourceConfigLeakDetectionTest {
             assertThat(pragmaLong(indexing, "cache_size")).isEqualTo(-8_192L);
             assertThat(pragmaLong(importReader, "cache_size")).isEqualTo(-8_192L);
         }
+    }
+
+    @Test
+    void refusesToContinueWhenSqliteReturnsRollbackJournalInsteadOfWal() throws Exception {
+        HikariDataSource pool = mock(HikariDataSource.class);
+        Connection connection = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        ResultSet response = mock(ResultSet.class);
+        when(pool.getConnection()).thenReturn(connection);
+        when(connection.createStatement()).thenReturn(statement);
+        when(statement.executeQuery("PRAGMA journal_mode=WAL")).thenReturn(response);
+        when(response.next()).thenReturn(true);
+        when(response.getString(1)).thenReturn("delete");
+
+        assertThatThrownBy(() -> new DataSourceConfig().initializeWalOnce(pool))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Cannot initialize SQLite WAL mode")
+                .hasRootCauseInstanceOf(SQLException.class);
+        verify(pool, times(3)).getConnection();
+    }
+
+    @Test
+    void rejectsSqliteWalInitializationWhenEveryAttemptFails() throws Exception {
+        HikariDataSource pool = mock(HikariDataSource.class);
+        when(pool.getConnection()).thenThrow(new SQLException("read-only catalog"));
+
+        assertThatThrownBy(() -> new DataSourceConfig().initializeWalOnce(pool))
+                .isInstanceOf(IllegalStateException.class)
+                .hasRootCauseMessage("read-only catalog");
+        verify(pool, times(3)).getConnection();
     }
 
     @Test
@@ -96,10 +130,19 @@ class DataSourceConfigLeakDetectionTest {
     private static void assertInteractivePragmas(Connection connection) throws SQLException {
         assertThat(pragmaLong(connection, "foreign_keys")).isEqualTo(1L);
         assertThat(pragmaLong(connection, "busy_timeout")).isEqualTo(15_000L);
+        assertThat(pragmaText(connection, "journal_mode")).isEqualToIgnoringCase("wal");
         assertThat(pragmaLong(connection, "synchronous")).isEqualTo(1L); // NORMAL
         assertThat(pragmaLong(connection, "temp_store")).isEqualTo(1L); // FILE
         assertThat(pragmaLong(connection, "cache_size")).isEqualTo(DataSourceConfig.INTERACTIVE_CACHE_SIZE_KIB);
         assertThat(pragmaLong(connection, "mmap_size")).isEqualTo(DataSourceConfig.INTERACTIVE_MMAP_SIZE_BYTES);
+    }
+
+    private static String pragmaText(Connection connection, String pragma) throws SQLException {
+        try (var statement = connection.createStatement();
+             var result = statement.executeQuery("PRAGMA " + pragma)) {
+            assertThat(result.next()).isTrue();
+            return result.getString(1);
+        }
     }
 
     private static long pragmaLong(Connection connection, String pragma) throws SQLException {
