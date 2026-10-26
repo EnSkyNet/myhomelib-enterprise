@@ -1,6 +1,7 @@
 package com.myhomelibcorp.shared.util;
 
 import java.io.IOException;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -48,8 +49,15 @@ public final class CatalogUpdateRecoveryFiles {
         }
         String body = "operation=" + safe(operationId) + System.lineSeparator()
                 + "startedAt=" + Instant.now() + System.lineSeparator();
-        Files.writeString(marker, body, StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+        // The marker must reach stable storage *before* any catalog transaction is allowed
+        // to commit. Files.writeString closes the file but does not request a durability flush.
+        // A partial file after process death is still conservatively treated as pending.
+        try (FileChannel channel = FileChannel.open(marker,
+                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+            var bytes = StandardCharsets.UTF_8.encode(body);
+            while (bytes.hasRemaining()) channel.write(bytes);
+            channel.force(true);
+        }
         AtomicFileSupport.requireSafeRegularFile(marker, "catalog-update recovery marker");
     }
 
