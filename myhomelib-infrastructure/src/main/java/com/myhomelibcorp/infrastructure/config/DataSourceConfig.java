@@ -48,8 +48,18 @@ public class DataSourceConfig {
         String dbName = normalizedPath.substring(normalizedPath.lastIndexOf('/') + 1).replace(".db", "");
         HikariDataSource dataSource = new HikariDataSource(baseConfig(
                 "jdbc:sqlite:" + dbPath, "HikariPool-" + System.currentTimeMillis() + "-" + dbName));
-        initializeWalOnce(dataSource);
-        return dataSource;
+        try {
+            initializeWalOnce(dataSource);
+            return dataSource;
+        } catch (RuntimeException | Error failure) {
+            // Do not leave an initialized pool running after journal-mode negotiation failed.
+            try {
+                dataSource.close();
+            } catch (RuntimeException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            throw failure;
+        }
     }
 
     private HikariConfig baseConfig(String jdbcUrl, String poolName) {
@@ -79,25 +89,33 @@ public class DataSourceConfig {
         }
     }
 
-    /** WAL is persistent database state; setting it on every pooled connection can itself contend for a lock. */
-    private void initializeWalOnce(HikariDataSource dataSource) {
+    /**
+     * WAL is persistent database state; setting it on every pooled connection can contend for a lock.
+     * Never silently continue in an unexpected mode: recovery and checkpoint workflows assume WAL.
+     */
+    void initializeWalOnce(HikariDataSource dataSource) {
+        SQLException lastFailure = null;
         for (int attempt = 1; attempt <= 3; attempt++) {
-            try (var connection = dataSource.getConnection(); var statement = connection.createStatement()) {
-                statement.execute("PRAGMA journal_mode=WAL");
+            try (var connection = dataSource.getConnection();
+                 var statement = connection.createStatement();
+                 var result = statement.executeQuery("PRAGMA journal_mode=WAL")) {
+                String mode = result.next() ? result.getString(1) : null;
+                if (!"wal".equalsIgnoreCase(mode)) {
+                    throw new SQLException("SQLite refused WAL mode (returned " + mode + ")");
+                }
                 return;
             } catch (SQLException error) {
-                if (attempt == 3) {
-                    log.warn("Не вдалося підтвердити WAL mode для SQLite; продовжуємо з поточним режимом: {}",
-                            error.getMessage());
-                    return;
-                }
+                lastFailure = error;
+                if (attempt == 3) break;
                 try {
                     Thread.sleep(100L * attempt);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
-                    return;
+                    throw new IllegalStateException("Interrupted while initializing SQLite WAL mode", interrupted);
                 }
             }
         }
+        throw new IllegalStateException("Cannot initialize SQLite WAL mode; refusing to open collection database",
+                lastFailure);
     }
 }
