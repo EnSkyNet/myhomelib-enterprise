@@ -424,7 +424,6 @@ public class UpdateCollectionFromNetworkUseCase {
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                             skipped, duplicates, issues.size(), errors));
             String applied = lastVersion(plan);
-            sourceState.recordApplied(sourceKey, applied);
 
             // Removing the durable pending marker is the catalog-update commit point. Do not report
             // success while the marker still exists: a later restart would otherwise interpret the
@@ -433,6 +432,14 @@ public class UpdateCollectionFromNetworkUseCase {
                 commitRecoveryCheckpoint(active, checkpoint);
                 checkpoint = null;
             }
+
+            // Advance the remote version only AFTER the SQLite update can no longer be rolled
+            // back by startup recovery. Otherwise a crash between recordApplied() and marker
+            // removal can restore old catalog contents while claiming the new version is applied,
+            // making the next incremental update incorrectly skip those missing records.
+            // If metadata persistence fails here, the committed DB remains authoritative and a
+            // subsequent retry may safely reapply the same update.
+            sourceState.recordApplied(sourceKey, applied);
 
             // SQLite secondary indexes dropped for a huge initial baseline are intentionally
             // restored only after this UPDATE lease is released. Their exact CREATE statements
