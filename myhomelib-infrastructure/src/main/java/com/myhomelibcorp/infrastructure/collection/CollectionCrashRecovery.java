@@ -315,7 +315,9 @@ final class CollectionCrashRecovery {
              var statement = connection.createStatement();
              var result = statement.executeQuery("PRAGMA integrity_check")) {
             SafeFilePublication.requireSafeRegularFile(safe, "SQLite recovery database opened path");
-            // quick_check does not verify that index entries correspond to table rows.\n            // Fail closed before replacing a live catalog with a corrupt checkpoint.\n            if (!result.next() || !"ok".equalsIgnoreCase(result.getString(1)) || result.next()) {
+            // quick_check does not verify that index entries correspond to table rows.
+            // Fail closed before replacing a live catalog with a corrupt checkpoint.
+            if (!result.next() || !"ok".equalsIgnoreCase(result.getString(1)) || result.next()) {
                 throw new IOException("SQLite integrity_check failed for recovery database: " + safe);
             }
         } catch (IOException e) {
