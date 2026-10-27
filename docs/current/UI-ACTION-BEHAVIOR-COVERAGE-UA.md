@@ -2,8 +2,8 @@
 
 Цей реєстр є строгішим доповненням до `UI-ACTION-COVERAGE.json`: generic controller-level test не рахується. Для кожної дії потрібен exact handler/callback/delegate/control token у JUnit-тесті з observable assertion/Mockito verification, або вузький documented exclusion.
 
-- Inventory: **490**
-- Automated action-specific: **489**
+- Inventory: **491**
+- Automated action-specific: **490**
 - Justified exclusions: **1**
 - Missing: **0**
 
@@ -391,6 +391,7 @@
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/duplicate/DuplicateReviewUiService.java` | `start.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `ProgrammaticDialogActionBehaviorContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/duplicate/DuplicateReviewUiService.java` | `undo.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `ProgrammaticDialogActionBehaviorContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/group/GroupWorkspaceController.java` | `deleteItem.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `GroupWorkspaceActionBehaviorContractTest.java` |
+| `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/group/GroupWorkspaceController.java` | `exportItem.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `GroupMetabibExportUiContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/group/GroupWorkspaceController.java` | `renameItem.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `GroupWorkspaceActionBehaviorContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/group/GroupWorkspaceController.java` | `selectItem.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `GroupWorkspaceActionBehaviorContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/integration/IntegrationCenterDialog.java` | `clearKey.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `ProgrammaticDialogActionBehaviorContractTest.java` |
