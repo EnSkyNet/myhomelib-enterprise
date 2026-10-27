@@ -217,6 +217,16 @@ class ConnectionScriptExecutorTest {
     }
 
     @Test
+    void configuredNinetySecondTimeoutIsNotSilentlyCappedToThirtySeconds() {
+        MemorySettings cfg = settings();
+        cfg.put("online.readTimeoutSeconds", "90");
+        assertThat(executor(cfg).connectionScriptRequestTimeout())
+                .isEqualTo(java.time.Duration.ofSeconds(90));
+        assertThat(executor(settings()).connectionScriptRequestTimeout())
+                .isEqualTo(java.time.Duration.ofSeconds(30));
+    }
+
+    @Test
     void permanent404IsNotRetried() throws Exception {
         AtomicInteger requests = new AtomicInteger();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
