@@ -4,13 +4,13 @@
   "product_version": "8.0.0",
   "contract": "Every current user-triggerable FXML/programmatic JavaFX or Web Library action has explicit reviewed automated evidence; handler/callback fingerprints force review after behavioral code changes.",
   "summary": {
-    "actions": 490,
+    "actions": 491,
     "fxml_actions": 275,
-    "programmatic_actions": 209,
+    "programmatic_actions": 210,
     "web_actions": 6,
     "direct_fxml_actions": 207,
-    "delegate_contract_actions": 283,
-    "behavioral_evidence_actions": 490,
+    "delegate_contract_actions": 284,
+    "behavioral_evidence_actions": 491,
     "unmapped": 0
   },
   "entries": [
@@ -7178,6 +7178,25 @@
         "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteGroupRepositoryTest.java"
       ],
       "callback_sha256": "228ff2d324326f797a3897b5c852dce9f56cb6bacdc2d2ec44043451ff7a5a11",
+      "behavioral_evidence": true
+    },
+    {
+      "key": "PROGRAMMATIC|myhomelib-ui/src/main/java/com/myhomelibcorp/ui/group/GroupWorkspaceController.java|exportItem|1",
+      "kind": "PROGRAMMATIC",
+      "surface": "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/group/GroupWorkspaceController.java",
+      "controller": "GroupWorkspaceController",
+      "action": "exportItem.setOnAction[1]",
+      "control": "exportItem",
+      "label": "exportItem",
+      "preconditions": "контекст, заданий діалогом/reader/service; boundary тестується без реальної зовнішньої мутації",
+      "expected_result": "користувач експортує локально доступні книги вибраної групи до окремої metabib-колекції",
+      "user_function_ref": "groups",
+      "coverage": "AUTOMATED_DELEGATE_CONTRACT",
+      "evidence": [
+        "myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/group/GroupOperationExecutorLifecycleTest.java",
+        "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteGroupRepositoryTest.java"
+      ],
+      "callback_sha256": "4f22090fb7fe326fb11c26abe84bd9085a98cbe6f1f7f7cb24008da9daa2c262",
       "behavioral_evidence": true
     },
     {

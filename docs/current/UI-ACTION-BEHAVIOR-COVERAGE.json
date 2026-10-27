@@ -1,7 +1,7 @@
 {
   "summary": {
-    "actions": 490,
-    "automated_action_specific": 489,
+    "actions": 491,
+    "automated_action_specific": 490,
     "justified_exclusions": 1,
     "missing": 0
   },
@@ -7625,6 +7625,24 @@
       "status": "AUTOMATED_ACTION_SPECIFIC",
       "evidence": [
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/group/GroupWorkspaceActionBehaviorContractTest.java"
+      ]
+    },
+    {
+      "key": "PROGRAMMATIC|myhomelib-ui/src/main/java/com/myhomelibcorp/ui/group/GroupWorkspaceController.java|exportItem|1",
+      "kind": "PROGRAMMATIC",
+      "surface": "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/group/GroupWorkspaceController.java",
+      "controller": "GroupWorkspaceController",
+      "action": "exportItem.setOnAction[1]",
+      "user_function_ref": "groups",
+      "implementation_fingerprint": "4f22090fb7fe326fb11c26abe84bd9085a98cbe6f1f7f7cb24008da9daa2c262",
+      "behavior_tokens": [
+        "exportGroupMetabib",
+        "exportItem",
+        "getExportItem"
+      ],
+      "status": "AUTOMATED_ACTION_SPECIFIC",
+      "evidence": [
+        "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/group/GroupMetabibExportUiContractTest.java"
       ]
     },
     {
