@@ -29,10 +29,24 @@ public final class OnlineHttpPolicy {
     public OnlineHttpPolicy(ApplicationSettingsPort settings) { this.settings = settings; }
 
     public HttpClient create(CookieHandler cookies) {
+        return create(cookies, false);
+    }
+
+    /**
+     * Legacy MyHomeLib ConnectionScript endpoints are commonly HTTP/1.1-only.
+     * Avoid HTTP/2 ALPN negotiation for these cookie-bearing, scripted transfers;
+     * stateless callers retain the default protocol preference.
+     */
+    public HttpClient createConnectionScript(CookieHandler cookies) {
+        return create(java.util.Objects.requireNonNull(cookies, "cookies"), true);
+    }
+
+    private HttpClient create(CookieHandler cookies, boolean legacyHttp11) {
         int connectSeconds = clamp(settings.getInt("online.connectTimeoutSeconds", 20), 2, 300);
         HttpClient.Builder builder = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .connectTimeout(Duration.ofSeconds(connectSeconds));
+        if (legacyHttp11) builder.version(HttpClient.Version.HTTP_1_1);
         if (cookies != null) builder.cookieHandler(cookies);
         configureTls(builder);
 
