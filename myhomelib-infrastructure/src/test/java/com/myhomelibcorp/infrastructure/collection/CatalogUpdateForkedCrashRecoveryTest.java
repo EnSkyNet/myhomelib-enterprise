@@ -33,7 +33,9 @@ class CatalogUpdateForkedCrashRecoveryTest {
                 Path checkpoint = CatalogUpdateRecoveryFiles.checkpoint(collectionId);
                 Files.createDirectories(checkpoint.getParent());
                 createDatabase(target);
-                createSnapshot(target, checkpoint);
+                // The synthetic DB is closed and uses DELETE journaling here,
+                // so a byte-for-byte copy is a consistent pre-update checkpoint.
+                Files.copy(target, checkpoint);
 
                 String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
                 String classpath = System.getProperty(
@@ -102,11 +104,4 @@ class CatalogUpdateForkedCrashRecoveryTest {
         }
     }
 
-    private static void createSnapshot(Path source, Path checkpoint) throws Exception {
-        String escapedPath = checkpoint.toAbsolutePath().toString().replace("'", "''");
-        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + source.toAbsolutePath());
-             var statement = connection.createStatement()) {
-            statement.execute("BACKUP main TO '" + escapedPath + "'");
-        }
-    }
 }
