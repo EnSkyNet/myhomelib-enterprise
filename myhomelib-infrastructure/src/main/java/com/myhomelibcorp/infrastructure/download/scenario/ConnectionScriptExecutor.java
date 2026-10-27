@@ -384,10 +384,11 @@ public final class ConnectionScriptExecutor {
         return OnlineRetryPolicy.isRetryableIOException(failure);
     }
 
-    private java.time.Duration connectionScriptRequestTimeout() {
-        java.time.Duration configured = httpPolicy.requestTimeout();
-        java.time.Duration cap = java.time.Duration.ofSeconds(30);
-        return configured.compareTo(cap) > 0 ? cap : configured;
+    // Honor the user's explicit request timeout, including the 90-second
+    // response budget of the original 2.5.x compatibility profile. The
+    // OnlineHttpPolicy still bounds it to 5..7200 seconds.
+    java.time.Duration connectionScriptRequestTimeout() {
+        return httpPolicy.requestTimeout();
     }
 
     private byte[] encodeMultipartBody(List<FormField> fields, String boundary) throws DownloadScenarioException {

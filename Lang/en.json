@@ -3386,6 +3386,8 @@
     "ui.settings.language_diagnostics.ok": "Language catalogs loaded without errors or warnings.",
     "ui.settings.language_diagnostics.summary": "Errors: %d; warnings: %d.",
     "ui.settings.online.auto_update_on_startup": "Automatically check for online catalogue updates after startup",
+    "ui.settings.online.classic_profile": "MyHomeLib 2.5.x compatibility profile (test)",
+    "ui.settings.online.classic_profile_note": "Sets 9 s connect, 90 s request timeout, 1 simultaneous download, 1 request per host and the historical User-Agent. Save with OK and restart the app. TLS certificates and proxy rules remain protected.",
     "ui.settings.online.user_agent": "User-Agent",
     "ui.settings.tab.converters": "Converters",
     "ui.settings.tab.device_export": "Device / export",

@@ -3386,6 +3386,8 @@
     "ui.settings.language_diagnostics.ok": "Мовні каталоги завантажено без помилок і попереджень.",
     "ui.settings.language_diagnostics.summary": "Помилок: %d; попереджень: %d.",
     "ui.settings.online.auto_update_on_startup": "Автоматично перевіряти оновлення онлайн-каталогу після запуску",
+    "ui.settings.online.classic_profile": "Профіль сумісності з MyHomeLib 2.5.x (для тестування)",
+    "ui.settings.online.classic_profile_note": "Установлює 9 с з’єднання, 90 с очікування відповіді, 1 завантаження, 1 запит на сервер і історичний User-Agent. Натисніть OK та перезапустіть програму. Сертифікати TLS і проксі не послаблюються.",
     "ui.settings.online.user_agent": "User-Agent",
     "ui.settings.tab.converters": "Конвертери",
     "ui.settings.tab.device_export": "Пристрій / експорт",

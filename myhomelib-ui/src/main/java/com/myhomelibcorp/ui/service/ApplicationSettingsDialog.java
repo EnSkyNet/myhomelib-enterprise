@@ -423,6 +423,13 @@ public class ApplicationSettingsDialog {
                 field(text, "online.userAgent", "MyHomeLib Enterprise/8.0.0")));
         box.getChildren().add(row(UiText.text("ui.java.application_settings_dialog.c925aaed28"), field(text, "online.maxParallelDownloads", "2")));
         box.getChildren().add(row(UiText.text("ui.java.application_settings_dialog.fc423aacf6"), field(text, "online.maxParallelDownloadsPerHost", "2")));
+        Button classic = new Button(localizationService.text("ui.settings.online.classic_profile"));
+        classic.setTooltip(new Tooltip(localizationService.text("ui.settings.online.classic_profile_note")));
+        classic.setOnAction(event -> ClassicOnlineDownloadProfile.values().forEach((key, value) -> {
+            TextField input = text.get(key);
+            if (input != null) input.setText(value);
+        }));
+        box.getChildren().add(classic);
         box.getChildren().add(checkbox(bool, "online.archive.highReliabilityValidation",
                 UiText.text("ui.java.application_settings_dialog.79e0bebf74"), false));
 

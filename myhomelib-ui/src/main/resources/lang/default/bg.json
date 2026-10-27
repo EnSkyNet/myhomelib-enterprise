@@ -3386,6 +3386,8 @@
     "ui.settings.language_diagnostics.ok": "Езиковите каталози са заредени без грешки и предупреждения.",
     "ui.settings.language_diagnostics.summary": "Грешки: %d; предупреждения: %d.",
     "ui.settings.online.auto_update_on_startup": "Автоматична проверка за обновявания на онлайн каталога след стартиране",
+    "ui.settings.online.classic_profile": "Профил за съвместимост с MyHomeLib 2.5.x (тест)",
+    "ui.settings.online.classic_profile_note": "Задава 9 сек. за връзка, 90 сек. изчакване, 1 изтегляне, 1 заявка за сървър и исторически User-Agent. Запазете с OK и рестартирайте. Защитата на TLS и прокси остава непроменена.",
     "ui.settings.online.user_agent": "User-Agent",
     "ui.settings.tab.converters": "Конвертори",
     "ui.settings.tab.device_export": "Устройство / експорт",
