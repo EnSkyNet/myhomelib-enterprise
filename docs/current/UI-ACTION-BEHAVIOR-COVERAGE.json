@@ -1,7 +1,7 @@
 {
   "summary": {
-    "actions": 489,
-    "automated_action_specific": 488,
+    "actions": 490,
+    "automated_action_specific": 489,
     "justified_exclusions": 1,
     "missing": 0
   },
@@ -9254,6 +9254,24 @@
       "evidence": [
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/service/ApplicationSettingsProgrammaticActionBehaviorContractTest.java",
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/service/ApplicationSettingsUpdateActionContractTest.java"
+      ]
+    },
+    {
+      "key": "PROGRAMMATIC|myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java|classic|1",
+      "kind": "PROGRAMMATIC",
+      "surface": "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java",
+      "controller": "ApplicationSettingsDialog",
+      "action": "classic.setOnAction[1]",
+      "user_function_ref": "settings",
+      "implementation_fingerprint": "6e9ffbbd23e89304f2f7b144072b1a1dbd18ee41aaf239f325cf3ba2f4cabc2a",
+      "behavior_tokens": [
+        "values",
+        "classic",
+        "getClassic"
+      ],
+      "status": "AUTOMATED_ACTION_SPECIFIC",
+      "evidence": [
+        "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/service/ApplicationSettingsClassicActionContractTest.java"
       ]
     },
     {
