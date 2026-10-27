@@ -147,6 +147,57 @@ class MetabibCatalogReaderTest {
                 .hasMessageContaining("symbolic link");
     }
 
+    @Test
+    void archiveEntriesWithSameIndexInDifferentZipsKeepDistinctSourceBookIds() throws Exception {
+        String header = """
+                {"schema":"metabib.dataset/1","id":"two-archives","record_schema":"metabib.dataset_record/1","library":"flibusta","created":"2026-10-27T00:00:00Z","records":2,"generator":{"name":"test","version":"1"},"normalization":{"model":"metabib.norm/1"},"ordering":{"mode":"archive_entry","direction":"ascending"},"processing":{"parse_fb2":true,"archive_content_checksum":{"enabled":false}},"archives":[{"id":"archive-a","name":"a.zip","ordinal":0,"entries":1,"fb2_entries":1},{"id":"archive-b","name":"b.zip","ordinal":1,"entries":1,"fb2_entries":1}]}
+                """;
+        String a = """
+                {"schema":"metabib.dataset_record/1","record":{"library":"flibusta","locator":{"kind":"archive_entry","source":"archive-a","index":0}},"identities":{},"artifacts":[],"observations":[],"claims":{"bibliographic":{"title":[{"value":"Alpha"}]},"publication":{},"catalog":{}},"issues":[]}
+                """;
+        String b = """
+                {"schema":"metabib.dataset_record/1","record":{"library":"flibusta","locator":{"kind":"archive_entry","source":"archive-b","index":0}},"identities":{},"artifacts":[],"observations":[],"claims":{"bibliographic":{"title":[{"value":"Beta"}]},"publication":{},"catalog":{}},"issues":[]}
+                """;
+        Path source = temp.resolve("two-archives.jsonl");
+        Files.writeString(source, header + a + b, StandardCharsets.UTF_8);
+
+        try (CatalogReadSession session = reader.open(source)) {
+            CatalogRecord first = session.next();
+            CatalogRecord second = session.next();
+            assertThat(first.title()).isEqualTo("Alpha");
+            assertThat(second.title()).isEqualTo("Beta");
+            assertThat(first.sourceBookId()).contains("archive-a");
+            assertThat(second.sourceBookId()).contains("archive-b");
+            assertThat(first.sourceBookId()).isNotEqualTo(second.sourceBookId());
+            assertThat(first.sourceMetadata()).containsEntry("locator.index", "0")
+                    .containsEntry("locator.source", "archive-a");
+            assertThat(second.sourceMetadata()).containsEntry("locator.source", "archive-b");
+            assertThat(session.hasNext()).isFalse();
+        }
+    }
+
+    @Test
+    void archiveLocatorWithCatalogIdentityPreservesFlibustaBookIdForDownstreamImport() throws Exception {
+        String header = """
+                {"schema":"metabib.dataset/1","id":"identity","record_schema":"metabib.dataset_record/1","library":"flibusta","created":"2026-10-27T00:00:00Z","records":1,"generator":{"name":"test","version":"1"},"normalization":{"model":"metabib.norm/1"},"ordering":{"mode":"archive_entry","direction":"ascending"},"processing":{"parse_fb2":true,"archive_content_checksum":{"enabled":false}},"archives":[]}
+                """;
+        String record = """
+                {"schema":"metabib.dataset_record/1","record":{"library":"flibusta","locator":{"kind":"archive_entry","source":"archive-c","index":0}},"identities":{"catalog":[{"scheme":"flibusta","value":"893718"}]},"artifacts":[],"observations":[],"claims":{"bibliographic":{"title":[{"value":"Identity"}]}},"issues":[]}
+                """;
+        Path source = temp.resolve("identity.jsonl");
+        Files.writeString(source, header + record, StandardCharsets.UTF_8);
+        try (CatalogReadSession session = reader.open(source)) {
+            CatalogRecord book = session.next();
+            assertThat(book.externalIdentities()).anySatisfy(identity -> {
+                assertThat(identity.scheme()).isEqualTo("catalog:flibusta");
+                assertThat(identity.value()).isEqualTo("893718");
+            });
+            assertThat(book.sourceMetadata()).containsEntry("locator.index", "0")
+                    .doesNotContainKey("locator.book_id");
+            assertThat(session.hasNext()).isFalse();
+        }
+    }
+
     private static String dataset() {
         return """
                 {"schema":"metabib.dataset/1","id":"test","record_schema":"metabib.dataset_record/1","library":"flibusta","created":"2026-08-30T00:00:00Z","records":1,"generator":{"name":"test","version":"1"},"normalization":{"model":"metabib.norm/1"},"ordering":{"mode":"database_book_id","direction":"ascending"},"processing":{"parse_fb2":true,"archive_content_checksum":{"enabled":false}},"archives":[]}
