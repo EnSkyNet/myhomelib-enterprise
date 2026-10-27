@@ -3,8 +3,7 @@ package com.myhomelibcorp.ui.service;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.io.FileInputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -14,8 +13,11 @@ class ApplicationSettingsClassicActionContractTest {
     void applicationSettingsDialogClassicButtonPopulatesVisibleFieldsBeforeSave() throws Exception {
         // Static UI contract: the control uses the preset values via setOnAction and
         // the normal settings Save path. No hidden direct mutation of persisted secrets.
-        String ui = Files.readString(Path.of(
-                "src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java"), StandardCharsets.UTF_8);
+        String ui;
+        try (var source = new FileInputStream(
+                "src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java")) {
+            ui = new String(source.readAllBytes(), StandardCharsets.UTF_8);
+        }
         assertThat(ui).contains(
                 "Button classic = new Button(",
                 "classic.setOnAction(",
