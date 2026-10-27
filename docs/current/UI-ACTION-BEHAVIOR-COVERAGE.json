@@ -9407,6 +9407,7 @@
       "status": "AUTOMATED_ACTION_SPECIFIC",
       "evidence": [
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/controller/DeferredMainFeatureActionsTest.java",
+        "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/service/ApplicationSettingsClassicActionContractTest.java",
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/service/ApplicationSettingsProgrammaticActionBehaviorContractTest.java",
         "myhomelib-ui/src/test/java/com/myhomelibcorp/ui/service/ApplicationSettingsUpdateActionContractTest.java"
       ]
