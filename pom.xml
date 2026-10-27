@@ -22,10 +22,10 @@
         <mhl.test.jvmArgs></mhl.test.jvmArgs>
         <mhl.mockito.agentArg>-javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</mhl.mockito.agentArg>
 
-        <spring-boot.version>4.1.1</spring-boot.version>
-        <javafx.version>21.0.12</javafx.version>
+        <spring-boot.version>4.1.2</spring-boot.version>
+        <javafx.version>21.0.13</javafx.version>
         <sqlite.version>3.53.4.0</sqlite.version>
-        <flyway.version>13.10.3</flyway.version>
+        <flyway.version>13.11.1</flyway.version>
         <mapstruct.version>1.6.3</mapstruct.version>
         <lombok.version>1.18.48</lombok.version>
         <caffeine.version>3.3.1</caffeine.version>
@@ -324,7 +324,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.6.0</version>
+                    <version>3.6.1</version>
                     <configuration>
                         <argLine>-Dfile.encoding=UTF-8 -Dconsole.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8 ${mhl.test.jvmArgs}</argLine>
                         <includes>
