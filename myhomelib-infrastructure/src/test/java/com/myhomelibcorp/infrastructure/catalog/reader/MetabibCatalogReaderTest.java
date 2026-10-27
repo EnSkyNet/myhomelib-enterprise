@@ -189,7 +189,7 @@ class MetabibCatalogReaderTest {
         try (CatalogReadSession session = reader.open(source)) {
             CatalogRecord book = session.next();
             assertThat(book.externalIdentities()).anySatisfy(identity -> {
-                assertThat(identity.scheme()).isEqualTo("flibusta");
+                assertThat(identity.scheme()).isEqualTo("catalog:flibusta");
                 assertThat(identity.value()).isEqualTo("893718");
             });
             assertThat(book.sourceMetadata()).containsEntry("locator.index", "0")
