@@ -110,6 +110,48 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
+    void archiveBoundaryAtOneThousandEntriesProducesTwoImportableZipBatches() throws Exception {
+        BookQueryRepository repository = mock(BookQueryRepository.class);
+        BookResourcePort resources = mock(BookResourcePort.class);
+        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
+        Collection current = mock(Collection.class);
+        when(current.getId()).thenReturn("batch");
+        when(collections.getCurrentCollection()).thenReturn(current);
+
+        List<Book> items = java.util.stream.IntStream.range(0, 1001)
+                .mapToObj(i -> book("Book " + i, "book" + i + ".fb2")).toList();
+        when(repository.findPage(any(BookQuery.class))).thenReturn(
+                PageResult.of(items.subList(0, 100), 1001, 0, 100));
+        when(repository.findPage(any(BookQuery.class), eq(1001L))).thenAnswer(inv -> {
+            BookQuery query = inv.getArgument(0);
+            int offset = query.pagination().offset();
+            return PageResult.of(items.subList(offset, Math.min(offset + 100, items.size())),
+                    1001, offset / 100, 100);
+        });
+        when(resources.readBookData(any(Book.class)))
+                .thenAnswer(inv -> Optional.of(new ByteArrayInputStream(new byte[]{65})));
+
+        var result = new GroupMetabibExportService(repository, resources, collections)
+                .export(15L, "batch", temp);
+        assertThat(result.exported()).isEqualTo(1001);
+        assertThat(result.skipped()).isZero();
+        verify(repository, times(1)).findPage(any(BookQuery.class));
+        verify(repository, times(10)).findPage(any(BookQuery.class), eq(1001L));
+        try (ZipFile first = new ZipFile(result.folder().resolve("books-0001.zip").toFile());
+             ZipFile second = new ZipFile(result.folder().resolve("books-0002.zip").toFile())) {
+            assertThat(first.size()).isEqualTo(1000);
+            assertThat(second.size()).isEqualTo(1);
+            assertThat(second.getEntry("book-001001.fb2")).isNotNull();
+        }
+        var lines = Files.readAllLines(result.folder().resolve("catalog.jsonl"));
+        assertThat(lines).hasSize(1002);
+        var header = new ObjectMapper().readTree(lines.getFirst());
+        assertThat(header.path("archives")).hasSize(2);
+        assertThat(header.path("archives").get(0).path("entries").asInt()).isEqualTo(1000);
+        assertThat(header.path("archives").get(1).path("entries").asInt()).isEqualTo(1);
+    }
+
+    @Test
     void interruptedFileCopyCannotPublishPartialPortableCollection() throws Exception {
         BookQueryRepository repository = mock(BookQueryRepository.class);
         BookResourcePort resources = mock(BookResourcePort.class);
