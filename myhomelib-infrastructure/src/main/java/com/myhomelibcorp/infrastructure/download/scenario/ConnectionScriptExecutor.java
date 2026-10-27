@@ -21,6 +21,7 @@ import java.io.OutputStream;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.URI;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -86,7 +87,7 @@ public final class ConnectionScriptExecutor {
         String password = decryptPassword(collection);
         DownloadMacroResolver macros = new DownloadMacroResolver(book, collection, root, relative, password);
         CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
-        HttpClient client = httpPolicy.create(cookies);
+        ScriptClientSession session = new ScriptClientSession(cookies);
         List<FormField> fields = new ArrayList<>();
         SafeFilePublication.createDirectoriesNoLinks(target.toAbsolutePath().normalize().getParent(),
                 "ConnectionScript response directory");
@@ -117,7 +118,7 @@ public final class ConnectionScriptExecutor {
                         String expanded = macros.expand(command.first(), state == null ? null : uriText(state.responseUri()));
                         URI uri = safeHttpUri(expanded);
                         log.info("  GET request: {}", SensitiveDataSanitizer.sanitizeUri(uri));
-                        state = send(client, "GET", uri, fields, responseFile, collection, cancel, progress);
+                        state = send(session, "GET", uri, fields, responseFile, collection, cancel, progress);
                         checked = false;
                         resolvedArchiveEntry = "";
                         validatedSha256 = "";
@@ -127,7 +128,7 @@ public final class ConnectionScriptExecutor {
                         String expanded = macros.expand(command.first(), state == null ? null : uriText(state.responseUri()));
                         URI uri = safeHttpUri(expanded);
                         log.info("  POST request: {}", SensitiveDataSanitizer.sanitizeUri(uri));
-                        state = send(client, "POST", uri, fields, responseFile, collection, cancel, progress);
+                        state = send(session, "POST", uri, fields, responseFile, collection, cancel, progress);
                         checked = false;
                         resolvedArchiveEntry = "";
                         validatedSha256 = "";
@@ -195,10 +196,44 @@ public final class ConnectionScriptExecutor {
                 }
             }
             throw e;
+        } finally {
+            // Script clients have isolated cookies. Tear down the transport after
+            // the book has finished rather than leaking one selector per download.
+            session.close();
         }
     }
 
-    private ResponseState send(HttpClient client, String method, URI uri, List<FormField> fields, Path responseFile,
+    /**
+     * The UI can queue dozens of downloads, but only a few hold an HTTP permit.
+     * Build a cookie-isolated client lazily, after acquiring that permit, and
+     * preserve the same cookies across every command in one ConnectionScript.
+     */
+    private final class ScriptClientSession implements AutoCloseable {
+        private final CookieManager cookies;
+        private HttpClient client;
+
+        private ScriptClientSession(CookieManager cookies) {
+            this.cookies = cookies;
+        }
+
+        private HttpClient client() {
+            if (client == null) client = httpPolicy.createConnectionScript(cookies);
+            return client;
+        }
+
+        private void discardTransport() {
+            if (client != null) {
+                client.shutdownNow();
+                client = null;
+            }
+        }
+
+        @Override public void close() {
+            discardTransport();
+        }
+    }
+
+    private ResponseState send(ScriptClientSession session, String method, URI uri, List<FormField> fields, Path responseFile,
                                Collection collection, AtomicBoolean cancel, DoubleConsumer progress) throws Exception {
         log.info("send() START: method={}, uri={}", method, SensitiveDataSanitizer.sanitizeUri(uri));
 
@@ -226,7 +261,7 @@ public final class ConnectionScriptExecutor {
 
             try (OnlineRequestLimiter.Permit ignored = requestLimiter.acquire(uri, cancel)) {
                 long startTime = System.currentTimeMillis();
-                HttpResponse<InputStream> response = client.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
+                HttpResponse<InputStream> response = session.client().send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
                 int status = response.statusCode();
                 long duration = System.currentTimeMillis() - startTime;
 
@@ -319,17 +354,34 @@ public final class ConnectionScriptExecutor {
             } catch (IOException e) {
                 log.warn("  IO error: {}", e.getMessage());
                 last = e;
-                if (!OnlineRetryPolicy.isRetryableIOException(e)
-                        || attempt >= retries
+                boolean retryable = shouldRetryIoForScript(e, method, attempt, retries);
+                if (!retryable
                         || Thread.currentThread().isInterrupted()
                         || (cancel != null && cancel.get())) {
                     throw new DownloadScenarioException("ConnectionScript network request failed ("
                             + e.getClass().getSimpleName() + ")");
                 }
+                // The failed connection/selector may be stuck on an unreachable address.
+                // Replace only this script's transport; retain its cookie jar for multi-step login.
+                if (e instanceof HttpConnectTimeoutException || e instanceof javax.net.ssl.SSLException) {
+                    session.discardTransport();
+                }
                 backoff(attempt + 1, cancel, null);
             }
         }
         throw new DownloadScenarioException("ConnectionScript network request failed");
+    }
+
+    /**
+     * Ordinary request/read timeouts are not retried because the server may
+     * already have received the request. For a GET connection timeout, no HTTP
+     * request was delivered: allow exactly one bounded reconnect. POST is never
+     * replayed automatically, regardless of the failure.
+     */
+    static boolean shouldRetryIoForScript(IOException failure, String method, int attempt, int retries) {
+        if (!"GET".equals(method) || attempt >= retries) return false;
+        if (failure instanceof HttpConnectTimeoutException) return attempt == 0;
+        return OnlineRetryPolicy.isRetryableIOException(failure);
     }
 
     private java.time.Duration connectionScriptRequestTimeout() {
