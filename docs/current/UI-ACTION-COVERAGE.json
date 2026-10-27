@@ -4,13 +4,13 @@
   "product_version": "8.0.0",
   "contract": "Every current user-triggerable FXML/programmatic JavaFX or Web Library action has explicit reviewed automated evidence; handler/callback fingerprints force review after behavioral code changes.",
   "summary": {
-    "actions": 489,
+    "actions": 490,
     "fxml_actions": 275,
-    "programmatic_actions": 208,
+    "programmatic_actions": 209,
     "web_actions": 6,
     "direct_fxml_actions": 207,
-    "delegate_contract_actions": 282,
-    "behavioral_evidence_actions": 489,
+    "delegate_contract_actions": 283,
+    "behavioral_evidence_actions": 490,
     "unmapped": 0
   },
   "entries": [
@@ -8802,6 +8802,25 @@
         "myhomelib-application/src/test/java/com/myhomelibcorp/application/port/out/settings/ApplicationSettingsPortTest.java"
       ],
       "callback_sha256": "81e07b328ecdae62d90c49280688990070c3060f2318c5071afbcb9782ce4e18",
+      "behavioral_evidence": true
+    },
+    {
+      "key": "PROGRAMMATIC|myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java|classic|1",
+      "kind": "PROGRAMMATIC",
+      "surface": "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java",
+      "controller": "ApplicationSettingsDialog",
+      "action": "classic.setOnAction[1]",
+      "control": "classic",
+      "label": "classic",
+      "preconditions": "контекст, заданий діалогом/reader/service; boundary тестується без реальної зовнішньої мутації",
+      "expected_result": "callback елемента «classic» застосовує профіль сумісності MyHomeLib 2.5.x до видимих полів налаштувань",
+      "user_function_ref": "settings",
+      "coverage": "AUTOMATED_DELEGATE_CONTRACT",
+      "evidence": [
+        "myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/settings/PropertiesApplicationSettingsServiceTest.java",
+        "myhomelib-application/src/test/java/com/myhomelibcorp/application/port/out/settings/ApplicationSettingsPortTest.java"
+      ],
+      "callback_sha256": "6e9ffbbd23e89304f2f7b144072b1a1dbd18ee41aaf239f325cf3ba2f4cabc2a",
       "behavioral_evidence": true
     },
     {
