@@ -32,7 +32,7 @@
         <lucene.version>10.5.2</lucene.version>
         <commons-compress.version>1.28.0</commons-compress.version>
         <junrar.version>8.1.2</junrar.version>
-        <zstd-jni.version>1.5.7-23</zstd-jni.version>
+        <zstd-jni.version>1.5.7-24</zstd-jni.version>
         <xz.version>1.12</xz.version>
         <pdfbox.version>3.0.8</pdfbox.version>
         <jbig2-imageio.version>3.0.5</jbig2-imageio.version>
