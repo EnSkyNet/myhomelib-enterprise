@@ -15,7 +15,7 @@ class ClassicOnlineDownloadProfileTest {
                 .containsEntry("online.maxParallelDownloadsPerHost", "1")
                 .containsEntry("online.userAgent",
                         "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; WOW64; Trident/5.0; MAAU)");
-        assertThat(settings.keySet()).noneSatisfy(key -> {
+        assertThat(settings.keySet()).allSatisfy(key -> {
             assertThat(key).doesNotContain("tls").doesNotContain("proxy");
         });
     }
