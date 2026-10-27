@@ -64,7 +64,7 @@ class GroupMetabibExportRoundTripE2ETest {
             assertThat(imported.hasNext()).isTrue();
             var record = imported.next();
             assertThat(record.title()).isEqualTo("Portable metabib sample");
-            assertThat(record.size()).isEqualTo("<FictionBook/>".getBytes(StandardCharsets.UTF_8).length);
+            assertThat(record.size()).isEqualTo((long) "<FictionBook/>".getBytes(StandardCharsets.UTF_8).length);
             assertThat(record.isbn()).isEqualTo("9780306406157");
             assertThat(record.publisher()).isEqualTo("Книжкова фабрика");
             assertThat(record.publicationCity()).isEqualTo("Київ");
