@@ -138,6 +138,28 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
+    void interruptedSourceOpenCancelsExportRatherThanSkippingBook() throws Exception {
+        BookQueryRepository repository = mock(BookQueryRepository.class);
+        BookResourcePort resources = mock(BookResourcePort.class);
+        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
+        Collection current = mock(Collection.class);
+        when(current.getId()).thenReturn("cancelled");
+        when(collections.getCurrentCollection()).thenReturn(current);
+        Book unreadable = book("Interrupted", "interrupted.fb2");
+        when(repository.findPage(any(BookQuery.class))).thenReturn(
+                PageResult.of(List.of(unreadable), 1, 0, 100));
+        when(resources.readBookData(unreadable)).thenThrow(
+                new UncheckedIOException(new java.io.InterruptedIOException("cancelled by user")));
+
+        var exporter = new GroupMetabibExportService(repository, resources, collections);
+        assertThatThrownBy(() -> exporter.export(42L, "cancelled", temp))
+                .isInstanceOf(IOException.class).hasMessageContaining("cancelled");
+        try (var files = Files.list(temp)) {
+            assertThat(files.toList()).isEmpty();
+        }
+    }
+
+    @Test
     void largeGroupReusesFirstTotalInsteadOfCountingForEveryPage() throws Exception {
         BookQueryRepository repository = mock(BookQueryRepository.class);
         BookResourcePort resources = mock(BookResourcePort.class);
