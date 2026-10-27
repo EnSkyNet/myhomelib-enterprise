@@ -47,6 +47,12 @@ class GroupMetabibExportRoundTripE2ETest {
         when(book.getAuthors()).thenReturn(List.of());
         when(book.getGenres()).thenReturn(List.of());
         when(book.getLibId()).thenReturn("893718");
+        when(book.getFileSize()).thenReturn(400000L); // intentionally stale; real ZIP entry is smaller
+        when(book.getIsbn()).thenReturn(com.myhomelibcorp.domain.model.valueobject.Isbn.of("9780306406157"));
+        when(book.getPublisher()).thenReturn("Книжкова фабрика");
+        when(book.getCity()).thenReturn("Київ");
+        when(book.getKeywords()).thenReturn("наука, фантастика");
+        when(book.getTranslators()).thenReturn("А. Б. Перекладач");
         when(repository.findPage(any(BookQuery.class))).thenReturn(PageResult.of(List.of(book), 1, 0, 100));
         when(source.readBookData(book)).thenReturn(Optional.of(
                 new ByteArrayInputStream("<FictionBook/>".getBytes(StandardCharsets.UTF_8))));
@@ -58,6 +64,13 @@ class GroupMetabibExportRoundTripE2ETest {
             assertThat(imported.hasNext()).isTrue();
             var record = imported.next();
             assertThat(record.title()).isEqualTo("Portable metabib sample");
+            assertThat(record.size()).isEqualTo((long) "<FictionBook/>".getBytes(StandardCharsets.UTF_8).length);
+            assertThat(record.isbn()).isEqualTo("9780306406157");
+            assertThat(record.publisher()).isEqualTo("Книжкова фабрика");
+            assertThat(record.publicationCity()).isEqualTo("Київ");
+            assertThat(record.keywords()).containsExactly("наука", "фантастика");
+            assertThat(record.translators()).hasSize(1);
+            assertThat(record.translators().getFirst().displayName()).isEqualTo("А. Б. Перекладач");
             assertThat(record.sourceBookId()).contains("zip-0001");
             assertThat(record.sourceMetadata()).containsEntry("locator.index", "0")
                     .containsEntry("locator.source", "zip-0001");
