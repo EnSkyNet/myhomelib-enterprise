@@ -80,6 +80,36 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
+    void largeGroupReusesFirstTotalInsteadOfCountingForEveryPage() throws Exception {
+        BookQueryRepository repository = mock(BookQueryRepository.class);
+        BookResourcePort resources = mock(BookResourcePort.class);
+        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
+        Collection current = mock(Collection.class);
+        when(current.getId()).thenReturn("big");
+        when(collections.getCurrentCollection()).thenReturn(current);
+
+        List<Book> first = java.util.stream.IntStream.range(0, 100)
+                .mapToObj(i -> book("Title " + i, "b" + i + ".fb2")).toList();
+        Book last = book("Last", "last.fb2");
+        when(repository.findPage(any(BookQuery.class)))
+                .thenReturn(PageResult.of(first, 101, 0, 100));
+        when(repository.findPage(any(BookQuery.class), eq(101L)))
+                .thenReturn(PageResult.of(List.of(last), 101, 1, 100));
+        when(resources.readBookData(any(Book.class))).thenAnswer(inv ->
+                Optional.of(new ByteArrayInputStream(new byte[]{42})));
+
+        var exported = new GroupMetabibExportService(repository, resources, collections)
+                .export(99L, "big", temp);
+        assertThat(exported.exported()).isEqualTo(101);
+        assertThat(exported.skipped()).isZero();
+        verify(repository, times(1)).findPage(any(BookQuery.class));
+        verify(repository, times(1)).findPage(any(BookQuery.class), eq(101L));
+        try (ZipFile zip = new ZipFile(exported.folder().resolve("books-0001.zip").toFile())) {
+            assertThat(zip.size()).isEqualTo(101);
+        }
+    }
+
+    @Test
     void interruptedFileCopyCannotPublishPartialPortableCollection() throws Exception {
         BookQueryRepository repository = mock(BookQueryRepository.class);
         BookResourcePort resources = mock(BookResourcePort.class);
