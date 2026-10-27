@@ -27,7 +27,7 @@ class OnlineHttpPolicyTest {
              var shared = policy.create(null)) {
             org.assertj.core.api.Assertions.assertThat(scripted.version())
                     .isEqualTo(java.net.http.HttpClient.Version.HTTP_1_1);
-            org.assertj.core.api.Assertions.assertThat(scripted.cookieHandler()).containsSame(cookies);
+            org.assertj.core.api.Assertions.assertThat(scripted.cookieHandler()).contains(cookies);
             org.assertj.core.api.Assertions.assertThat(shared.version())
                     .isEqualTo(java.net.http.HttpClient.Version.HTTP_2);
         }
