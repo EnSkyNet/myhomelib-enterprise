@@ -127,6 +127,8 @@ public class GroupMetabibExportService {
                         zip.closeEntry();
                         int index = archive.entries++;
                         if (entry.endsWith(".fb2")) archive.fb2Entries++;
+                        archive.descriptor.put("entries", archive.entries);
+                        archive.descriptor.put("fb2_entries", archive.fb2Entries);
                         rows.write(mapper.writeValueAsString(record(book, archive.id, entry, index)));
                         rows.newLine();
                         exported++;
@@ -142,10 +144,6 @@ public class GroupMetabibExportService {
             if (zip != null) zip.close();
         }
         if (exported == 0) throw new IOException("No locally readable books in the selected group");
-        // Archive descriptors are mutable only while building ZIPs; serialize after closing them.
-        for (Map<String, Object> descriptor : archiveHeaders) {
-            ArchiveState.finishDescriptor(descriptor);
-        }
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("schema", "metabib.dataset/1");
         header.put("id", packageId);
@@ -241,7 +239,7 @@ public class GroupMetabibExportService {
         List<Object> identities = new ArrayList<>();
         identities.add(Map.of("scheme", "mhl-source-book", "value", book.getId().asString(), "observation", "local"));
         if (book.getLibId() != null && book.getLibId().matches("[0-9]{1,18}")) {
-            identities.add(Map.of("scheme", "flibusta", "value", book.getLibId(), "observation", "local"));
+            identities.add(Map.of("scheme", "mhl-source-libid", "value", book.getLibId(), "observation", "local"));
         }
         String media = switch (extension(book)) {
             case "fb2" -> "application/fb2+xml";
@@ -300,8 +298,5 @@ public class GroupMetabibExportService {
             descriptor.put("fb2_entries", 0);
         }
 
-        static void finishDescriptor(Map<String, Object> descriptor) {
-            // Kept as mutable map while the corresponding ZIP is written.
-        }
     }
 }
