@@ -61,6 +61,7 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
     private final DialogService dialogService;
     private final BookViewModelMapper bookViewModelMapper;
     private final UiBackgroundExecutor executor;
+    private final GroupMetabibExportService portableExporter;
 
     @FXML private ListView<GroupDto> groupsListView;
     @FXML private Label groupNameLabel;
@@ -157,10 +158,38 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
         selectItem.setOnAction(e -> groupsListView.getSelectionModel().select(group));
         MenuItem renameItem = new MenuItem(UiText.text("ui.java.group_workspace_controller.b4b0846a77"));
         renameItem.setOnAction(e -> renameGroup(group));
+        MenuItem exportItem = new MenuItem(UiText.text("ui.group.export_metabib"));
+        exportItem.setOnAction(e -> exportGroupMetabib(group));
         MenuItem deleteItem = new MenuItem(UiText.text("common.delete"));
         deleteItem.setOnAction(e -> deleteGroup(group));
-        menu.getItems().addAll(selectItem, renameItem, deleteItem);
+        menu.getItems().addAll(selectItem, renameItem, exportItem, deleteItem);
         menu.show(groupsListView, x, y);
+    }
+
+    private void exportGroupMetabib(GroupDto group) {
+        String expectedCollectionId = currentCollectionId();
+        if (expectedCollectionId == null) {
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.group.export_collection_missing"));
+            return;
+        }
+        javafx.stage.DirectoryChooser folderChooser = new javafx.stage.DirectoryChooser();
+        folderChooser.setTitle(UiText.text("ui.group.export_destination"));
+        java.io.File selected = folderChooser.showDialog(groupsListView.getScene().getWindow());
+        if (selected == null) return;
+        // EXPORT scope is acquired before enqueuing to prevent a SWITCH gap.
+        executor.submitCollectionScopedOperation(LibraryOperationType.EXPORT,
+                () -> portableExporter.export(group.getId(), expectedCollectionId, selected.toPath()))
+                .whenComplete((result, failure) -> UiExecutor.runOnUiThread(() -> {
+                    if (failure != null) {
+                        log.error("Portable metabib group export failed", failure);
+                        dialogService.showError(UiText.text("common.error"),
+                                UiText.text("ui.group.export_failed") + ": " + UiExceptionSupport.message(failure));
+                    } else {
+                        dialogService.showInfo(UiText.text("common.success"),
+                                UiText.text("ui.group.export_success") + ": " + result.folder()
+                                        + " (" + result.exported() + " / " + result.skipped() + ")");
+                    }
+                }));
     }
 
     public void loadGroups() {
