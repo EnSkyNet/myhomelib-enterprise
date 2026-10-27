@@ -115,7 +115,7 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
-    void allFailedSourceOpensDoNotPublishEmptyGroupPackage() {
+    void allFailedSourceOpensDoNotPublishEmptyGroupPackage() throws Exception {
         BookQueryRepository repository = mock(BookQueryRepository.class);
         BookResourcePort resources = mock(BookResourcePort.class);
         CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
