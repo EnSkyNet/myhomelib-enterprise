@@ -10,6 +10,8 @@ on:
       - .github/workflows/windows-test-portable.yml
       # Rebuild test-only Portable for production code changes, including the Updates sidebar.
       - 'myhomelib-*/src/main/**'
+      # Test-only crash-recovery changes must rebuild the same SHA-bound Portable.
+      - 'myhomelib-*/src/test/**'
       - pom.xml
       - .mvn/**
       - mvnw
