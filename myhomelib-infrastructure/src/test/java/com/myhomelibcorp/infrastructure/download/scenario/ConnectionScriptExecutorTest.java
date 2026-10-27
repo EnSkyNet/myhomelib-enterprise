@@ -11,6 +11,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.net.InetSocketAddress;
+import java.net.http.HttpConnectTimeoutException;
+import java.net.http.HttpTimeoutException;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -165,6 +168,52 @@ class ConnectionScriptExecutorTest {
                 .hasMessageContaining("after 3 attempts");
         assertThat(requests.get()).isEqualTo(3);
         assertThat(Files.exists(temp.resolve("book.txt"))).isFalse();
+    }
+
+    @Test
+    void connectTimeoutRetriesExactlyOnceForSafeGetButNeverPostOrReadTimeout() {
+        IOException connect = new HttpConnectTimeoutException("TCP connect timeout");
+        IOException read = new HttpTimeoutException("read/request timeout");
+
+        assertThat(ConnectionScriptExecutor.shouldRetryIoForScript(connect, "GET", 0, 2)).isTrue();
+        assertThat(ConnectionScriptExecutor.shouldRetryIoForScript(connect, "GET", 1, 2)).isFalse();
+        assertThat(ConnectionScriptExecutor.shouldRetryIoForScript(connect, "GET", 0, 0)).isFalse();
+        assertThat(ConnectionScriptExecutor.shouldRetryIoForScript(connect, "POST", 0, 2)).isFalse();
+        assertThat(ConnectionScriptExecutor.shouldRetryIoForScript(read, "GET", 0, 2)).isFalse();
+        assertThat(ConnectionScriptExecutor.shouldRetryIoForScript(new IOException("connection reset"), "GET", 1, 2)).isTrue();
+        assertThat(ConnectionScriptExecutor.shouldRetryIoForScript(new IOException("connection reset"), "GET", 2, 2)).isFalse();
+    }
+
+    @Test
+    void cookiesRemainIsolatedYetPersistAcrossCommandsInOneScript() throws Exception {
+        AtomicInteger authorized = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/session", exchange -> {
+            exchange.getResponseHeaders().add("Set-Cookie", "mhl_session=fixture; Path=/; HttpOnly");
+            byte[] body = "session".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.createContext("/file", exchange -> {
+            boolean cookiePresent = exchange.getRequestHeaders().getFirst("Cookie") != null
+                    && exchange.getRequestHeaders().getFirst("Cookie").contains("mhl_session=fixture");
+            if (cookiePresent) authorized.incrementAndGet();
+            byte[] body = (cookiePresent ? "book" : "unauthorized").getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(cookiePresent ? 200 : 403, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        BookDto book = BookDto.builder().id("session").fileName("book.txt").build();
+        var result = executor(settings()).execute(
+                "GET " + baseUrl() + "session\nGET " + baseUrl() + "file\nCHECK",
+                book, collection(null, null), temp, "book.txt", temp.resolve("book.txt"),
+                false, null, ignored -> { });
+
+        assertThat(authorized.get()).isEqualTo(1);
+        assertThat(Files.readString(result.payload())).isEqualTo("book");
     }
 
     @Test
