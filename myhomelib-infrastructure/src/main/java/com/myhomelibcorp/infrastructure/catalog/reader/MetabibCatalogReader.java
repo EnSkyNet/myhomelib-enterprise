@@ -186,7 +186,14 @@ public class MetabibCatalogReader implements CatalogReader {
         String locatorValue = locator.has("book_id") ? Long.toString(locator.path("book_id").asLong())
                 : locator.has("index") ? Integer.toString(locator.path("index").asInt())
                 : locatorSource;
-        String sourceBookId = firstNonBlank(recordLibrary, "metabib") + ":" + firstNonBlank(locatorKind, "record") + ":" + locatorValue;
+        // Archive entry indexes are local to each ZIP. Using only "archive_entry:<index>"
+        // collapses distinct books from separate archives into the same imported identity.
+        // Length-prefix the source to keep the compound locator unambiguous even when
+        // archive paths themselves contain colons (or separators).
+        String locatorIdentity = "archive_entry".equals(locatorKind)
+                ? locatorSource.length() + ":" + locatorSource + ":" + locatorValue
+                : locatorValue;
+        String sourceBookId = firstNonBlank(recordLibrary, "metabib") + ":" + firstNonBlank(locatorKind, "record") + ":" + locatorIdentity;
 
         JsonNode claims = root.path("claims");
         JsonNode bibliographic = claims.path("bibliographic");
