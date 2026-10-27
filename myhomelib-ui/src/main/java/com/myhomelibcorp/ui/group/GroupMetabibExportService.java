@@ -92,6 +92,7 @@ public class GroupMetabibExportService {
         int exported = 0;
         int skipped = 0;
         int offset = 0;
+        long knownTotal = -1L;
         ZipOutputStream zip = null;
         ArchiveState archive = null;
         try (BufferedWriter rows = Files.newBufferedWriter(spool, StandardCharsets.UTF_8,
@@ -105,7 +106,10 @@ public class GroupMetabibExportService {
                         .sortBy(SortBy.TITLE)
                         .direction(SortDirection.ASC)
                         .build();
-                var page = books.findPage(query);
+                // Only the first group page needs COUNT(*). On very large groups,
+                // re-running it for each offset creates avoidable SQLite work.
+                var page = knownTotal < 0 ? books.findPage(query) : books.findPage(query, knownTotal);
+                if (knownTotal < 0) knownTotal = page.totalElements();
                 if (page.content().isEmpty()) break;
                 for (Book book : page.content()) {
                     if (Thread.currentThread().isInterrupted()) throw new IOException("Portable group export cancelled");
@@ -123,13 +127,13 @@ public class GroupMetabibExportService {
                         String entry = String.format(java.util.Locale.ROOT, "book-%06d.%s",
                                 exported + 1, extension(book));
                         zip.putNextEntry(new ZipEntry(entry));
-                        copyBounded(in, zip);
+                        long actualBytes = copyBounded(in, zip);
                         zip.closeEntry();
                         int index = archive.entries++;
                         if (entry.endsWith(".fb2")) archive.fb2Entries++;
                         archive.descriptor.put("entries", archive.entries);
                         archive.descriptor.put("fb2_entries", archive.fb2Entries);
-                        rows.write(mapper.writeValueAsString(record(book, archive.id, entry, index)));
+                        rows.write(mapper.writeValueAsString(record(book, archive.id, entry, index, actualBytes)));
                         rows.newLine();
                         exported++;
                     }
@@ -181,7 +185,7 @@ public class GroupMetabibExportService {
         }
     }
 
-    private static void copyBounded(InputStream source, OutputStream target) throws IOException {
+    private static long copyBounded(InputStream source, OutputStream target) throws IOException {
         byte[] bytes = new byte[64 * 1024];
         long total = 0;
         for (int count; (count = source.read(bytes)) != -1;) {
@@ -190,6 +194,7 @@ public class GroupMetabibExportService {
             if (total > MAX_BOOK_BYTES) throw new IOException("Book exceeds portable export limit");
             target.write(bytes, 0, count);
         }
+        return total;
     }
 
     private static String extension(Book book) {
@@ -203,7 +208,7 @@ public class GroupMetabibExportService {
         return Map.of("observation", "local", "value", value);
     }
 
-    private static Map<String, Object> record(Book book, String zipId, String entryName, int index) {
+    private static Map<String, Object> record(Book book, String zipId, String entryName, int index, long actualBytes) {
         Map<String, Object> bibliographic = new LinkedHashMap<>();
         bibliographic.put("title", List.of(claim(book.getTitle())));
         if (book.getLanguage() != null) bibliographic.put("language", List.of(claim(book.getLanguage().value())));
@@ -217,6 +222,17 @@ public class GroupMetabibExportService {
                     "last_name", safe(author.getLastName()))));
         }
         bibliographic.put("authors", authors);
+        // The legacy catalog stores translator display text, not structured name
+        // parts. Preserve that text without guessing first/middle/last names.
+        if (book.getTranslators() != null && !book.getTranslators().isBlank())
+            bibliographic.put("translators", List.of(claim(Map.of("display_name", book.getTranslators()))));
+        if (book.getKeywords() != null && !book.getKeywords().isBlank()) {
+            List<Object> keywords = new ArrayList<>();
+            for (String keyword : book.getKeywords().split(",")) {
+                if (!keyword.isBlank()) keywords.add(claim(keyword.trim()));
+            }
+            if (!keywords.isEmpty()) bibliographic.put("keywords", keywords);
+        }
         List<Object> genres = new ArrayList<>();
         for (var genre : book.getGenres()) {
             String code = genre.getFb2Code();
@@ -233,6 +249,10 @@ public class GroupMetabibExportService {
         if (book.getYear() != null) publication.put("year", List.of(claim(Map.of("value", book.getYear()))));
         if (book.getPublisher() != null && !book.getPublisher().isBlank())
             publication.put("publisher", List.of(claim(book.getPublisher())));
+        if (book.getCity() != null && !book.getCity().isBlank())
+            publication.put("city", List.of(claim(book.getCity())));
+        if (book.getIsbn() != null)
+            publication.put("isbn", List.of(claim(book.getIsbn().value())));
         Map<String, Object> catalog = new LinkedHashMap<>();
         if (book.getLibraryRate() > 0) catalog.put("rating", List.of(claim(book.getLibraryRate())));
         if (book.isDeleted()) catalog.put("deleted", List.of(claim("deleted")));
@@ -250,6 +270,8 @@ public class GroupMetabibExportService {
             default -> "application/octet-stream";
         };
         Map<String, Object> artifact = Map.of("name", entryName, "media_type", media,
+                // Use the actual streamed byte count, not potentially stale DB metadata.
+                "size", List.of(claim(actualBytes)),
                 "occurrences", List.of(Map.of("archive", zipId, "entry", entryName, "index", index)));
         return Map.of(
                 "schema", "metabib.dataset_record/1",
