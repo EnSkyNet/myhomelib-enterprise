@@ -2,8 +2,8 @@
 
 Цей реєстр є строгішим доповненням до `UI-ACTION-COVERAGE.json`: generic controller-level test не рахується. Для кожної дії потрібен exact handler/callback/delegate/control token у JUnit-тесті з observable assertion/Mockito verification, або вузький documented exclusion.
 
-- Inventory: **489**
-- Automated action-specific: **488**
+- Inventory: **490**
+- Automated action-specific: **489**
 - Justified exclusions: **1**
 - Missing: **0**
 
@@ -474,6 +474,7 @@
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/search/SearchWorkspaceController.java` | `saveSearchButton.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `SearchSavedSearchesButtonBehaviorContractTest.java`<br>`SearchWorkspaceControllerFxTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/search/SearchWorkspaceController.java` | `savedSearchesButton.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `SearchSavedSearchesButtonBehaviorContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java` | `browse.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `ApplicationSettingsProgrammaticActionBehaviorContractTest.java`<br>`ApplicationSettingsUpdateActionContractTest.java` |
+| `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java` | `classic.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `ApplicationSettingsClassicActionContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java` | `checkNow.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `ApplicationSettingsProgrammaticActionBehaviorContractTest.java`<br>`ApplicationSettingsUpdateActionContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java` | `diagnostics.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `ApplicationSettingsProgrammaticActionBehaviorContractTest.java` |
 | `myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java` | `languageDiagnostics.setOnAction[1]` | `AUTOMATED_ACTION_SPECIFIC` | `ApplicationSettingsProgrammaticActionBehaviorContractTest.java` |
