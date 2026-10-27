@@ -34,6 +34,32 @@ class OnlineHttpPolicyTest {
     }
 
     @Test
+    void directAndNoneModesExplicitlyBypassDefaultProxySelector() {
+        for (String mode : java.util.List.of("DIRECT", "NONE")) {
+            ApplicationSettingsPort settings = defaults();
+            when(settings.get("online.proxy.mode", "SYSTEM")).thenReturn(mode);
+            try (var client = new OnlineHttpPolicy(settings).create(null)) {
+                org.assertj.core.api.Assertions.assertThat(client.proxy()).isPresent();
+                org.assertj.core.api.Assertions.assertThat(
+                        client.proxy().orElseThrow().select(java.net.URI.create("https://books.example/")))
+                        .containsExactly(java.net.Proxy.NO_PROXY);
+            }
+        }
+    }
+
+    @Test
+    void systemProxyModePreservesJvmDefaultProxySelector() {
+        ApplicationSettingsPort settings = defaults();
+        when(settings.get("online.proxy.mode", "SYSTEM")).thenReturn("SYSTEM");
+        java.net.ProxySelector defaultSelector = java.net.ProxySelector.getDefault();
+        try (var client = new OnlineHttpPolicy(settings).create(null)) {
+            if (defaultSelector != null) {
+                org.assertj.core.api.Assertions.assertThat(client.proxy()).contains(defaultSelector);
+            }
+        }
+    }
+
+    @Test
     void plaintextProxyPasswordIsRejected() {
         ApplicationSettingsPort settings = defaults();
         when(settings.get("online.proxy.mode", "SYSTEM")).thenReturn("HTTP");

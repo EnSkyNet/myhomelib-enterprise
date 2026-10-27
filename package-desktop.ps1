@@ -81,6 +81,9 @@ $args = @(
     "--dest", $dest,
     "--java-options", "-Dfile.encoding=UTF-8",
     "--java-options", "-Dspring.profiles.active=prod",
+    # Java 21 defaults useSystemProxies=false; Windows SYSTEM proxy mode needs
+    # this launch-time opt-in. Explicit DIRECT/NONE still forces NO_PROXY.
+    "--java-options", "-Djava.net.useSystemProxies=true",
     "--java-options", "-Xms32m",
     "--java-options", "-Xmx1024m",
     "--java-options", "-XX:MinHeapFreeRatio=10",

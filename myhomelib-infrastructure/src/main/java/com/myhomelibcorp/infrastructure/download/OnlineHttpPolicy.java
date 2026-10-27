@@ -52,7 +52,9 @@ public final class OnlineHttpPolicy {
 
         String mode = setting("online.proxy.mode", "SYSTEM").trim().toUpperCase(Locale.ROOT);
         switch (mode) {
-            case "NONE", "DIRECT" -> { }
+            // Without an explicit selector, Java HttpClient still consults
+            // ProxySelector.getDefault(), so NONE was not actually direct.
+            case "NONE", "DIRECT" -> builder.proxy(HttpClient.Builder.NO_PROXY);
             case "HTTP" -> configureHttpProxy(builder);
             case "SYSTEM" -> {
                 ProxySelector selector = ProxySelector.getDefault();
