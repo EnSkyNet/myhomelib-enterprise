@@ -15,6 +15,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -76,6 +77,63 @@ class GroupMetabibExportServiceTest {
                     .isEqualTo("first book");
             assertThat(new String(zip.getInputStream(zip.getEntry("book-000002.fb2")).readAllBytes(), StandardCharsets.UTF_8))
                     .isEqualTo("second book");
+        }
+    }
+
+    @Test
+    void unreadableSourceOpenIsSkippedWithoutDiscardingOtherValidBooks() throws Exception {
+        BookQueryRepository repository = mock(BookQueryRepository.class);
+        BookResourcePort resources = mock(BookResourcePort.class);
+        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
+        Collection current = mock(Collection.class);
+        when(current.getId()).thenReturn("partial");
+        when(collections.getCurrentCollection()).thenReturn(current);
+
+        Book unreadable = book("Cannot open", "unreadable.fb2");
+        Book valid = book("Valid", "valid.fb2");
+        when(repository.findPage(any(BookQuery.class))).thenReturn(
+                PageResult.of(List.of(unreadable, valid), 2, 0, 100));
+        when(resources.readBookData(unreadable)).thenThrow(
+                new UncheckedIOException("local file open failed", new IOException("permission denied")));
+        when(resources.readBookData(valid)).thenAnswer(inv ->
+                Optional.of(new ByteArrayInputStream("valid book".getBytes(StandardCharsets.UTF_8))));
+
+        var result = new GroupMetabibExportService(repository, resources, collections)
+                .export(32L, "partial", temp);
+        assertThat(result.exported()).isEqualTo(1);
+        assertThat(result.skipped()).isEqualTo(1);
+        var records = Files.readAllLines(result.folder().resolve("catalog.jsonl"));
+        assertThat(records).hasSize(2);
+        var mapper = new ObjectMapper();
+        assertThat(mapper.readTree(records.getFirst()).path("records").asInt()).isEqualTo(1);
+        assertThat(mapper.readTree(records.get(1)).path("claims").path("bibliographic")
+                .path("title").get(0).path("value").asString()).isEqualTo("Valid");
+        try (ZipFile zip = new ZipFile(result.folder().resolve("books-0001.zip").toFile())) {
+            assertThat(zip.size()).isEqualTo(1);
+            assertThat(zip.getEntry("book-000001.fb2")).isNotNull();
+        }
+    }
+
+    @Test
+    void allFailedSourceOpensDoNotPublishEmptyGroupPackage() {
+        BookQueryRepository repository = mock(BookQueryRepository.class);
+        BookResourcePort resources = mock(BookResourcePort.class);
+        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
+        Collection current = mock(Collection.class);
+        when(current.getId()).thenReturn("empty");
+        when(collections.getCurrentCollection()).thenReturn(current);
+        Book unreadable = book("Unopenable", "noaccess.fb2");
+        when(repository.findPage(any(BookQuery.class))).thenReturn(
+                PageResult.of(List.of(unreadable), 1, 0, 100));
+        when(resources.readBookData(unreadable)).thenThrow(
+                new UncheckedIOException(new IOException("cannot open")));
+
+        var exporter = new GroupMetabibExportService(repository, resources, collections);
+        assertThatThrownBy(() -> exporter.export(42L, "empty", temp))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("No locally readable books");
+        try (var files = Files.list(temp)) {
+            assertThat(files.toList()).isEmpty();
         }
     }
 
