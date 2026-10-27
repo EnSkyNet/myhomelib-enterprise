@@ -146,7 +146,7 @@ class GroupMetabibExportServiceTest {
         var lines = Files.readAllLines(result.folder().resolve("catalog.jsonl"));
         assertThat(lines).hasSize(1002);
         var header = new ObjectMapper().readTree(lines.getFirst());
-        assertThat(header.path("archives")).hasSize(2);
+        assertThat(header.path("archives").size()).isEqualTo(2);
         assertThat(header.path("archives").get(0).path("entries").asInt()).isEqualTo(1000);
         assertThat(header.path("archives").get(1).path("entries").asInt()).isEqualTo(1);
     }
