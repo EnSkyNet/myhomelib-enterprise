@@ -124,6 +124,13 @@ public class GroupMetabibExportService {
                     try {
                         input = resources.readBookData(book);
                     } catch (UncheckedIOException unreadable) {
+                        // An interrupted opener signals cancellation, not an
+                        // unavailable book. Never silently continue a cancelled export.
+                        if (Thread.currentThread().isInterrupted()
+                                || unreadable.getCause() instanceof java.io.InterruptedIOException
+                                || unreadable.getCause() instanceof java.nio.channels.ClosedByInterruptException) {
+                            throw new IOException("Portable group export cancelled during source open", unreadable);
+                        }
                         skipped++;
                         continue;
                     }
