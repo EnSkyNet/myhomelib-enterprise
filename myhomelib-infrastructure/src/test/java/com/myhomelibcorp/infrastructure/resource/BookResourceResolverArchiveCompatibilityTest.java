@@ -135,7 +135,7 @@ class BookResourceResolverArchiveCompatibilityTest {
         BookResourceResolver resolver = new BookResourceResolver(new ZipArchiveReader());
         try (InputStream in = resolver.readBookData(
                 "legacy-separator-case.zip", "", tempDir.toString(),
-                "/books\\\\Chapter.fb2").orElseThrow()) {
+                "/books\\Chapter.fb2").orElseThrow()) {
             assertThat(new String(in.readAllBytes(), StandardCharsets.UTF_8))
                     .isEqualTo("uppercase-exact-book");
         }
