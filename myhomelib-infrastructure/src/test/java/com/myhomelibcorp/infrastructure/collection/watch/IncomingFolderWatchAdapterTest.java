@@ -330,6 +330,42 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    void inFlightObservationRetainsItsPendingSlotUntilPublishCompletes() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        DomainEventPublisher publisher = mock(DomainEventPublisher.class);
+        var published = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        doAnswer(invocation -> {
+            published.countDown();
+            if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                throw new AssertionError("Timed out releasing event publication");
+            }
+            return null;
+        }).when(publisher).publish(any(IncomingFolderFileReadyEvent.class));
+
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), publisher);
+        Path incoming = Files.createDirectory(tempDir.resolve("inflight-book"));
+        adapter.configure("c1", incoming, false, 1, 1);
+        Files.writeString(incoming.resolve("one.txt"), "test-file-content");
+        assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:1");
+
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        var pending = (java.util.Map<?, ?>) pendingField.get(adapter);
+        try {
+            assertThat(published.await(15, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            // The event is blocked and its observer has not completed. The slot
+            // must remain reserved to avoid concurrent SQLite overflow replay
+            // scheduling the same in-flight file a second time.
+            assertThat(pending).hasSize(1);
+        } finally {
+            release.countDown();
+        }
+        await(pending::isEmpty, Duration.ofSeconds(8));
+        verify(publisher, times(1)).publish(any(IncomingFolderFileReadyEvent.class));
+    }
+
+    @Test
     void oversizedManualScanUsesBoundedTimersAndReplaysOverflowFromSqlite() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
