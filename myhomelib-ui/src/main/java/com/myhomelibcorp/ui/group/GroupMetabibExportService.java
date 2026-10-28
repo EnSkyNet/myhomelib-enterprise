@@ -18,6 +18,7 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -114,7 +115,25 @@ public class GroupMetabibExportService {
                 for (Book book : page.content()) {
                     if (Thread.currentThread().isInterrupted()) throw new IOException("Portable group export cancelled");
                     if (book == null) { skipped++; continue; }
-                    Optional<InputStream> input = resources.readBookData(book);
+                    // BookResourceResolver deliberately wraps local open failures in
+                    // UncheckedIOException. Treat those as unreadable source books
+                    // (like Optional.empty), not as a fatal error for the entire group.
+                    // Read/copy/ZIP failures below remain fatal and remove the staging
+                    // package: a partially written ZIP member must never be published.
+                    Optional<InputStream> input;
+                    try {
+                        input = resources.readBookData(book);
+                    } catch (UncheckedIOException unreadable) {
+                        // An interrupted opener signals cancellation, not an
+                        // unavailable book. Never silently continue a cancelled export.
+                        if (Thread.currentThread().isInterrupted()
+                                || unreadable.getCause() instanceof java.io.InterruptedIOException
+                                || unreadable.getCause() instanceof java.nio.channels.ClosedByInterruptException) {
+                            throw new IOException("Portable group export cancelled during source open", unreadable);
+                        }
+                        skipped++;
+                        continue;
+                    }
                     if (input.isEmpty()) { skipped++; continue; }
                     try (InputStream in = input.get()) {
                         if (zip == null || archive.entries == MAX_ZIP_ENTRIES) {
