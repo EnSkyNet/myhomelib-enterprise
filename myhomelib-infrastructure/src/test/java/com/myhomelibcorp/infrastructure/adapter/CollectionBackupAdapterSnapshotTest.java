@@ -277,6 +277,47 @@ class CollectionBackupAdapterSnapshotTest {
         }
     }
 
+    @Test
+    void snapshotRefusesPublicationIfActiveCollectionSwitchesDuringIntegrityCheck() throws Exception {
+        Collection requested = identifiedCollection("a");
+        Collection another = identifiedCollection("b");
+        java.util.concurrent.atomic.AtomicReference<Collection> current =
+                new java.util.concurrent.atomic.AtomicReference<>(requested);
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        doAnswer(invocation -> {
+            String sql = invocation.getArgument(0);
+            Path staged = Path.of(sql.substring(sql.indexOf("TO '") + 4, sql.lastIndexOf("'")));
+            createSimpleDatabase(staged, "snapshot-for-a");
+            return null;
+        }).when(jdbc).execute(anyString());
+
+        CollectionManager manager = mock(CollectionManager.class);
+        when(manager.hasActiveCollection()).thenReturn(true);
+        when(manager.getCurrentCollection()).thenAnswer(invocation -> current.get());
+        when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);
+        CollectionBackupAdapter adapter = new CollectionBackupAdapter(manager) {
+            @Override
+            public void validateDatabaseFile(Path databaseFile) throws java.io.IOException {
+                super.validateDatabaseFile(databaseFile);
+                // Simulate a direct integration that switches active collection
+                // while a slow SQLite integrity_check is still finishing.
+                current.set(another);
+            }
+        };
+        Path target = tempDir.resolve("snapshot-after-switch.db");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> adapter.createDatabaseSnapshot(requested, target))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("requested collection is not active");
+        assertThat(Files.exists(target)).isFalse();
+        try (var children = Files.list(tempDir)) {
+            assertThat(children.map(p -> p.getFileName().toString())
+                    .filter(name -> name.startsWith(".mhl-snapshot-"))
+                    .toList()).isEmpty();
+        }
+    }
+
     private static Collection identifiedCollection(String id) {
         Collection collection = mock(Collection.class);
         when(collection.getId()).thenReturn(id);
