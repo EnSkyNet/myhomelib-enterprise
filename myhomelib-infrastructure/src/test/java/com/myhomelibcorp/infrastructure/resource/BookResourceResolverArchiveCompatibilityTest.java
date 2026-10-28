@@ -105,6 +105,60 @@ class BookResourceResolverArchiveCompatibilityTest {
     }
 
     @Test
+    void exactZipMemberCaseWinsOverEarlierCaseInsensitiveCollision() throws Exception {
+        Path archive = tempDir.resolve("case-collision.zip");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(archive))) {
+            put(zip, "books/chapter.fb2", "lowercase-wrong-book");
+            put(zip, "books/Chapter.fb2", "uppercase-exact-book");
+        }
+
+        BookResourceResolver resolver = new BookResourceResolver(new ZipArchiveReader());
+        assertThat(resolver.locateBookFile(
+                "case-collision.zip", "", tempDir.toString(), "books/Chapter.fb2"))
+                .contains(archive);
+
+        try (InputStream in = resolver.readBookData(
+                "case-collision.zip", "", tempDir.toString(), "books/Chapter.fb2").orElseThrow()) {
+            assertThat(new String(in.readAllBytes(), StandardCharsets.UTF_8))
+                    .isEqualTo("uppercase-exact-book");
+        }
+    }
+
+    @Test
+    void legacySeparatorNormalizationStillPrefersExactLetterCase() throws Exception {
+        Path archive = tempDir.resolve("legacy-separator-case.zip");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(archive))) {
+            put(zip, "books/chapter.fb2", "lowercase-wrong-book");
+            put(zip, "books/Chapter.fb2", "uppercase-exact-book");
+        }
+
+        BookResourceResolver resolver = new BookResourceResolver(new ZipArchiveReader());
+        try (InputStream in = resolver.readBookData(
+                "legacy-separator-case.zip", "", tempDir.toString(),
+                "/books\\Chapter.fb2").orElseThrow()) {
+            assertThat(new String(in.readAllBytes(), StandardCharsets.UTF_8))
+                    .isEqualTo("uppercase-exact-book");
+        }
+    }
+
+    @Test
+    void rejectsAmbiguousCaseInsensitiveZipEntryInsteadOfGuessingAnotherBook() throws Exception {
+        Path archive = tempDir.resolve("ambiguous-case.zip");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(archive))) {
+            put(zip, "books/chapter.fb2", "lowercase-book");
+            put(zip, "books/Chapter.fb2", "uppercase-book");
+        }
+
+        BookResourceResolver resolver = new BookResourceResolver(new ZipArchiveReader());
+        assertThat(resolver.locateBookFile(
+                "ambiguous-case.zip", "", tempDir.toString(), "books/CHAPTER.fb2"))
+                .isEmpty();
+        assertThat(resolver.readBookData(
+                "ambiguous-case.zip", "", tempDir.toString(), "books/CHAPTER.fb2"))
+                .isEmpty();
+    }
+
+    @Test
     void exactUnicodeArchiveEntryWinsOverLegacyEscapedEquivalent() throws Exception {
         Path archive = tempDir.resolve("unicode-collision.zip");
         try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(archive))) {

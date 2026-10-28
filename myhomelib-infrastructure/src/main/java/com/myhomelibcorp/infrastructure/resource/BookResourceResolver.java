@@ -243,11 +243,31 @@ public class BookResourceResolver implements BookResourcePort {
 
         // Physical/raw identity wins. Legacy #Uhhhh decoding is only a compatibility fallback:
         // two distinct archive members can otherwise collapse to the same logical Unicode path.
+        // ZIP member names are case-sensitive, even on Windows. If both
+        // chapter.fb2 and Chapter.fb2 exist, prefer the physical exact spelling:
+        // case-insensitive findFirst() would otherwise return the wrong book.
+        Optional<String> physicalExact = entries.stream()
+                .filter(entry -> entry.equals(requestedEntry)).findFirst();
+        if (physicalExact.isPresent()) return physicalExact;
+
         String normalizedRequested = ArchiveEntryNameSupport.normalizePath(requestedEntry);
-        Optional<String> exact = entries.stream()
-                .filter(entry -> ArchiveEntryNameSupport.normalizePath(entry).equalsIgnoreCase(normalizedRequested))
-                .findFirst();
-        if (exact.isPresent()) return exact;
+        // Legacy catalogs may use backslashes or a leading slash. Preserve the
+        // exact letter case even when only the separator spelling differs.
+        List<String> sameCase = entries.stream()
+                .filter(entry -> ArchiveEntryNameSupport.normalizePath(entry)
+                        .equals(normalizedRequested))
+                .limit(2).toList();
+        if (sameCase.size() > 1) return Optional.empty();
+        if (!sameCase.isEmpty()) return Optional.of(sameCase.getFirst());
+
+        List<String> normalizedMatches = entries.stream()
+                .filter(entry -> ArchiveEntryNameSupport.normalizePath(entry)
+                        .equalsIgnoreCase(normalizedRequested))
+                .limit(2).toList();
+        // A case-insensitive collision must not silently pick an arbitrary
+        // member or fall back to another unrelated FB2.
+        if (normalizedMatches.size() > 1) return Optional.empty();
+        if (!normalizedMatches.isEmpty()) return Optional.of(normalizedMatches.getFirst());
 
         Optional<String> legacyEquivalent = uniqueEntry(entries,
                 entry -> ArchiveEntryNameSupport.sameLogicalPath(entry, requestedEntry));
