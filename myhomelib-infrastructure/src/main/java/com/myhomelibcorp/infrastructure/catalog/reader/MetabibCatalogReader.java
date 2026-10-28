@@ -244,7 +244,12 @@ public class MetabibCatalogReader implements CatalogReader {
         CatalogArtifact primary = artifacts.isEmpty() ? null : artifacts.getFirst();
         String fileName = primary == null ? "" : primary.name();
         String format = primary == null ? "" : primary.fileFormat();
-        String archive = primary == null ? "" : primary.archive();
+        String rawArchive = primary == null ? "" : primary.archive();
+        // Occurrences use the manifest's archive ID (for example zip-0001),
+        // while BookResourceResolver needs the on-disk filename (books-0001.zip).
+        // Preserve the archive ID in the untouched raw provenance JSON.
+        String manifestArchive = validation.archiveFileName(rawArchive);
+        String archive = manifestArchive.isBlank() ? rawArchive : manifestArchive;
         String archiveEntry = primary == null ? "" : primary.archiveEntry();
         Long size = primary == null ? null : primary.size();
 
