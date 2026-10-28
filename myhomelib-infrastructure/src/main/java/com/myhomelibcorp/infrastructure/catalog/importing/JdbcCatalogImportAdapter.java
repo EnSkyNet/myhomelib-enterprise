@@ -47,6 +47,9 @@ import java.util.function.DoubleConsumer;
 @Slf4j
 public class JdbcCatalogImportAdapter implements CatalogImportPort {
     private static final int DEFAULT_BATCH = 1_000;
+    // A caller-supplied batch size must never allocate an unbounded record buffer
+    // on the 4 GiB Windows target. SQLite writes remain in the same transaction.
+    private static final int MAX_BATCH = 1_000;
     private static final int SQLITE_QUERY_CHUNK = 400;
     private static final int MAX_ISSUES = 1_000;
 
@@ -166,7 +169,8 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
         manifestStore.ensureSourceRow(jdbc, sourceId, sourceKey, context.getCatalogSourceLocation(), sourceFingerprint);
         batchWriter.persistDatasetMetadata(jdbc, sourceId, datasetInfo);
         boolean fullSnapshot = context.isCatalogFullSnapshot();
-        int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : DEFAULT_BATCH;
+        int requestedBatch = context.getBatchSize() > 0 ? context.getBatchSize() : DEFAULT_BATCH;
+        int batchSize = Math.min(requestedBatch, MAX_BATCH);
         List<CatalogRecord> batch = new ArrayList<>(batchSize);
         List<ImportIssue> issues = new ArrayList<>();
         ImportChangeAccumulator changes = fullSnapshot ? null
