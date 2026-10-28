@@ -216,6 +216,12 @@ final class MetabibDatasetValidator {
     record Context(Long declaredRecords, Map<String, ArchiveDescriptor> archives, Set<String> ambiguousAuthorKeys) {
         ArchiveDescriptor archive(String key) { return key == null ? null : archives.get(key); }
 
+        /** Resolve a stable manifest archive id to its actual portable ZIP filename. */
+        String archiveFileName(String key) {
+            ArchiveDescriptor descriptor = archive(key);
+            return descriptor == null ? "" : descriptor.name();
+        }
+
         boolean isDummyRecord(JsonNode root) {
             JsonNode locator = root.path("record").path("locator");
             if (!"archive_entry".equals(MetabibCatalogReader.text(locator, "kind"))) return false;

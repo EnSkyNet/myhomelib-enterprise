@@ -16,7 +16,9 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.zip.ZipFile;
 import java.util.List;
 import java.util.Optional;
 
@@ -58,7 +60,11 @@ class GroupMetabibExportRoundTripE2ETest {
                 new ByteArrayInputStream("<FictionBook/>".getBytes(StandardCharsets.UTF_8))));
         var exported = new GroupMetabibExportService(repository, source, collections)
                 .export(37L, "source-collection", root);
-        Path jsonl = exported.folder().resolve("catalog.jsonl");
+        // Move the complete package: all references must stay relative to the
+        // destination directory rather than to the original export location.
+        Path relocated = root.resolve("relocated-group");
+        Files.move(exported.folder(), relocated);
+        Path jsonl = relocated.resolve("catalog.jsonl");
         try (var imported = new MetabibCatalogReader(new ObjectMapper()).open(jsonl)) {
             assertThat(imported.dataset().schema()).isEqualTo("metabib.dataset/1");
             assertThat(imported.hasNext()).isTrue();
@@ -72,6 +78,12 @@ class GroupMetabibExportRoundTripE2ETest {
             assertThat(record.translators()).hasSize(1);
             assertThat(record.translators().getFirst().displayName()).isEqualTo("А. Б. Перекладач");
             assertThat(record.sourceBookId()).contains("zip-0001");
+            assertThat(record.archive()).isEqualTo("books-0001.zip");
+            assertThat(record.archiveEntry()).isEqualTo("book-000001.fb2");
+            assertThat(relocated.resolve(record.archive())).isRegularFile();
+            try (ZipFile zip = new ZipFile(relocated.resolve(record.archive()).toFile())) {
+                assertThat(zip.getEntry(record.archiveEntry())).isNotNull();
+            }
             assertThat(record.sourceMetadata()).containsEntry("locator.index", "0")
                     .containsEntry("locator.source", "zip-0001");
             assertThat(record.externalIdentities()).anySatisfy(identity -> {
