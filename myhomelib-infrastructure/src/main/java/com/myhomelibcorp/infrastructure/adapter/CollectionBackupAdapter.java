@@ -106,6 +106,11 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
             SafeFilePublication.requireSafeRegularFile(staged, "SQLite staged snapshot");
             if (thoroughValidation) validateDatabaseFile(staged);
             else validateRecoveryCheckpoint(staged);
+            // Full integrity validation can take substantial time for a large
+            // catalogue. A direct caller may switch collections during that
+            // interval even after the earlier post-BACKUP ownership check.
+            // Never publish a verified snapshot under the wrong collection.
+            requireSnapshotCollection(collection);
             SafeFilePublication.publishReplacingIfUnchanged(
                     staged, target, originalTargetHash, "SQLite snapshot publication");
         } catch (Exception e) {
