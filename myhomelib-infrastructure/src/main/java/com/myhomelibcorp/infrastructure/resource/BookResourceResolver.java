@@ -251,12 +251,21 @@ public class BookResourceResolver implements BookResourcePort {
         if (physicalExact.isPresent()) return physicalExact;
 
         String normalizedRequested = ArchiveEntryNameSupport.normalizePath(requestedEntry);
+        // Legacy catalogs may use backslashes or a leading slash. Preserve the
+        // exact letter case even when only the separator spelling differs.
+        List<String> sameCase = entries.stream()
+                .filter(entry -> ArchiveEntryNameSupport.normalizePath(entry)
+                        .equals(normalizedRequested))
+                .limit(2).toList();
+        if (sameCase.size() > 1) return Optional.empty();
+        if (!sameCase.isEmpty()) return Optional.of(sameCase.getFirst());
+
         List<String> normalizedMatches = entries.stream()
                 .filter(entry -> ArchiveEntryNameSupport.normalizePath(entry)
                         .equalsIgnoreCase(normalizedRequested))
                 .limit(2).toList();
-        // A case-insensitive or separator-normalized collision must not silently
-        // pick an arbitrary member or fall back to another unrelated FB2.
+        // A case-insensitive collision must not silently pick an arbitrary
+        // member or fall back to another unrelated FB2.
         if (normalizedMatches.size() > 1) return Optional.empty();
         if (!normalizedMatches.isEmpty()) return Optional.of(normalizedMatches.getFirst());
 
