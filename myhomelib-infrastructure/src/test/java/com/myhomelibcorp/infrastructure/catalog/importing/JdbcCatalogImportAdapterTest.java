@@ -108,6 +108,30 @@ class JdbcCatalogImportAdapterTest {
     }
 
     @Test
+    void untrustedHugeRequestedBatchSizeIsCappedWithoutLosingRecords() {
+        // Previously ArrayList<>(Integer.MAX_VALUE) could exhaust the heap
+        // before the first book was read. A 4 GiB machine cannot afford a
+        // caller-supplied unbounded import buffer.
+        reader.records = List.of(
+                record("huge-batch-one", false, person("Ann", "", "One", "person", "1")),
+                record("huge-batch-two", false, person("Bob", "", "Two", "person", "2")));
+        ImportContext context = ImportContext.builder()
+                .file(source)
+                .rootDirectory(temp)
+                .catalogSourceKey(SOURCE_KEY)
+                .catalogFullSnapshot(true)
+                .indexAfterSave(false)
+                .batchSize(Integer.MAX_VALUE)
+                .build();
+
+        ImportResult result = adapter.importCatalog(context);
+
+        assertThat(result.imported()).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM books", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM catalog_manifests", Integer.class)).isOne();
+    }
+
+    @Test
     void unchangedManifestSkipsReparse() {
         reader.records = List.of(record("one", false, person("Ann", "", "One", "person", "1")));
         ImportResult first = adapter.importCatalog(context(true));
