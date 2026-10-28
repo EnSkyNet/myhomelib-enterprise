@@ -465,6 +465,13 @@ final class JdbcCatalogBatchWriter {
         for (ExternalIdentity identity : record.externalIdentities()) {
             String scheme = identity.scheme().toLowerCase(Locale.ROOT);
             if (identity.usable() && (scheme.contains("flibusta") || scheme.endsWith(":book_id"))) return identity.value();
+            // Portable group exports retain the original numeric library ID in
+            // identities.catalog. Restore it on re-import instead of treating the
+            // archive-local locator.index as an online download identifier.
+            // Only this explicitly named scheme is trusted, and only for numeric IDs.
+            if (identity.usable()
+                    && (scheme.equals("catalog:mhl-source-libid") || scheme.equals("mhl-source-libid"))
+                    && identity.value().matches("[0-9]{1,18}")) return identity.value();
         }
         return "";
     }

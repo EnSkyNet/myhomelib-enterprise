@@ -230,6 +230,35 @@ class JdbcCatalogImportAdapterTest {
                 .isEqualTo(200L);
     }
 
+    @Test
+    void portableMetabibImportPreservesNumericSourceLibIdWithoutTrustingInvalidIdentityValues() {
+        // Real group exports use mhl-portable as the dataset library and carry
+        // the original LibID in identities.catalog, not locator.book_id.
+        CatalogRecord valid = portableRecord("portable-valid", "893718");
+        CatalogRecord invalid = portableRecord("portable-invalid", "not-a-number");
+        reader.records = List.of(valid, invalid);
+
+        ImportResult result = adapter.importCatalog(context(true));
+
+        assertThat(result.imported()).isEqualTo(2);
+        String originalBookId = UUID.nameUUIDFromBytes("inpx:libid:893718".getBytes(StandardCharsets.UTF_8))
+                .toString();
+        assertThat(jdbc.queryForObject("SELECT lib_id FROM books WHERE id=?", String.class, originalBookId))
+                .isEqualTo("893718");
+        assertThat(jdbc.queryForObject("SELECT lib_id FROM books WHERE id=?", String.class, stableId("portable-invalid")))
+                .isNull();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM books", Integer.class)).isEqualTo(2);
+    }
+
+    private static CatalogRecord portableRecord(String sourceBookId, String sourceLibId) {
+        return new CatalogRecord(sourceBookId, "Portable " + sourceBookId, List.of(), "", null,
+                List.of("fiction"), "eng", "fb2", sourceBookId + ".fb2",
+                "books-0001.zip", sourceBookId + ".fb2", 7L, false, "", "", null, "",
+                List.of(), "", List.of(), null, null,
+                Map.of("library", "mhl-portable", "locator.kind", "archive_entry"),
+                List.of(), List.of(new ExternalIdentity("catalog:mhl-source-libid", sourceLibId)), List.of());
+    }
+
     private ImportContext context(boolean full) {
         return ImportContext.builder()
                 .file(source)
