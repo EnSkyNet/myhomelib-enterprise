@@ -30,7 +30,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.nio.file.StandardWatchEventKinds.*;
 
@@ -384,19 +383,22 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         pending.compute(candidateKey, (ignored, old) -> {
             if (old != null) old.cancel();
             replacement.future = scheduler.schedule(() -> {
-                AtomicBoolean current = new AtomicBoolean();
-                pending.computeIfPresent(candidateKey, (ignoredKey, registered) -> {
-                    if (registered != replacement) return registered;
-                    current.set(true);
-                    return null;
-                });
-                if (!current.get()) return;
+                // The zero-delay worker may start before compute() installs this
+                // replacement. The registration lock makes the identity check
+                // atomic with the map update without holding it during file I/O.
+                synchronized (pendingLock) {
+                    if (pending.get(candidateKey) != replacement) return;
+                }
                 try { observeCandidate(collectionId, file); }
                 catch (RuntimeException failure) {
                     log.warn("Incoming candidate check failed for {}: {}", file, safeMessage(failure));
                 } finally {
-                    // A completed timer frees one slot. Refill from durable overflow rows
-                    // without ever materializing the remaining incoming directory paths.
+                    // Retain the in-flight key until observation finishes. Removing
+                    // it before I/O lets a parallel replay worker schedule the same
+                    // durable WAITING row again, repeatedly exhausting the 256 slots.
+                    // An observation may reschedule itself for file stability; only
+                    // remove the original task if it was not replaced.
+                    pending.remove(candidateKey, replacement);
                     refillPendingFromDatabase();
                 }
             }, Math.max(0, delay), TimeUnit.SECONDS);
