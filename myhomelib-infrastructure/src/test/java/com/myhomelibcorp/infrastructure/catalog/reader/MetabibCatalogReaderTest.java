@@ -153,10 +153,10 @@ class MetabibCatalogReaderTest {
                 {"schema":"metabib.dataset/1","id":"two-archives","record_schema":"metabib.dataset_record/1","library":"flibusta","created":"2026-10-27T00:00:00Z","records":2,"generator":{"name":"test","version":"1"},"normalization":{"model":"metabib.norm/1"},"ordering":{"mode":"archive_entry","direction":"ascending"},"processing":{"parse_fb2":true,"archive_content_checksum":{"enabled":false}},"archives":[{"id":"archive-a","name":"a.zip","ordinal":0,"entries":1,"fb2_entries":1},{"id":"archive-b","name":"b.zip","ordinal":1,"entries":1,"fb2_entries":1}]}
                 """;
         String a = """
-                {"schema":"metabib.dataset_record/1","record":{"library":"flibusta","locator":{"kind":"archive_entry","source":"archive-a","index":0}},"identities":{},"artifacts":[],"observations":[],"claims":{"bibliographic":{"title":[{"value":"Alpha"}]},"publication":{},"catalog":{}},"issues":[]}
+                {"schema":"metabib.dataset_record/1","record":{"library":"flibusta","locator":{"kind":"archive_entry","source":"archive-a","index":0}},"identities":{},"artifacts":[{"name":"a.fb2","media_type":"application/fb2+xml","occurrences":[{"archive":"archive-a","entry":"a.fb2","index":0}]}],"observations":[],"claims":{"bibliographic":{"title":[{"value":"Alpha"}]},"publication":{},"catalog":{}},"issues":[]}
                 """;
         String b = """
-                {"schema":"metabib.dataset_record/1","record":{"library":"flibusta","locator":{"kind":"archive_entry","source":"archive-b","index":0}},"identities":{},"artifacts":[],"observations":[],"claims":{"bibliographic":{"title":[{"value":"Beta"}]},"publication":{},"catalog":{}},"issues":[]}
+                {"schema":"metabib.dataset_record/1","record":{"library":"flibusta","locator":{"kind":"archive_entry","source":"archive-b","index":0}},"identities":{},"artifacts":[{"name":"b.fb2","media_type":"application/fb2+xml","occurrences":[{"archive":"archive-b","entry":"b.fb2","index":0}]}],"observations":[],"claims":{"bibliographic":{"title":[{"value":"Beta"}]},"publication":{},"catalog":{}},"issues":[]}
                 """;
         Path source = temp.resolve("two-archives.jsonl");
         Files.writeString(source, header + a + b, StandardCharsets.UTF_8);
@@ -169,6 +169,10 @@ class MetabibCatalogReaderTest {
             assertThat(first.sourceBookId()).contains("archive-a");
             assertThat(second.sourceBookId()).contains("archive-b");
             assertThat(first.sourceBookId()).isNotEqualTo(second.sourceBookId());
+            assertThat(first.archive()).isEqualTo("a.zip");
+            assertThat(first.archiveEntry()).isEqualTo("a.fb2");
+            assertThat(second.archive()).isEqualTo("b.zip");
+            assertThat(second.archiveEntry()).isEqualTo("b.fb2");
             assertThat(first.sourceMetadata()).containsEntry("locator.index", "0")
                     .containsEntry("locator.source", "archive-a");
             assertThat(second.sourceMetadata()).containsEntry("locator.source", "archive-b");
