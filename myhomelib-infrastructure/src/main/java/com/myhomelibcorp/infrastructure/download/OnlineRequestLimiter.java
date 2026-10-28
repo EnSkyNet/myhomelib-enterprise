@@ -41,10 +41,13 @@ public final class OnlineRequestLimiter {
         boolean globalAcquired = false;
         boolean hostAcquired = false;
         try {
-            acquireOne(global, cancel);
-            globalAcquired = true;
+            // Wait for this host before consuming the scarce global slot.
+            // Otherwise two requests for busy host A can occupy all global
+            // permits while a request for idle host B cannot start at all.
             acquireOne(host.semaphore, cancel);
             hostAcquired = true;
+            acquireOne(global, cancel);
+            globalAcquired = true;
             return new Permit(this, key, host);
         } catch (IOException e) {
             if (hostAcquired) host.semaphore.release();
