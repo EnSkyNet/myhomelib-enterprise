@@ -115,8 +115,11 @@ class Fb2ZipOrganizerNamingRegressionTest {
         assertThat(plan.actions()).hasSize(2);
         assertThat(plan.actions()).extracting(action -> action.targetPath().getFileName().toString())
                 .containsExactlyInAnyOrder("Колесо Времени 1-9.fb2", "Колесо Времени 10-19.fb2");
-        assertThat(plan.actions()).allSatisfy(action ->
-                assertThat(action.targetPath().toString()).contains("Джордан Роберт"));
+        assertThat(plan.actions()).allSatisfy(action -> {
+            assertThat(action.targetPath().toString()).contains("Джордан Роберт");
+            assertThat(action.action())
+                    .isEqualTo(com.myhomelibcorp.organizer.plan.OrganizationAction.EXTRACT);
+        });
     }
 
     @Test
@@ -151,6 +154,16 @@ class Fb2ZipOrganizerNamingRegressionTest {
         assertThat(analysis.items()).hasSize(2);
         assertThat(analysis.items()).extracting(item -> item.proposedRelativePath().getFileName().toString())
                 .containsExactlyInAnyOrder("Колесо Времени 1-9.fb2", "Колесо Времени 10-19.fb2");
+        assertThat(analysis.items()).allSatisfy(item ->
+                assertThat(item.duplicate().kind())
+                        .isEqualTo(com.myhomelibcorp.organizer.duplicate.DuplicateKind.NONE));
+        var plan = new PlanLibraryOrganizationUseCase(paths).plan(analysis, preserve);
+        assertThat(plan.actions()).hasSize(2);
+        assertThat(plan.actions()).allSatisfy(action -> {
+            assertThat(action.targetPath()).isNotNull();
+            assertThat(action.action())
+                    .isEqualTo(com.myhomelibcorp.organizer.plan.OrganizationAction.MOVE_AND_RENAME);
+        });
     }
 
     private static void writeSingleFb2Zip(Path path) throws Exception {
