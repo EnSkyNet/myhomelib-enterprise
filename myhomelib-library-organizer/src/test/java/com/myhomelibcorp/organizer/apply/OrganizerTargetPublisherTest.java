@@ -49,7 +49,8 @@ class OrganizerTargetPublisherTest {
                 return false;
             } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
         };
-        assertThatThrownBy(() -> new OrganizerTargetPublisher().publish(staged, target, digest, race))
+        assertThatThrownBy(() -> new OrganizerTargetPublisher().publish(staged, target, digest, race,
+                (stage, bytes) -> { }, false))
                 .isInstanceOf(cancel ? java.util.concurrent.CancellationException.class : IllegalStateException.class);
         assertThat(replaced.get()).as("The replacement race must actually execute").isNotNull();
         assertThat(replaced.get()).exists();
@@ -59,7 +60,7 @@ class OrganizerTargetPublisherTest {
     }
 
     @Test
-    void cancelledPublicationNeverExposesACompletedTargetOrUnownedPartialCopy() throws Exception {
+    void cancelledPublicationRetainsUnprovenPartialOnWindowsButNeverDeletesSource() throws Exception {
         Path staged = temp.resolve("large-stage.fb2");
         byte[] block = new byte[1024 * 1024];
         try (var out = Files.newOutputStream(staged)) {
@@ -73,7 +74,9 @@ class OrganizerTargetPublisherTest {
                 staged, target, digest, () -> polls.incrementAndGet() >= 5))
                 .isInstanceOf(java.util.concurrent.CancellationException.class);
         assertThat(polls.get()).isGreaterThanOrEqualTo(5);
-        assertThat(target).doesNotExist();
+        // A Windows CREATE_NEW fallback may leave an unproven partial target,
+        // because deleting it without fileKey could erase a competing file.
+        assertCleanedOrRetainedWithoutFileIdentity(target);
         assertThat(staged).exists();
         try (var stagedFiles = Files.list(target.getParent())) {
             for (Path path : stagedFiles.toList()) assertCleanedOrRetainedWithoutFileIdentity(path);
@@ -194,7 +197,7 @@ class OrganizerTargetPublisherTest {
         java.util.List<String> stages = new java.util.ArrayList<>();
         java.util.List<Long> copied = new java.util.ArrayList<>();
         new OrganizerTargetPublisher().publish(staged, target, digest, () -> false,
-                (stage, bytes) -> { stages.add(stage); copied.add(bytes); });
+                (stage, bytes) -> { stages.add(stage); copied.add(bytes); }, false);
         assertThat(stages).containsSubsequence("TEMP_OPENED", "TEMP_BYTES", "TEMP_STREAM_DONE",
                 "TEMP_VERIFY_TARGET_START", "TEMP_VERIFY_TARGET_DONE", "FINAL_PUBLISH_START",
                 "FINAL_VERIFY_START", "FINAL_VERIFIED");
@@ -216,7 +219,7 @@ class OrganizerTargetPublisherTest {
                     if ("FINAL_VERIFY_BYTES".equals(stage) && bytes > 0L) cancel.set(true);
                 })).isInstanceOf(java.util.concurrent.CancellationException.class);
         assertThat(staged).exists();
-        assertThat(target).doesNotExist();
+        assertCleanedOrRetainedWithoutFileIdentity(target);
     }
 
     @Test
@@ -228,9 +231,29 @@ class OrganizerTargetPublisherTest {
         assertThatThrownBy(() -> new OrganizerTargetPublisher().publish(staged, target, digest,
                 cancelled::get, (stage, bytes) -> {
                     if ("TEMP_VERIFY_TARGET_START".equals(stage)) cancelled.set(true);
-                })).isInstanceOf(java.util.concurrent.CancellationException.class);
+                }, false)).isInstanceOf(java.util.concurrent.CancellationException.class);
         assertThat(Files.readString(staged)).isEqualTo("retain source");
         assertThat(target).doesNotExist();
+    }
+
+    @Test
+    void directWindowsStylePublicationKeepsBothDistinctBooksWithoutOrphanTemporaries() throws Exception {
+        Path directory = Files.createDirectories(temp.resolve("wheel-of-time"));
+        Path first = Files.writeString(temp.resolve("first.fb2"), "Volume 1-9");
+        Path second = Files.writeString(temp.resolve("second.fb2"), "Volume 10-19");
+        OrganizerTargetPublisher publisher = new OrganizerTargetPublisher();
+        publisher.publish(first, directory.resolve("Колесо Времени 1-9.fb2"),
+                OrganizerFileIntegritySupport.sha256(first), () -> false, (stage, bytes) -> { }, true);
+        publisher.publish(second, directory.resolve("Колесо Времени 10-19.fb2"),
+                OrganizerFileIntegritySupport.sha256(second), () -> false, (stage, bytes) -> { }, true);
+        assertThat(Files.readString(directory.resolve("Колесо Времени 1-9.fb2")))
+                .isEqualTo("Volume 1-9");
+        assertThat(Files.readString(directory.resolve("Колесо Времени 10-19.fb2")))
+                .isEqualTo("Volume 10-19");
+        try (var children = Files.list(directory)) {
+            assertThat(children.map(p -> p.getFileName().toString()).toList())
+                    .containsExactlyInAnyOrder("Колесо Времени 1-9.fb2", "Колесо Времени 10-19.fb2");
+        }
     }
 
     @Test

@@ -101,7 +101,12 @@ public final class CanonicalBookPathService {
                 while(end<template.length()&&depth>0){char c=template.charAt(end);if(c=='{')depth++;else if(c=='}')depth--;end++;}
                 if(depth!=0){out.append(template.charAt(i++));continue;}
                 String body=template.substring(colon+1,end-1);
-                if(!values.getOrDefault(field,"").isBlank())out.append(expandConditionals(body,values));
+                // A present series without its numeric position must not render a
+                // dangling separator from the legacy default template.
+                boolean missingNumber = body.contains("{SeriesNo")
+                        && values.getOrDefault("SeriesNo", "").isBlank();
+                if (!values.getOrDefault(field, "").isBlank() && !missingNumber)
+                    out.append(expandConditionals(body, values));
                 i=end; continue;
             }
             out.append(template.charAt(i++));

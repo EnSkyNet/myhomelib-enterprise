@@ -872,7 +872,8 @@ public final class ApplyLibraryOrganizationUseCase {
         targetPublisher.publish(staged, item.targetPath(), sourceHash, cancelled, (stage, bytes) -> {
             ioMonitor.mark(item.itemId(), "PUBLISH_" + stage, bytes);
             long now = System.nanoTime();
-            boolean byteStage = "TEMP_BYTES".equals(stage) || "FINAL_VERIFY_BYTES".equals(stage);
+            boolean byteStage = "TEMP_BYTES".equals(stage) || "DIRECT_BYTES".equals(stage)
+                    || "FINAL_VERIFY_BYTES".equals(stage);
             if (!byteStage || !firstPublishChunkLogged[0]
                     || now - lastPublishLog[0] >= TimeUnit.SECONDS.toNanos(5)) {
                 log.info("ORGANIZER_PUBLISH operationId={} itemId={} stage={} bytesCopied={} elapsedMs={}",
