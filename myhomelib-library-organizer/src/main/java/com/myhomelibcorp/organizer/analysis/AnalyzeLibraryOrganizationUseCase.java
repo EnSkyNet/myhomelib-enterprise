@@ -457,7 +457,7 @@ public final class AnalyzeLibraryOrganizationUseCase {
         String leaf = originalName.replace('\\', '/');
         leaf = leaf.substring(leaf.lastIndexOf('/') + 1);
         java.util.regex.Matcher match = java.util.regex.Pattern.compile(
-                "(?iu)(?:[\\s._-])(\\d{1,3}\\s*[-–—]\\s*\\d{1,3})(?=\\.(?:fb2|fb2zip|epub)$)")
+                "(?iu)(?:[\\s._-])(\\d{1,3}\\s*[-–—]\\s*\\d{1,3})(?=(?:\\s*\\(\\d+\\))?\\.(?:fb2|fb2zip|epub)$)")
                 .matcher(leaf);
         if (!match.find()) return relative;
         String before = leaf.substring(0, match.start()).toLowerCase(java.util.Locale.ROOT);
