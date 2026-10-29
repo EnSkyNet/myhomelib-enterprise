@@ -60,7 +60,7 @@ class OrganizerTargetPublisherTest {
     }
 
     @Test
-    void cancelledPublicationNeverExposesACompletedTargetOrUnownedPartialCopy() throws Exception {
+    void cancelledPublicationRetainsUnprovenPartialOnWindowsButNeverDeletesSource() throws Exception {
         Path staged = temp.resolve("large-stage.fb2");
         byte[] block = new byte[1024 * 1024];
         try (var out = Files.newOutputStream(staged)) {
@@ -74,7 +74,9 @@ class OrganizerTargetPublisherTest {
                 staged, target, digest, () -> polls.incrementAndGet() >= 5))
                 .isInstanceOf(java.util.concurrent.CancellationException.class);
         assertThat(polls.get()).isGreaterThanOrEqualTo(5);
-        assertThat(target).doesNotExist();
+        // A Windows CREATE_NEW fallback may leave an unproven partial target,
+        // because deleting it without fileKey could erase a competing file.
+        assertCleanedOrRetainedWithoutFileIdentity(target);
         assertThat(staged).exists();
         try (var stagedFiles = Files.list(target.getParent())) {
             for (Path path : stagedFiles.toList()) assertCleanedOrRetainedWithoutFileIdentity(path);
