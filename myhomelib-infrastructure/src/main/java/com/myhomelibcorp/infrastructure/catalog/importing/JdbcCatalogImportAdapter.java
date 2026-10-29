@@ -246,6 +246,10 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
         ImportStatus resultStatus = errors > 0 || !issues.isEmpty()
                 ? ImportStatus.SUCCESS_WITH_WARNINGS : ImportStatus.SUCCESS;
         report(context.getProgressListener(), context.getStatusConsumer(), processed, declared);
+        // The final progress/status callbacks may request cancellation. A full
+        // snapshot must not commit its books, deletion flags, and manifest after
+        // the caller cancelled while the transaction was still open.
+        if (isCancelled(context.getCancelFlag())) throw new CancelledImportException();
         return new ImportResult(imported, 0, 0, errors, System.currentTimeMillis() - started,
                 resultStatus, changeSet, issues);
     }
