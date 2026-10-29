@@ -73,6 +73,52 @@ class Fb2ZipOrganizerNamingRegressionTest {
         }
     }
 
+    @Test
+    void twoWheelOfTimeVolumesKeepTheirSourceRangesAndNoDanglingSeriesHyphen() throws Exception {
+        Path input = Files.createDirectories(temp.resolve("wot-source"));
+        Path archive = input.resolve("Books_test.zip");
+        Path destination = temp.resolve("wot-destination");
+        String body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                + "<FictionBook xmlns=\"http://www.gribuser.ru/xml/fictionbook/2.0\">"
+                + "<description><title-info><genre>sf_fantasy</genre>"
+                + "<author><first-name>Роберт</first-name><last-name>Джордан</last-name></author>"
+                + "<book-title>Колесо Времени</book-title>"
+                + "<sequence name=\"Колесо Времени\"/>"
+                + "<lang>ru</lang></title-info></description><body><section><p>%s</p></section></body></FictionBook>";
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(archive))) {
+            zip.putNextEntry(new ZipEntry("Джордан Роберт. Колесо Времени 1-9.fb2"));
+            zip.write(body.formatted("First nine volumes").getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("Джордан Роберт. Колесо Времени 10-19.fb2"));
+            zip.write(body.formatted("Later ten volumes").getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+        }
+
+        OrganizerProfile defaults = OrganizerProfile.safeDefault();
+        OrganizerProfile preserve = new OrganizerProfile("original", "original",
+                "{Author}/{?Series:{Series}/}", "{?Series:{SeriesNo:00} - }{Title}.{ext}",
+                "original", defaults.pdfPolicy(), defaults.originalRetention(),
+                defaults.duplicatePolicy(), defaults.normalizeMetadata(),
+                defaults.validateConvertedFiles(), defaults.useExternalMetadataProviders(),
+                1, 1, defaults.epubOptimizationProfile());
+        CanonicalBookPathService paths = new CanonicalBookPathService();
+        AnalyzeLibraryOrganizationUseCase analyzer = new AnalyzeLibraryOrganizationUseCase(
+                new SignatureBookFormatDetector(), new OrganizerMetadataExtractor(),
+                new MetadataNormalizationService(), new BookFingerprintService(null),
+                new CanonicalFormatPolicy(List.of(), null), paths,
+                new DuplicateDecisionService(new FuzzyDuplicateDetector()));
+        OrganizationAnalysis analysis = analyzer.analyze(input, destination, preserve);
+        assertThat(analysis.items()).hasSize(2);
+        assertThat(analysis.items()).extracting(item -> item.proposedRelativePath().getFileName().toString())
+                .containsExactlyInAnyOrder("Колесо Времени 1-9.fb2", "Колесо Времени 10-19.fb2");
+        var plan = new PlanLibraryOrganizationUseCase(paths).plan(analysis, preserve);
+        assertThat(plan.actions()).hasSize(2);
+        assertThat(plan.actions()).extracting(action -> action.targetPath().getFileName().toString())
+                .containsExactlyInAnyOrder("Колесо Времени 1-9.fb2", "Колесо Времени 10-19.fb2");
+        assertThat(plan.actions()).allSatisfy(action ->
+                assertThat(action.targetPath().toString()).contains("Джордан Роберт"));
+    }
+
     private static void writeSingleFb2Zip(Path path) throws Exception {
         String fb2 = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
                 + "<FictionBook xmlns=\"http://www.gribuser.ru/xml/fictionbook/2.0\">"
