@@ -87,7 +87,8 @@ public final class DuplicateDecisionService {
                 for (int index = 0; index < previous.size(); index++) {
                     Book candidate = previousFuzzyBooks.get(index);
                     OrganizerAnalysisItem candidateItem = previous.get(index);
-                    if (candidate == null || incompatibleKnownLanguages(item, candidateItem)) continue;
+                    if (candidate == null || incompatibleKnownLanguages(item, candidateItem)
+                            || distinctSourceVolumeRanges(item, candidateItem)) continue;
                     var evaluated = fuzzyDetector.evaluate(fuzzyBook, candidate);
                     if (evaluated.isEmpty()) continue;
                     FuzzyDuplicateMatch fuzzy = evaluated.get();
@@ -151,6 +152,35 @@ public final class DuplicateDecisionService {
             case AUTHOR_SIMILAR -> "автор схожий";
             case YEAR_MATCH -> "рік збігається";
         };
+    }
+
+    /**
+     * Two physically distinct compilation volumes can have the same embedded
+     * title, author and series. The original filename is the only place that
+     * preserves an explicit 1-9 / 10-19 range. Such non-overlapping ranges are
+     * not fuzzy duplicates merely because the embedded title-info is identical.
+     * Strong matches (bytes, normalized content or ISBN) are still reviewed.
+     */
+    private boolean distinctSourceVolumeRanges(OrganizerAnalysisItem left, OrganizerAnalysisItem right) {
+        int[] a = sourceVolumeRange(left);
+        int[] b = sourceVolumeRange(right);
+        return a != null && b != null && (a[1] < b[0] || b[1] < a[0]);
+    }
+
+    private int[] sourceVolumeRange(OrganizerAnalysisItem item) {
+        String source = item.sourceEntry();
+        if (source == null || source.isBlank()) source = item.sourcePath().getFileName().toString();
+        String leaf = source.replace('\\', '/');
+        leaf = leaf.substring(leaf.lastIndexOf('/') + 1);
+        java.util.regex.Matcher match = java.util.regex.Pattern.compile(
+                "(?iu)(?:[\\s._-])(\\d{1,3})\\s*[-–—]\\s*(\\d{1,3})(?=\\.(?:fb2|fb2zip|epub)$)")
+                .matcher(leaf);
+        if (!match.find()) return null;
+        String before = normalize(leaf.substring(0, match.start()));
+        if (!before.endsWith(normalize(item.identity().title()))) return null;
+        int start = Integer.parseInt(match.group(1));
+        int end = Integer.parseInt(match.group(2));
+        return start > 0 && end >= start ? new int[]{start, end} : null;
     }
 
     private boolean incompatibleKnownLanguages(OrganizerAnalysisItem left, OrganizerAnalysisItem right) {
