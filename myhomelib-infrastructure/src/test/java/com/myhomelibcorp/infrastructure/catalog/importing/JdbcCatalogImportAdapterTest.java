@@ -179,6 +179,37 @@ class JdbcCatalogImportAdapterTest {
 
 
     @Test
+    void cancellationFromFinalProgressCallbackRollsBackBooksAndManifest() {
+        reader.records = List.of(record("cancel-before-commit", false,
+                person("Ann", "", "One", "person", "1")));
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicInteger callbacks = new java.util.concurrent.atomic.AtomicInteger();
+        ImportContext context = ImportContext.builder()
+                .file(source)
+                .rootDirectory(temp)
+                .catalogSourceKey(SOURCE_KEY)
+                .catalogFullSnapshot(true)
+                .indexAfterSave(false)
+                .batchSize(1000)
+                .cancelFlag(cancelled)
+                .progressListener(value -> {
+                    callbacks.incrementAndGet();
+                    cancelled.set(true);
+                })
+                .build();
+
+        ImportResult result = adapter.importCatalog(context);
+
+        assertThat(callbacks.get()).isEqualTo(1);
+        assertThat(result.status()).isEqualTo(
+                com.myhomelibcorp.application.imports.statistics.ImportStatus.CANCELLED);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM books", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM catalog_manifests", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM catalog_sources", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("PRAGMA integrity_check", String.class)).isEqualTo("ok");
+    }
+
+    @Test
     void watcherCatalogChangeDuringStreamingRollsBackWholeTransaction() throws Exception {
         reader.records = List.of(
                 record("one", false, person("Ann", "", "One", "person", "1")),
