@@ -146,7 +146,9 @@ final class OrganizerTargetPublisher {
                                       java.util.function.BooleanSupplier cancelled,
                                       java.util.function.BiConsumer<String, Long> progress) throws Exception {
         progress.accept("SOURCE_VERIFY_START", 0L);
-        verifyRequiredHash(staged, expectedHash, "Organizer direct publication source");
+        if (!matchesRequiredHash(staged, expectedHash)) {
+            throw new IllegalStateException("Source hash mismatch: " + staged);
+        }
         progress.accept("SOURCE_VERIFY_DONE", Files.size(staged));
         OrganizerFileIntegritySupport.checkCancelled(cancelled);
         boolean published = false;
