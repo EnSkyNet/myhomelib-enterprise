@@ -440,8 +440,36 @@ public final class AnalyzeLibraryOrganizationUseCase {
         CanonicalFormatDecision formatDecision = formatPolicy.decide(detected, profile);
         String extension = formatDecision.targetFormat().isBlank() ? detected.extension() : formatDecision.targetFormat();
         Path relative = paths.relativePath(identity, profile, extension.isBlank() ? "bin" : extension);
+        // An anthology source may say "Колесо Времени 1-9.fb2" while its FB2
+        // title-info only says "Колесо Времени" and supplies no series index.
+        // Preserve an explicit numeric volume range from the archive member
+        // name, rather than collapsing two distinct source volumes into one
+        // generic filename. Do not infer ranges or replace the book's metadata.
+        relative = preserveSourceVolumeRange(relative, sourceEntry, identity.title());
         return new OrganizerAnalysisItem(logicalSource, sourceEntry, detected, raw, identity, fingerprint,
                 formatDecision, relative, null, warnings);
+    }
+
+    private static Path preserveSourceVolumeRange(Path relative, String sourceEntry, String title) {
+        if (sourceEntry == null || sourceEntry.isBlank() || title == null || title.isBlank()) return relative;
+        String leaf = sourceEntry.replace('\\', '/');
+        leaf = leaf.substring(leaf.lastIndexOf('/') + 1);
+        java.util.regex.Matcher match = java.util.regex.Pattern.compile(
+                "(?iu)(?:[\\s._-])(\\d{1,3}\\s*[-–—]\\s*\\d{1,3})(?=\\.(?:fb2|fb2zip|epub)$)")
+                .matcher(leaf);
+        if (!match.find()) return relative;
+        String before = leaf.substring(0, match.start()).toLowerCase(java.util.Locale.ROOT);
+        // Require the embedded FB2 title to be present immediately before the
+        // range. Otherwise the digits may belong to an unrelated edition ID.
+        if (!before.endsWith(title.strip().toLowerCase(java.util.Locale.ROOT))) return relative;
+        String range = match.group(1).replaceAll("\\s+", "").replace('–', '-').replace('—', '-');
+        String name = relative.getFileName().toString();
+        int split = name.toLowerCase(java.util.Locale.ROOT).endsWith(".fb2.zip")
+                ? name.length() - ".fb2.zip".length() : name.lastIndexOf('.');
+        if (split <= 0) return relative;
+        String candidate = name.substring(0, split) + " " + range + name.substring(split);
+        return com.myhomelibcorp.shared.util.SafeFileNameSupport.validateRelativePath(
+                relative.resolveSibling(candidate));
     }
 
     private OrganizerAnalysisItem failedArchiveEntry(Path archive, String sourceEntry, OrganizerProfile profile, String reason) {
