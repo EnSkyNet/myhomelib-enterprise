@@ -133,10 +133,13 @@ class Fb2ZipOrganizerNamingRegressionTest {
                 + "<book-title>Колесо Времени</book-title>"
                 + "<sequence name=\"Колесо Времени\"/><lang>ru</lang>"
                 + "</title-info></description><body><section><p>%s</p></section></body></FictionBook>";
-        Files.writeString(input.resolve("Джордан Роберт. Колесо Времени 1-9.fb2"),
+        Files.writeString(input.resolve("Джордан Роберт. Колесо Времени 1-9(1).fb2"),
                 body.formatted("volumes 1 through 9"), StandardCharsets.UTF_8);
-        Files.writeString(input.resolve("Джордан Роберт. Колесо Времени 10-19.fb2"),
-                body.formatted("volumes 10 through 19"), StandardCharsets.UTF_8);
+        String secondVolume = body.replace("<book-title>Колесо Времени</book-title>",
+                "<author><first-name>Брендон</first-name><last-name>Сандерсон</last-name></author>"
+                        + "<book-title>Колесо Времени</book-title>");
+        Files.writeString(input.resolve("Джордан Роберт. Колесо Времени 10-19(1).fb2"),
+                secondVolume.formatted("volumes 10 through 19"), StandardCharsets.UTF_8);
         OrganizerProfile defaults = OrganizerProfile.safeDefault();
         OrganizerProfile preserve = new OrganizerProfile("original", "original",
                 "{Author}/{?Series:{Series}/}", "{?Series:{SeriesNo:00} - }{Title}.{ext}",
@@ -154,6 +157,11 @@ class Fb2ZipOrganizerNamingRegressionTest {
         assertThat(analysis.items()).hasSize(2);
         assertThat(analysis.items()).extracting(item -> item.proposedRelativePath().getFileName().toString())
                 .containsExactlyInAnyOrder("Колесо Времени 1-9.fb2", "Колесо Времени 10-19.fb2");
+        assertThat(analysis.items()).anySatisfy(item -> {
+            if (item.sourcePath().getFileName().toString().contains("10-19")) {
+                assertThat(item.identity().authors()).hasSize(2);
+            }
+        });
         assertThat(analysis.items()).allSatisfy(item ->
                 assertThat(item.duplicate().kind())
                         .isEqualTo(com.myhomelibcorp.organizer.duplicate.DuplicateKind.NONE));
