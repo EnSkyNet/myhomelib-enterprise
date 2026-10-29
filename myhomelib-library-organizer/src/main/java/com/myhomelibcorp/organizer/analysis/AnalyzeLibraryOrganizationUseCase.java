@@ -445,14 +445,16 @@ public final class AnalyzeLibraryOrganizationUseCase {
         // Preserve an explicit numeric volume range from the archive member
         // name, rather than collapsing two distinct source volumes into one
         // generic filename. Do not infer ranges or replace the book's metadata.
-        relative = preserveSourceVolumeRange(relative, sourceEntry, identity.title());
+        String originalName = sourceEntry == null || sourceEntry.isBlank()
+                ? logicalSource.getFileName().toString() : sourceEntry;
+        relative = preserveSourceVolumeRange(relative, originalName, identity.title());
         return new OrganizerAnalysisItem(logicalSource, sourceEntry, detected, raw, identity, fingerprint,
                 formatDecision, relative, null, warnings);
     }
 
-    private static Path preserveSourceVolumeRange(Path relative, String sourceEntry, String title) {
-        if (sourceEntry == null || sourceEntry.isBlank() || title == null || title.isBlank()) return relative;
-        String leaf = sourceEntry.replace('\\', '/');
+    private static Path preserveSourceVolumeRange(Path relative, String originalName, String title) {
+        if (originalName == null || originalName.isBlank() || title == null || title.isBlank()) return relative;
+        String leaf = originalName.replace('\\', '/');
         leaf = leaf.substring(leaf.lastIndexOf('/') + 1);
         java.util.regex.Matcher match = java.util.regex.Pattern.compile(
                 "(?iu)(?:[\\s._-])(\\d{1,3}\\s*[-–—]\\s*\\d{1,3})(?=\\.(?:fb2|fb2zip|epub)$)")
