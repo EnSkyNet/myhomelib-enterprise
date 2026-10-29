@@ -41,6 +41,17 @@ final class OrganizerTargetPublisher {
     void publish(Path staged, Path target, String expectedHash,
                  java.util.function.BooleanSupplier cancelled,
                  java.util.function.BiConsumer<String, Long> progress) throws Exception {
+        // The Windows NIO provider may return null fileKey(), leaving a complete
+        // .mhl-tmp-* after otherwise successful publication. Avoid the extra copy.
+        boolean direct = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("windows");
+        publish(staged, target, expectedHash, cancelled, progress, direct);
+    }
+
+    // Test seam to exercise both strategies on every CI platform.
+    void publish(Path staged, Path target, String expectedHash,
+                 java.util.function.BooleanSupplier cancelled,
+                 java.util.function.BiConsumer<String, Long> progress,
+                 boolean direct) throws Exception {
         java.util.Objects.requireNonNull(progress, "progress");
         OrganizerFileIntegritySupport.checkCancelled(cancelled);
         if (expectedHash == null || !expectedHash.matches("(?i)[0-9a-f]{64}")) {
@@ -65,6 +76,11 @@ final class OrganizerTargetPublisher {
         OrganizerPathSafety.createDirectoriesNoLinks(parent, "Organizer target directory");
         if (Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
             throw new FileAlreadyExistsException(safeTarget.toString());
+        }
+
+        if (direct) {
+            publishDirect(safeStaged, safeTarget, expectedHash, cancelled, progress);
+            return;
         }
 
         Path temp = safeTarget.resolveSibling(".mhl-tmp-" + UUID.randomUUID());
@@ -117,6 +133,48 @@ final class OrganizerTargetPublisher {
                 LOG.log(System.Logger.Level.WARNING, "ORGANIZER_PUBLICATION_CLEANUP_FAILED temporary={0} error={1}",
                         temp.getFileName(), cleanup.getClass().getSimpleName());
             }
+        }
+    }
+
+    /**
+     * Create a final destination directly on Windows, without another staging
+     * file whose identity cannot reliably be verified for deletion. The source
+     * and published target are independently hashed. CREATE_NEW refuses
+     * competing destinations; a failed partial copy is preserved for recovery.
+     */
+    private static void publishDirect(Path staged, Path target, String expectedHash,
+                                      java.util.function.BooleanSupplier cancelled,
+                                      java.util.function.BiConsumer<String, Long> progress) throws Exception {
+        progress.accept("SOURCE_VERIFY_START", 0L);
+        verifyRequiredHash(staged, expectedHash, "Organizer direct publication source");
+        progress.accept("SOURCE_VERIFY_DONE", Files.size(staged));
+        OrganizerFileIntegritySupport.checkCancelled(cancelled);
+        boolean published = false;
+        try {
+            progress.accept("FINAL_PUBLISH_START", 0L);
+            com.myhomelibcorp.shared.util.NoLinkPathSafety.copyFreshFileVerified(
+                    staged, target, "Organizer direct publication", cancelled, expectedHash,
+                    (stage, bytes) -> progress.accept("DIRECT_" + stage, bytes));
+            published = true;
+            progress.accept("FINAL_VERIFY_START", 0L);
+            if (!expectedHash.equalsIgnoreCase(OrganizerFileIntegritySupport.sha256(target, cancelled,
+                    bytes -> progress.accept("FINAL_VERIFY_BYTES", bytes)))) {
+                throw new IllegalStateException("Final target hash mismatch: " + target);
+            }
+            OrganizerFileIntegritySupport.checkCancelled(cancelled);
+            progress.accept("FINAL_VERIFIED", 0L);
+        } catch (Exception failure) {
+            if (published && matchesRequiredHash(target, expectedHash)) {
+                try {
+                    removeOwnedFileIfPresent(target, expectedHash, "Organizer direct publication rollback");
+                } catch (Exception cleanup) {
+                    recordRetainedTarget(failure, target, cleanup);
+                }
+            } else if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                failure.addSuppressed(new IllegalStateException(
+                        "Unverified direct publication target retained for recovery: " + target));
+            }
+            throw failure;
         }
     }
 
