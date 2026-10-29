@@ -49,7 +49,8 @@ class OrganizerTargetPublisherTest {
                 return false;
             } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
         };
-        assertThatThrownBy(() -> new OrganizerTargetPublisher().publish(staged, target, digest, race))
+        assertThatThrownBy(() -> new OrganizerTargetPublisher().publish(staged, target, digest, race,
+                (stage, bytes) -> { }, false))
                 .isInstanceOf(cancel ? java.util.concurrent.CancellationException.class : IllegalStateException.class);
         assertThat(replaced.get()).as("The replacement race must actually execute").isNotNull();
         assertThat(replaced.get()).exists();
@@ -194,7 +195,7 @@ class OrganizerTargetPublisherTest {
         java.util.List<String> stages = new java.util.ArrayList<>();
         java.util.List<Long> copied = new java.util.ArrayList<>();
         new OrganizerTargetPublisher().publish(staged, target, digest, () -> false,
-                (stage, bytes) -> { stages.add(stage); copied.add(bytes); });
+                (stage, bytes) -> { stages.add(stage); copied.add(bytes); }, false);
         assertThat(stages).containsSubsequence("TEMP_OPENED", "TEMP_BYTES", "TEMP_STREAM_DONE",
                 "TEMP_VERIFY_TARGET_START", "TEMP_VERIFY_TARGET_DONE", "FINAL_PUBLISH_START",
                 "FINAL_VERIFY_START", "FINAL_VERIFIED");
@@ -216,7 +217,7 @@ class OrganizerTargetPublisherTest {
                     if ("FINAL_VERIFY_BYTES".equals(stage) && bytes > 0L) cancel.set(true);
                 })).isInstanceOf(java.util.concurrent.CancellationException.class);
         assertThat(staged).exists();
-        assertThat(target).doesNotExist();
+        assertCleanedOrRetainedWithoutFileIdentity(target);
     }
 
     @Test
@@ -228,9 +229,29 @@ class OrganizerTargetPublisherTest {
         assertThatThrownBy(() -> new OrganizerTargetPublisher().publish(staged, target, digest,
                 cancelled::get, (stage, bytes) -> {
                     if ("TEMP_VERIFY_TARGET_START".equals(stage)) cancelled.set(true);
-                })).isInstanceOf(java.util.concurrent.CancellationException.class);
+                }, false)).isInstanceOf(java.util.concurrent.CancellationException.class);
         assertThat(Files.readString(staged)).isEqualTo("retain source");
         assertThat(target).doesNotExist();
+    }
+
+    @Test
+    void directWindowsStylePublicationKeepsBothDistinctBooksWithoutOrphanTemporaries() throws Exception {
+        Path directory = Files.createDirectories(temp.resolve("wheel-of-time"));
+        Path first = Files.writeString(temp.resolve("first.fb2"), "Volume 1-9");
+        Path second = Files.writeString(temp.resolve("second.fb2"), "Volume 10-19");
+        OrganizerTargetPublisher publisher = new OrganizerTargetPublisher();
+        publisher.publish(first, directory.resolve("Колесо Времени 1-9.fb2"),
+                OrganizerFileIntegritySupport.sha256(first), () -> false, (stage, bytes) -> { }, true);
+        publisher.publish(second, directory.resolve("Колесо Времени 10-19.fb2"),
+                OrganizerFileIntegritySupport.sha256(second), () -> false, (stage, bytes) -> { }, true);
+        assertThat(Files.readString(directory.resolve("Колесо Времени 1-9.fb2")))
+                .isEqualTo("Volume 1-9");
+        assertThat(Files.readString(directory.resolve("Колесо Времени 10-19.fb2")))
+                .isEqualTo("Volume 10-19");
+        try (var children = Files.list(directory)) {
+            assertThat(children.map(p -> p.getFileName().toString()).toList())
+                    .containsExactlyInAnyOrder("Колесо Времени 1-9.fb2", "Колесо Времени 10-19.fb2");
+        }
     }
 
     @Test
