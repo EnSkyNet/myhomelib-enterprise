@@ -330,6 +330,46 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(value = 35)
+    void inPlaceRewriteAfterHashIsReobservedBeforeReadyInsteadOfPublishingStaleBytes() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        DomainEventPublisher publisher = mock(DomainEventPublisher.class);
+        var mutated = new java.util.concurrent.atomic.AtomicBoolean();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), publisher) {
+            @Override
+            String fingerprintFile(Path file) throws java.io.IOException {
+                String oldDigest = super.fingerprintFile(file);
+                if (mutated.compareAndSet(false, true)) {
+                    long previousMtime = Files.getLastModifiedTime(file).toMillis();
+                    // Deterministic same-path write after the hash: forces a new
+                    // stability interval even on timestamp-coarse Windows volumes.
+                    Files.writeString(file, "second edition with different bytes");
+                    Files.setLastModifiedTime(file, java.nio.file.attribute.FileTime.fromMillis(
+                            previousMtime + 5_000));
+                }
+                return oldDigest;
+            }
+        };
+        Path incoming = Files.createDirectory(tempDir.resolve("post-hash-rewrite"));
+        adapter.configure("c1", incoming, false, 1, 1);
+        Path file = Files.writeString(incoming.resolve("changing.txt"), "first edition");
+        String initialDigest = java.util.HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file)));
+
+        assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:1");
+        await(() -> mutated.get() && !adapter.listReady("c1", 10).isEmpty(),
+                Duration.ofSeconds(15));
+
+        var ready = adapter.listReady("c1", 10);
+        assertThat(ready).hasSize(1);
+        String expected = java.util.HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file)));
+        assertThat(expected).isNotEqualTo(initialDigest);
+        assertThat(ready.getFirst().fingerprint()).isEqualTo(expected);
+        verify(publisher, timeout(5_000).times(1)).publish(any(IncomingFolderFileReadyEvent.class));
+    }
+
+    @Test
     void inFlightObservationRetainsItsPendingSlotUntilPublishCompletes() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         DomainEventPublisher publisher = mock(DomainEventPublisher.class);

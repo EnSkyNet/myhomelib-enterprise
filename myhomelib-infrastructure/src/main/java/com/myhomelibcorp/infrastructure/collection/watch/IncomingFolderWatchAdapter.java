@@ -585,7 +585,28 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         }
         String fingerprint;
         try {
-            fingerprint = sha256NoFollow(normalized);
+            fingerprint = fingerprintFile(normalized);
+            // A file can be overwritten in place while SHA-256 is being read.
+            // Being a regular file after the read is not enough: the computed
+            // digest could describe bytes that no longer exist on disk.
+            BasicFileAttributes afterHash = Files.readAttributes(
+                    normalized, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (!afterHash.isRegularFile() || !isSafeIncomingRegularFile(normalized)) {
+                markMissing(collectionId, normalized);
+                return;
+            }
+            Object beforeKey = attrs.fileKey();
+            Object afterKey = afterHash.fileKey();
+            boolean replaced = beforeKey != null && afterKey != null
+                    && !beforeKey.equals(afterKey);
+            if (replaced || size != afterHash.size()
+                    || mtime != afterHash.lastModifiedTime().toMillis()) {
+                // New size/mtime gets a fresh stability window, not a stale READY.
+                upsertWaiting(collectionId, normalized, afterHash.size(),
+                        afterHash.lastModifiedTime().toMillis(), now(), null);
+                scheduleCandidate(collectionId, normalized, state.stabilitySeconds());
+                return;
+            }
         } catch (Exception failure) {
             jdbc.update("""
                     UPDATE incoming_folder_file SET status='FAILED', last_error=?, updated_at=?
@@ -708,6 +729,12 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         } catch (IOException | SecurityException unsafe) {
             return false;
         }
+    }
+
+    // Package-private seam: deterministically test an in-place rewrite that
+    // happens immediately after hashing and before status publication.
+    String fingerprintFile(Path file) throws IOException {
+        return sha256NoFollow(file);
     }
 
     private static String sha256NoFollow(Path file) throws IOException {
