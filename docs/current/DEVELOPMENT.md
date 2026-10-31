@@ -94,7 +94,7 @@ The repository keeps machine-readable performance evidence under `docs/` / `docs
 - startup avoids catalogue-wide synchronous scans;
 - Reader parsing/layout/resource caching remains bounded for large books.
 
-Stored SQLite guardrails include representative 100k/500k/1M profiles. Synthetic timings are regression evidence for the measured environment, not universal hardware performance promises.
+Stored SQLite guardrails include representative 100k/500k/1M profiles. The offline scale runner also measures full `PRAGMA integrity_check` (table and secondary-index consistency, not only `quick_check`) at all three sizes and records its wall time and result. Synthetic timings are regression evidence for the measured environment, not universal hardware performance promises.
 
 Reproducible helpers include:
 
