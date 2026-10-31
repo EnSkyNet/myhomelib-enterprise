@@ -142,9 +142,12 @@ class RealRecoveryCheckpointPerformanceProbeTest {
             Files.writeString(profile, json);
             System.out.println("REAL_CHECKPOINT_PROFILE_JSON=" + json.replace(System.lineSeparator(), ""));
             System.out.printf(Locale.ROOT,
-                    "REAL_CHECKPOINT_PROFILE_RESULT wallMs=%d cpuMs=%d dbBytes=%d walBytes=%d shmBytes=%d checkpointBytes=%d peakHeapBytes=%d busyTimeoutMs=%d walProbeRows=%d walProbeMs=%d walProbePeakWalBytes=%d%n",
+                    "REAL_CHECKPOINT_PROFILE_RESULT wallMs=%d cpuMs=%d dbBytes=%d walBytes=%d "
+                            + "shmBytes=%d checkpointBytes=%d peakHeapBytes=%d busyTimeoutMs=%d "
+                            + "walProbeRows=%d walProbeMs=%d walProbePeakWalBytes=%d%n",
                     wallMs, cpuMs, sourceBytesAfter, walBytesAtStart, shmBytesAtStart,
-                    checkpointBytes, peakHeap, busyTimeoutMs, walProbe.rowsUpdated(), walProbe.wallMs(), walProbe.peakWalBytes());
+                    checkpointBytes, peakHeap, busyTimeoutMs,
+                    walProbe.rowsUpdated(), walProbe.wallMs(), walProbe.peakWalBytes());
 
             assertThat(journalMode).isEqualToIgnoringCase("wal");
             assertThat(checkpointBytes).isGreaterThan(100L);
@@ -217,7 +220,7 @@ class RealRecoveryCheckpointPerformanceProbeTest {
                   "walProbePeakHeapBytes": %d,
                   "walProbeBusyTimeoutMs": %d,
                   "walProbeBusyExceptionsObserved": 0,
-                  "notes": "The WAL probe is a bounded synthetic UPDATE transaction on the disposable checkpoint copy, not a full network INPX import. No SQLite BUSY exception escaped either probe. Xerial JDBC does not expose an aggregate busy-handler retry counter; busyTimeoutMs is the configured per-connection wait limit. The checkpoint and its sidecars are deleted after measurement."
+                  "notes": "Synthetic UPDATE runs only on the disposable checkpoint copy, not a network INPX import. No BUSY exception escaped; JDBC exposes no aggregate busy-retry counter. Checkpoint and sidecars are deleted."
                 }
                 """.formatted(startedAtEpochMs, jsonEscape(db.getFileName().toString()),
                 jsonEscape(System.getProperty("os.name", "")), jsonEscape(System.getProperty("os.version", "")),
