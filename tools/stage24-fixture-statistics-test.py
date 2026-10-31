@@ -68,9 +68,9 @@ class FixtureStatisticsTest(unittest.TestCase):
             with db.open('r+b') as stream:
                 stream.seek((root_page - 1) * page_size)
                 original = stream.read(1)
-                self.assertNotEqual(b'\\x00', original)
+                self.assertNotEqual(b'\x00', original)
                 stream.seek((root_page - 1) * page_size)
-                stream.write(b'\\x00')
+                stream.write(b'\x00')
                 stream.flush()
 
             with closing(sqlite3.connect(db)) as conn:
