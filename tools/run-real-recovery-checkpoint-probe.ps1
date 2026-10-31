@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$DatabasePath,
     [string]$CheckpointPath,
-    [string]$ProfilePath
+    [string]$ProfilePath,
+    [ValidateRange(0, 500000)]
+    [int]$ImportProbeRows = 50000
 )
 
 $ErrorActionPreference = "Stop"
@@ -60,6 +62,7 @@ $mavenArguments = @(
     "-Dmhl.real.db=$DatabasePath",
     "-Dmhl.real.checkpoint=$CheckpointPath",
     "-Dmhl.real.profile=$ProfilePath",
+    "-Dmhl.real.import.probe.rows=$ImportProbeRows",
     "test"
 )
 $quotedArguments = ($mavenArguments | ForEach-Object { ConvertTo-PowerShellLiteral $_ }) -join " "
