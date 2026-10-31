@@ -34,6 +34,11 @@ $ProfilePath = [IO.Path]::GetFullPath($ProfilePath)
 if (Test-Path -LiteralPath $CheckpointPath) {
     throw "Refusing to overwrite an existing checkpoint path: $CheckpointPath"
 }
+foreach ($suffix in @("-wal", "-shm", "-journal")) {
+    if (Test-Path -LiteralPath ($CheckpointPath + $suffix)) {
+        throw "Refusing to overwrite an existing checkpoint sidecar: $CheckpointPath$suffix"
+    }
+}
 if ($CheckpointPath -eq $DatabasePath -or $ProfilePath -eq $DatabasePath -or $ProfilePath -eq $CheckpointPath) {
     throw "Database, checkpoint and profile paths must be different."
 }
@@ -129,6 +134,12 @@ $machineProfile = [ordered]@{
 $machineProfile | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $machineProfilePath -Encoding UTF8
 
 # The checkpoint is a temporary full copy of the user's library. Remove it even when Maven fails.
+foreach ($suffix in @("-wal", "-shm", "-journal")) {
+    $sidecar = $CheckpointPath + $suffix
+    if (Test-Path -LiteralPath $sidecar) {
+        Remove-Item -LiteralPath $sidecar -Force
+    }
+}
 if (Test-Path -LiteralPath $CheckpointPath) {
     Remove-Item -LiteralPath $CheckpointPath -Force
 }
