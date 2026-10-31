@@ -87,7 +87,16 @@ if ([string]::IsNullOrWhiteSpace($powerShellExe)) {
     if ($null -eq $powerShellCommand) { throw "Cannot locate a PowerShell executable to run the Maven probe." }
     $powerShellExe = $powerShellCommand.Source
 }
-$process = Start-Process -FilePath $powerShellExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ('"{0}"' -f $runnerPath)) -WorkingDirectory $repoRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $errorPath
+$startProcessArguments = @{
+    FilePath = $powerShellExe
+    ArgumentList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ('"{0}"' -f $runnerPath))
+    WorkingDirectory = $repoRoot
+    PassThru = $true
+    WindowStyle = "Hidden"
+    RedirectStandardOutput = $logPath
+    RedirectStandardError = $errorPath
+}
+$process = Start-Process @startProcessArguments
 
 $peakJavaWorkingSetBytes = 0L
 $javaCpuByPid = @{}
