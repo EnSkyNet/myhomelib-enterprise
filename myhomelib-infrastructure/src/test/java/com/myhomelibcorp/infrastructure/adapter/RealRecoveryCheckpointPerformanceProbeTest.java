@@ -248,10 +248,11 @@ class RealRecoveryCheckpointPerformanceProbeTest {
             String lastId = "";
 
             connection.setAutoCommit(false);
+            String probePrefix = "mhl-wal-probe-" + Long.toUnsignedString(System.nanoTime()) + "-";
             try (PreparedStatement select = connection.prepareStatement(
                     "SELECT id FROM books WHERE id > ? ORDER BY id LIMIT ?");
                  PreparedStatement update = connection.prepareStatement(
-                    "UPDATE books SET annotation = 'mhl-wal-probe-' || id WHERE id = ?")) {
+                    "UPDATE books SET annotation = ? || id WHERE id = ?")) {
                 while (updated < requestedRows) {
                     int batchLimit = Math.min(1_000, requestedRows - updated);
                     select.setString(1, lastId);
@@ -262,7 +263,8 @@ class RealRecoveryCheckpointPerformanceProbeTest {
                     }
                     if (ids.isEmpty()) break;
                     for (String id : ids) {
-                        update.setString(1, id);
+                        update.setString(1, probePrefix);
+                        update.setString(2, id);
                         update.addBatch();
                     }
                     update.executeBatch();
