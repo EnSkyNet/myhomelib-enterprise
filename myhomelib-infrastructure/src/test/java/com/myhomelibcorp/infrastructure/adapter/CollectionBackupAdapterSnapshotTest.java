@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
@@ -49,7 +50,7 @@ class CollectionBackupAdapterSnapshotTest {
         }
     }
     @Test
-    void recoveryCheckpointUsesFastPathAndStillProducesIndependentValidDatabase() throws Exception {
+    void recoveryCheckpointCreatesIndependentFullyValidatedDatabase() throws Exception {
         Path liveDb = tempDir.resolve("live-recovery.db");
         SQLiteDataSource dataSource = new SQLiteDataSource();
         dataSource.setUrl("jdbc:sqlite:" + liveDb.toAbsolutePath());
@@ -75,6 +76,37 @@ class CollectionBackupAdapterSnapshotTest {
              var result = statement.executeQuery("SELECT title FROM books WHERE id='b1'")) {
             assertThat(result.next()).isTrue();
             assertThat(result.getString(1)).isEqualTo("Before");
+        }
+    }
+
+    @Test
+    void recoveryCheckpointRefusesCorruptSecondaryIndexBeforePublishing() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        doAnswer(invocation -> {
+            String sql = invocation.getArgument(0);
+            int start = sql.indexOf("TO '") + 4;
+            int end = sql.lastIndexOf("'");
+            Path staged = Path.of(sql.substring(start, end));
+            createCorruptSecondaryIndexDatabase(staged);
+            return null;
+        }).when(jdbc).execute(anyString());
+
+        CollectionManager manager = mock(CollectionManager.class);
+        when(manager.hasActiveCollection()).thenReturn(true);
+        when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);
+        Collection requested = identifiedCollection("c1");
+        when(manager.getCurrentCollection()).thenReturn(requested);
+        CollectionBackupAdapter adapter = new CollectionBackupAdapter(manager);
+        Path checkpoint = tempDir.resolve("corrupt-recovery.db");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                adapter.createRecoveryCheckpoint(requested, checkpoint))
+                .isInstanceOf(java.io.IOException.class);
+        assertThat(Files.exists(checkpoint)).isFalse();
+        try (var children = Files.list(tempDir)) {
+            assertThat(children.map(path -> path.getFileName().toString())
+                    .filter(name -> name.startsWith(".mhl-snapshot-"))
+                    .toList()).isEmpty();
         }
     }
 
@@ -338,6 +370,47 @@ class CollectionBackupAdapterSnapshotTest {
              var result = statement.executeQuery("SELECT value FROM sample")) {
             assertThat(result.next()).isTrue();
             assertThat(result.getString(1)).isEqualTo(expected);
+        }
+    }
+
+    private static void createCorruptSecondaryIndexDatabase(Path file) throws Exception {
+        Files.deleteIfExists(file);
+        int pageSize;
+        long rootPage;
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + file.toAbsolutePath());
+             var statement = connection.createStatement()) {
+            statement.execute("PRAGMA page_size=4096");
+            statement.execute("CREATE TABLE books(id INTEGER PRIMARY KEY, title TEXT NOT NULL)");
+            statement.execute("CREATE INDEX idx_books_title ON books(title)");
+            try (var prepared = connection.prepareStatement("INSERT INTO books(title) VALUES (?)")) {
+                for (int i = 0; i < 2_000; i++) {
+                    prepared.setString(1, "Synthetic title " + i);
+                    prepared.addBatch();
+                }
+                prepared.executeBatch();
+            }
+            try (var result = statement.executeQuery("PRAGMA page_size")) {
+                if (!result.next()) throw new IllegalStateException("SQLite page_size unavailable");
+                pageSize = result.getInt(1);
+            }
+            try (var result = statement.executeQuery(
+                    "SELECT rootpage FROM sqlite_master WHERE type='index' AND name='idx_books_title'")) {
+                if (!result.next()) throw new IllegalStateException("SQLite secondary index missing");
+                rootPage = result.getLong(1);
+            }
+        }
+        // Preserve the SQLite header and schema page, but invalidate the secondary
+        // index root page. Header/schema-only validation incorrectly accepts this DB.
+        try (var random = new RandomAccessFile(file.toFile(), "rw")) {
+            long offset = (rootPage - 1L) * pageSize;
+            random.seek(offset);
+            int original = random.read();
+            if (original < 0 || original == 0) {
+                throw new IllegalStateException("Unexpected SQLite secondary-index page header");
+            }
+            random.seek(offset);
+            random.write(0);
+            random.getFD().sync();
         }
     }
 
