@@ -44,6 +44,40 @@ class FixtureStatisticsTest(unittest.TestCase):
                     self.assertEqual(count, conn.execute(f'SELECT count(*) FROM {table}').fetchone()[0])
                 self.assertEqual('ok', conn.execute('PRAGMA quick_check').fetchone()[0])
 
+    def test_full_integrity_check_detects_a_corrupt_secondary_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / 'indexed.db'
+            with closing(sqlite3.connect(db)) as conn:
+                conn.execute('PRAGMA page_size=4096')
+                conn.execute('CREATE TABLE books(id INTEGER PRIMARY KEY, title TEXT NOT NULL)')
+                conn.execute('CREATE INDEX idx_books_title ON books(title)')
+                conn.executemany(
+                    'INSERT INTO books(title) VALUES (?)',
+                    ((f'Synthetic title {i:06d}',) for i in range(2000)),
+                )
+                conn.commit()
+                self.assertEqual('ok', baseline.full_integrity_check(conn)['result'])
+                page_size = conn.execute('PRAGMA page_size').fetchone()[0]
+                root_page = conn.execute(
+                    "SELECT rootpage FROM sqlite_master WHERE type='index' AND name='idx_books_title'"
+                ).fetchone()[0]
+                self.assertGreater(root_page, 1)
+
+            # Keep the SQLite header and sqlite_master readable, but invalidate the
+            # secondary-index b-tree page. A schema-only probe can miss this defect.
+            with db.open('r+b') as stream:
+                stream.seek((root_page - 1) * page_size)
+                original = stream.read(1)
+                self.assertNotEqual(b'\\x00', original)
+                stream.seek((root_page - 1) * page_size)
+                stream.write(b'\\x00')
+                stream.flush()
+
+            with closing(sqlite3.connect(db)) as conn:
+                result = baseline.full_integrity_check(conn)
+                self.assertIn(result['result'], ('failed', 'error'), result)
+                self.assertGreater(result['wall_ms'], 0)
+
     def test_import_probe_still_rolls_back_all_synthetic_writes(self):
         with closing(sqlite3.connect(':memory:')) as conn:
             baseline.configure_fixture(conn)
