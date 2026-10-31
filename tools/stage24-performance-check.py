@@ -44,7 +44,7 @@ for marker in ['workflow_dispatch','schedule:','-Pperformance','stage24-performa
     need(marker in workflow,f'performance workflow missing {marker}')
 
 runner=text('tools/stage24-performance-baseline.py')
-for marker in ['100_000, 500_000, 1_000_000','EXPLAIN QUERY PLAN','import_probe','navigation_authors_A','catalog_filtered_page','resource.getrusage']:
+for marker in ['100_000, 500_000, 1_000_000','EXPLAIN QUERY PLAN','import_probe','navigation_authors_A','catalog_filtered_page','resource.getrusage','full_integrity_check']:
     need(marker in runner,f'offline runner missing {marker}')
 dev_doc=ROOT/'docs/current/DEVELOPMENT.md'
 need(dev_doc.exists(),'canonical development/performance documentation missing')

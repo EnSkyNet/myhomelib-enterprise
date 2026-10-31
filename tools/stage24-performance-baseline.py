@@ -178,6 +178,29 @@ def scalar(conn: sqlite3.Connection, sql: str, params=()):
     return conn.execute(sql, params).fetchone()[0]
 
 
+def full_integrity_check(conn: sqlite3.Connection) -> dict:
+    """Measure SQLite's full table+index consistency scan, not the cheaper quick_check."""
+    started = now_ms()
+    try:
+        rows = [str(row[0]) for row in conn.execute('PRAGMA integrity_check')]
+        ok = len(rows) == 1 and rows[0].strip().lower() == 'ok'
+        result = {
+            'result': 'ok' if ok else 'failed',
+            'rows': len(rows),
+            'wall_ms': round(now_ms() - started, 3),
+        }
+        if not ok:
+            result['first_error'] = rows[0][:240] if rows else 'PRAGMA integrity_check returned no rows'
+        return result
+    except sqlite3.DatabaseError as exc:
+        return {
+            'result': 'error',
+            'rows': 0,
+            'wall_ms': round(now_ms() - started, 3),
+            'error': str(exc)[:240],
+        }
+
+
 def run_queries(conn: sqlite3.Connection, repeats: int = 7) -> dict:
     # Mirror the production author-navigation path: ordered author scan + bounded
     # per-author existence/count checks. Exact total remains a diagnostic only and
@@ -354,7 +377,12 @@ def benchmark_size(size: int, keep_db: Path | None) -> dict:
     configure_queries(conn)
     query = run_queries(conn, repeats=3 if size >= 1_000_000 else 5)
     plan = plans(conn)
+    # Preserve the historical quick_check metric and measure the stronger
+    # table+index integrity_check at every scale, including the 1M profile.
     integrity = scalar(conn, 'PRAGMA quick_check') if size <= 500_000 else 'skipped-large-performance-fixture'
+    full_integrity = full_integrity_check(conn)
+    if full_integrity['result'] != 'ok':
+        raise RuntimeError(f"SQLite full integrity_check failed at {size:,} books: {full_integrity}")
     db_bytes = db.stat().st_size
     pages = scalar(conn, 'PRAGMA page_count')
     page_size = scalar(conn, 'PRAGMA page_size')
@@ -374,7 +402,10 @@ def benchmark_size(size: int, keep_db: Path | None) -> dict:
         },
         'queries': query,
         'plans': plan,
-        'database': {'bytes': db_bytes, 'pages': pages, 'page_size': page_size, 'integrity': integrity},
+        'database': {
+            'bytes': db_bytes, 'pages': pages, 'page_size': page_size,
+            'integrity': integrity, 'full_integrity_check': full_integrity,
+        },
         'process_peak_rss_kb': peak_rss_kb,
     }
     if td:
@@ -427,7 +458,8 @@ def main() -> None:
         print(f"  import-probe={results[-1]['import_write_probe']['books_per_sec']:,.0f} books/s, "
               f"authors(A first) p95={q['navigation_authors_A_first_keyset_page']['p95_ms']:.1f} ms, "
               f"count p95={q['navigation_authors_A_exact_count_diagnostic']['p95_ms']:.1f} ms, "
-              f"page p95={q['catalog_first_page']['p95_ms']:.1f} ms", flush=True)
+              f"page p95={q['catalog_first_page']['p95_ms']:.1f} ms, "
+              f"full integrity_check={results[-1]['database']['full_integrity_check']['wall_ms']:.1f} ms", flush=True)
 
     report = {
         'schema': 1,
