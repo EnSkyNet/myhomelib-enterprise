@@ -99,7 +99,7 @@ class CollectionBackupAdapterSnapshotTest {
                 adapter.createRecoveryCheckpoint(requested, checkpoint))
                 .isInstanceOf(java.io.IOException.class)
                 .hasMessageNotContaining("SQLite online backup failed")
-                .hasMessageContaining("recovery checkpoint");
+                .hasMessageContaining("SQLite integrity_check failed for recovery checkpoint");
         assertThat(Files.exists(checkpoint)).isFalse();
         try (var children = Files.list(tempDir)) {
             assertThat(children.map(path -> path.getFileName().toString())
