@@ -46,6 +46,7 @@ public final class CatalogUpdateCrashWorker {
                 // this UPDATE must retain both the new catalog and the new applied version.
                 statement.executeUpdate(
                         "UPDATE catalog_sources SET applied_version='v2' WHERE source_key='source-1'");
+                connection.commit();
                 halt();
             }
         }
