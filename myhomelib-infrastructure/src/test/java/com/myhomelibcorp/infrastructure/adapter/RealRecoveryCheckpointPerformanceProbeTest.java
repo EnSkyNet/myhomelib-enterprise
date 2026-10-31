@@ -12,6 +12,7 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryPoolMXBean;
 import java.lang.management.MemoryType;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -40,11 +41,12 @@ class RealRecoveryCheckpointPerformanceProbeTest {
                 .toAbsolutePath().normalize();
         Path profile = Path.of(System.getProperty("mhl.real.profile",
                 "target/real-recovery-checkpoint-profile.json")).toAbsolutePath().normalize();
-        assertThat(db).isRegularFile();
-        assertThat(checkpoint).isNotEqualTo(db);
+        assertThat(Files.isRegularFile(db, LinkOption.NOFOLLOW_LINKS)).isTrue();
+        assertThat(checkpoint).isNotEqualTo(db).isNotEqualTo(profile);
+        assertThat(profile).isNotEqualTo(db);
         Files.createDirectories(checkpoint.getParent());
         Files.createDirectories(profile.getParent());
-        Files.deleteIfExists(checkpoint);
+        assertThat(checkpoint).doesNotExist();
 
         long sourceBytesBeforeOpen = Files.size(db);
         long walBytesBeforeOpen = fileSize(Path.of(db + "-wal"));
@@ -214,7 +216,7 @@ class RealRecoveryCheckpointPerformanceProbeTest {
     }
 
     private static long fileSize(Path path) throws Exception {
-        return Files.isRegularFile(path) ? Files.size(path) : 0L;
+        return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) ? Files.size(path) : 0L;
     }
 
     private static com.sun.management.OperatingSystemMXBean operatingSystemBean() {
