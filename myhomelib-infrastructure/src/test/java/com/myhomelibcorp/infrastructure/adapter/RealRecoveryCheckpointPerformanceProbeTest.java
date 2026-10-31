@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** Opt-in benchmark for the crash-safe pre-update SQLite checkpoint on a production-sized catalogue. */
+/** Opt-in benchmark for backup plus full pre-update checkpoint integrity_check on a production-sized catalogue. */
 class RealRecoveryCheckpointPerformanceProbeTest {
     @Test
     @EnabledIfSystemProperty(named = "mhl.real.db", matches = ".+")
@@ -43,7 +43,7 @@ class RealRecoveryCheckpointPerformanceProbeTest {
 
             long sourceBytes = Files.size(db);
             long checkpointBytes = Files.size(checkpoint);
-            System.out.printf("REAL_CHECKPOINT_RESULT wallMs=%d sourceBytes=%d checkpointBytes=%d mbPerSec=%.2f%n",
+            System.out.printf("REAL_CHECKPOINT_FULL_INTEGRITY_RESULT wallMs=%d sourceBytes=%d checkpointBytes=%d mbPerSec=%.2f%n",
                     wallMs, sourceBytes, checkpointBytes,
                     wallMs == 0 ? 0.0 : (sourceBytes / 1024.0 / 1024.0) / (wallMs / 1000.0));
             assertThat(checkpointBytes).isGreaterThan(100L);

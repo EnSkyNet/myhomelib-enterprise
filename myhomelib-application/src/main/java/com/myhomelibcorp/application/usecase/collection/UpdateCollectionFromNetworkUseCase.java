@@ -273,9 +273,9 @@ public class UpdateCollectionFromNetworkUseCase {
                 checkpoint = updateCheckpointPath(active, operationId);
                 emit(telemetry, OperationProgress.stage(operationId, OperationStage.CREATING_CHECKPOINT, false)
                         .withCurrentItem("SQLite checkpoint"));
-                // createDatabaseSnapshot publishes only a successfully validated staged copy.
-                // Do not run a second full quick_check here: on multi-GB catalogues that doubles
-                // checkpoint latency without adding another safety boundary.
+                // createRecoveryCheckpoint publishes only a staged copy that passed the full
+                // read-only PRAGMA integrity_check, including secondary-index consistency.
+                // Do not repeat that catalogue-wide scan here: it would double checkpoint latency.
                 phaseStarted = System.nanoTime();
                 collectionBackupPort.createRecoveryCheckpoint(active, checkpoint);
                 checkpointMs += elapsedMillis(phaseStarted);
