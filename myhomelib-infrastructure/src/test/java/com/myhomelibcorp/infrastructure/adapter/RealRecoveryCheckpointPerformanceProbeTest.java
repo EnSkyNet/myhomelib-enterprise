@@ -50,6 +50,9 @@ class RealRecoveryCheckpointPerformanceProbeTest {
         Files.createDirectories(checkpoint.getParent());
         Files.createDirectories(profile.getParent());
         assertThat(checkpoint).doesNotExist();
+        assertThat(Path.of(checkpoint + "-wal")).doesNotExist();
+        assertThat(Path.of(checkpoint + "-shm")).doesNotExist();
+        assertThat(Path.of(checkpoint + "-journal")).doesNotExist();
 
         long sourceBytesBeforeOpen = Files.size(db);
         long walBytesBeforeOpen = fileSize(Path.of(db + "-wal"));
