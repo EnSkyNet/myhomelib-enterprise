@@ -16,6 +16,8 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.Optional;
@@ -145,10 +147,10 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
     }
 
     /**
-     * Fast validation for a transient update checkpoint. SQLite's backup API already guarantees
-     * transactional page consistency; here we only prove that a non-empty SQLite file can be
-     * opened read-only and that the core catalogue schema is visible. A user-created backup still
-     * uses the full PRAGMA quick_check path in validateDatabaseFile.
+     * Validate a transient update checkpoint before publishing it. SQLite's backup API guarantees
+     * a transactionally consistent page copy, but it does not prove that every copied secondary
+     * index is logically consistent with its table. A full integrity_check is therefore required
+     * before this file becomes the only automatic rollback point for an online update.
      */
     private static void validateRecoveryCheckpoint(Path databaseFile) throws IOException {
         if (databaseFile == null) {
@@ -172,6 +174,7 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
              var statement = connection.createStatement()) {
             SafeFilePublication.requireSafeRegularFile(safeDatabase, "SQLite recovery checkpoint opened path");
             statement.execute("PRAGMA query_only=ON");
+            validateFullIntegrityCheck(statement, safeDatabase, "recovery checkpoint");
             try (var result = statement.executeQuery(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='books' LIMIT 1")) {
                 if (!result.next()) throw new IOException("SQLite recovery checkpoint does not contain the books table");
@@ -184,6 +187,16 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
         requireSameSnapshot(safeDatabase, before, "SQLite recovery checkpoint");
     }
 
+    private static void validateFullIntegrityCheck(Statement statement, Path databaseFile, String role)
+            throws SQLException, IOException {
+        try (var result = statement.executeQuery("PRAGMA integrity_check")) {
+            // integrity_check, unlike quick_check, also verifies index/table consistency.
+            if (!result.next() || !"ok".equalsIgnoreCase(result.getString(1)) || result.next()) {
+                throw new IOException("SQLite integrity_check failed for " + role + ": " + databaseFile);
+            }
+        }
+    }
+
     @Override
     public void validateDatabaseFile(Path databaseFile) throws IOException {
         if (databaseFile == null) {
@@ -194,14 +207,9 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
                 SafeFilePublication.snapshot(safeDatabase, "SQLite database before integrity_check");
         String url = "jdbc:sqlite:" + safeDatabase.toAbsolutePath().normalize();
         try (var connection = DriverManager.getConnection(url);
-             var statement = connection.createStatement();
-             var result = statement.executeQuery("PRAGMA integrity_check")) {
+             var statement = connection.createStatement()) {
             SafeFilePublication.requireSafeRegularFile(safeDatabase, "SQLite database opened path");
-            // Full integrity_check validates index/table consistency; quick_check does not.
-            // A backup selected for rollback must be fully validated before swapping files.
-            if (!result.next() || !"ok".equalsIgnoreCase(result.getString(1)) || result.next()) {
-                throw new IOException("SQLite integrity_check failed for " + databaseFile);
-            }
+            validateFullIntegrityCheck(statement, safeDatabase, "database");
         } catch (IOException e) {
             throw e;
         } catch (Exception e) {
