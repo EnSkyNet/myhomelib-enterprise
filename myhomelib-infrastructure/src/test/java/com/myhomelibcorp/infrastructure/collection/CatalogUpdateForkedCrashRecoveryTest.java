@@ -1,6 +1,10 @@
 package com.myhomelibcorp.infrastructure.collection;
 
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.infrastructure.search.LuceneCollectionIndexLifecycle;
+import com.myhomelibcorp.infrastructure.search.LuceneSearchService;
+import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.shared.util.CatalogUpdateRecoveryFiles;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -12,6 +16,8 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Kills a separate JVM, leaving real SQLite WAL/SHM files and a durable recovery marker.
@@ -90,6 +96,97 @@ class CatalogUpdateForkedCrashRecoveryTest {
                     assertThat(checkpoint).as(point).doesNotExist();
                 }
             }
+        } finally {
+            if (previousDir == null) System.clearProperty("myhomelib.dataDir");
+            else System.setProperty("myhomelib.dataDir", previousDir);
+        }
+    }
+
+    @Test
+    void rollbackAfterLuceneCommitInvalidatesFreshnessMarkerForInterruptedWal() throws Exception {
+        String previousDir = System.getProperty("myhomelib.dataDir");
+        Path root = Files.createDirectories(temp.resolve("lucene-after-crash"));
+        Path appData = root.resolve("app-data");
+        System.setProperty("myhomelib.dataDir", appData.toString());
+        try {
+            String collectionId = "catalog-lucene-crash";
+            Path target = root.resolve("catalog.db");
+            Path checkpoint = CatalogUpdateRecoveryFiles.checkpoint(collectionId);
+            Files.createDirectories(checkpoint.getParent());
+            createDatabase(target);
+            Files.copy(target, checkpoint);
+
+            String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+            String classpath = System.getProperty(
+                    "surefire.test.class.path", System.getProperty("java.class.path"));
+            Path log = root.resolve("lucene-crash-worker.log");
+            Process child = new ProcessBuilder(java,
+                    "-Dmyhomelib.dataDir=" + appData,
+                    "-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8",
+                    "-cp", classpath, CatalogUpdateCrashWorker.class.getName(),
+                    target.toString(), collectionId, "AFTER_SQLITE_COMMIT")
+                    .redirectErrorStream(true).redirectOutput(log.toFile()).start();
+            boolean finished = child.waitFor(45, TimeUnit.SECONDS);
+            if (!finished) {
+                child.destroyForcibly();
+                child.waitFor();
+            }
+            String output = Files.readString(log);
+            assertThat(finished).as(output).isTrue();
+            assertThat(child.exitValue()).as(output).isEqualTo(83);
+
+            Path wal = Path.of(target + "-wal");
+            Path shm = Path.of(target + "-shm");
+            assertThat(wal).isRegularFile();
+            assertThat(Files.size(wal)).isPositive();
+            assertThat(shm).exists();
+
+            // Simulate a successful Lucene commit against the post-import SQLite+WAL state.
+            // The index document count stays constant; freshness must therefore rely on the
+            // persisted database/WAL state, not count alone.
+            LuceneSearchService search = mock(LuceneSearchService.class);
+            BookQueryRepository books = mock(BookQueryRepository.class);
+            when(search.getDocumentCount()).thenReturn(1);
+            when(books.countAll()).thenReturn(1L);
+            Collection collection = new Collection(collectionId, collectionId, null,
+                    target.toAbsolutePath().toString(), 0, null, null, null, null);
+
+            LuceneCollectionIndexLifecycle beforeRecovery =
+                    new LuceneCollectionIndexLifecycle(search, books);
+            assertThat(beforeRecovery.activateCollectionIndex(collection)).isFalse();
+            beforeRecovery.markCurrentIndexSynchronized();
+
+            Path stateFile = AppPaths.collectionSearchIndexStateFile(collectionId);
+            String committedIndexState = Files.readString(stateFile);
+            assertThat(committedIndexState).contains("|wal:")
+                    .doesNotContain("|wal:clean")
+                    .doesNotContain("DIRTY");
+
+            // Startup restores the pre-update checkpoint and removes WAL/SHM sidecars.
+            // A Lucene marker written for the interrupted, newer DB must not be reusable.
+            CollectionCrashRecovery.recoverBeforeOpen(collection, target);
+            assertThat(wal).doesNotExist();
+            assertThat(shm).doesNotExist();
+            assertThat(CatalogUpdateRecoveryFiles.isPending(collectionId)).isFalse();
+            assertThat(checkpoint).doesNotExist();
+
+            try (var connection = DriverManager.getConnection("jdbc:sqlite:" + target.toAbsolutePath());
+                 var statement = connection.createStatement()) {
+                try (var result = statement.executeQuery("SELECT value FROM recovery_state")) {
+                    assertThat(result.next()).isTrue();
+                    assertThat(result.getString(1)).isEqualTo("baseline-before-update");
+                }
+                try (var result = statement.executeQuery("PRAGMA integrity_check")) {
+                    assertThat(result.next()).isTrue();
+                    assertThat(result.getString(1)).isEqualTo("ok");
+                    assertThat(result.next()).isFalse();
+                }
+            }
+
+            LuceneCollectionIndexLifecycle afterRecovery =
+                    new LuceneCollectionIndexLifecycle(search, books);
+            assertThat(afterRecovery.activateCollectionIndex(collection)).isFalse();
+            assertThat(Files.readString(stateFile).trim()).isEqualTo("DIRTY");
         } finally {
             if (previousDir == null) System.clearProperty("myhomelib.dataDir");
             else System.setProperty("myhomelib.dataDir", previousDir);
