@@ -41,6 +41,10 @@ $errorPath = "$ProfilePath.stderr.log"
 $runnerPath = "$ProfilePath.runner.ps1"
 $machineProfilePath = "$ProfilePath.machine.json"
 $startedAt = Get-Date
+$profileParent = Split-Path -Parent $ProfilePath
+if (-not [string]::IsNullOrWhiteSpace($profileParent)) {
+    New-Item -ItemType Directory -Path $profileParent -Force | Out-Null
+}
 
 function ConvertTo-PowerShellLiteral([string]$Value) {
     return "'" + $Value.Replace("'", "''") + "'"
@@ -64,7 +68,17 @@ $runnerContent = '$ErrorActionPreference = "Stop"' + [Environment]::NewLine +
     'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
 Set-Content -LiteralPath $runnerPath -Value $runnerContent -Encoding UTF8
 
-$powerShellExe = Join-Path $PSHOME "powershell.exe"
+$currentPowerShellProcess = Get-Process -Id $PID
+$powerShellExe = $currentPowerShellProcess.Path
+if ([string]::IsNullOrWhiteSpace($powerShellExe)) {
+    $powerShellCommand = if ($PSVersionTable.PSEdition -eq "Core") {
+        Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    } else {
+        Get-Command powershell.exe -ErrorAction SilentlyContinue
+    }
+    if ($null -eq $powerShellCommand) { throw "Cannot locate a PowerShell executable to run the Maven probe." }
+    $powerShellExe = $powerShellCommand.Source
+}
 $process = Start-Process -FilePath $powerShellExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ('"{0}"' -f $runnerPath)) -WorkingDirectory $repoRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $errorPath
 
 $peakJavaWorkingSetBytes = 0L
