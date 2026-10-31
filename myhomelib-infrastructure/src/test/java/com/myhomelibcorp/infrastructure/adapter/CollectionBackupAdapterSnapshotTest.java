@@ -81,15 +81,11 @@ class CollectionBackupAdapterSnapshotTest {
 
     @Test
     void recoveryCheckpointRefusesCorruptSecondaryIndexBeforePublishing() throws Exception {
-        JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        doAnswer(invocation -> {
-            String sql = invocation.getArgument(0);
-            int start = sql.indexOf("TO '") + 4;
-            int end = sql.lastIndexOf("'");
-            Path staged = Path.of(sql.substring(start, end));
-            createCorruptSecondaryIndexDatabase(staged);
-            return null;
-        }).when(jdbc).execute(anyString());
+        Path liveDb = tempDir.resolve("live-corrupt-index.db");
+        createCorruptSecondaryIndexDatabase(liveDb);
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + liveDb.toAbsolutePath());
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
 
         CollectionManager manager = mock(CollectionManager.class);
         when(manager.hasActiveCollection()).thenReturn(true);
@@ -101,7 +97,9 @@ class CollectionBackupAdapterSnapshotTest {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                 adapter.createRecoveryCheckpoint(requested, checkpoint))
-                .isInstanceOf(java.io.IOException.class);
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageNotContaining("SQLite online backup failed")
+                .hasMessageContaining("recovery checkpoint");
         assertThat(Files.exists(checkpoint)).isFalse();
         try (var children = Files.list(tempDir)) {
             assertThat(children.map(path -> path.getFileName().toString())
