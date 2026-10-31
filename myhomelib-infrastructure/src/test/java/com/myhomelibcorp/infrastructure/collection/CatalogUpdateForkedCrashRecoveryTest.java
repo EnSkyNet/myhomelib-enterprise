@@ -31,7 +31,8 @@ class CatalogUpdateForkedCrashRecoveryTest {
         String previousDir = System.getProperty("myhomelib.dataDir");
         try {
             for (String point : List.of("BEFORE_MARKER", "AFTER_MARKER",
-                    "DURING_TRANSACTION", "AFTER_SQLITE_COMMIT", "AFTER_MARKER_REMOVAL")) {
+                    "DURING_TRANSACTION", "AFTER_SQLITE_COMMIT", "AFTER_MARKER_REMOVAL",
+                    "AFTER_VERSION_COMMIT")) {
                 Path root = Files.createDirectories(temp.resolve(point));
                 System.setProperty("myhomelib.dataDir", root.resolve("app-data").toString());
                 String collectionId = "catalog-forked-crash";
@@ -63,10 +64,14 @@ class CatalogUpdateForkedCrashRecoveryTest {
                 assertThat(child.exitValue()).as(point + ": " + output).isEqualTo(83);
                 assertThat(output).contains("Crash test worker: Аварійне завершення",
                         "Crash test worker stderr: Аварійне завершення");
-                if (!"BEFORE_MARKER".equals(point) && !"AFTER_MARKER_REMOVAL".equals(point)) {
+                if (!"BEFORE_MARKER".equals(point)
+                        && !"AFTER_MARKER_REMOVAL".equals(point)
+                        && !"AFTER_VERSION_COMMIT".equals(point)) {
                     assertThat(CatalogUpdateRecoveryFiles.isPending(collectionId)).as(point).isTrue();
                 }
-                if ("AFTER_SQLITE_COMMIT".equals(point) || "AFTER_MARKER_REMOVAL".equals(point)) {
+                if ("AFTER_SQLITE_COMMIT".equals(point)
+                        || "AFTER_MARKER_REMOVAL".equals(point)
+                        || "AFTER_VERSION_COMMIT".equals(point)) {
                     Path wal = Path.of(target.toString() + "-wal");
                     assertThat(wal).as(point).isRegularFile();
                     assertThat(Files.size(wal)).as(point + " committed WAL size").isPositive();
@@ -77,7 +82,8 @@ class CatalogUpdateForkedCrashRecoveryTest {
                         target.toAbsolutePath().toString(), 0, null, null, null, null);
                 CollectionCrashRecovery.recoverBeforeOpen(collection, target);
 
-                String expected = "AFTER_MARKER_REMOVAL".equals(point)
+                String expected = ("AFTER_MARKER_REMOVAL".equals(point)
+                        || "AFTER_VERSION_COMMIT".equals(point))
                         ? "partially-updated" : "baseline-before-update";
                 try (var connection = DriverManager.getConnection("jdbc:sqlite:" + target.toAbsolutePath());
                      var statement = connection.createStatement()) {
@@ -92,7 +98,17 @@ class CatalogUpdateForkedCrashRecoveryTest {
                     }
                 }
                 assertThat(CatalogUpdateRecoveryFiles.isPending(collectionId)).as(point).isFalse();
-                if (!"BEFORE_MARKER".equals(point) && !"AFTER_MARKER_REMOVAL".equals(point)) {
+                String expectedAppliedVersion = "AFTER_VERSION_COMMIT".equals(point) ? "v2" : "v1";
+                try (var connection = DriverManager.getConnection("jdbc:sqlite:" + target.toAbsolutePath());
+                     var statement = connection.createStatement();
+                     var result = statement.executeQuery(
+                             "SELECT applied_version FROM catalog_sources WHERE source_key='source-1'")) {
+                    assertThat(result.next()).as(point + " source metadata row").isTrue();
+                    assertThat(result.getString(1)).as(point + " applied version").isEqualTo(expectedAppliedVersion);
+                    assertThat(result.next()).as(point + " unique source metadata row").isFalse();
+                }
+                if (!"BEFORE_MARKER".equals(point) && !"AFTER_MARKER_REMOVAL".equals(point)
+                        && !"AFTER_VERSION_COMMIT".equals(point)) {
                     assertThat(checkpoint).as(point).doesNotExist();
                 }
             }
@@ -198,6 +214,8 @@ class CatalogUpdateForkedCrashRecoveryTest {
              var statement = connection.createStatement()) {
             statement.execute("CREATE TABLE recovery_state(value TEXT NOT NULL)");
             statement.execute("INSERT INTO recovery_state(value) VALUES ('baseline-before-update')");
+            statement.execute("CREATE TABLE catalog_sources(source_key TEXT PRIMARY KEY, applied_version TEXT NOT NULL)");
+            statement.execute("INSERT INTO catalog_sources(source_key, applied_version) VALUES ('source-1', 'v1')");
         }
     }
 
