@@ -15,9 +15,12 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -75,6 +78,11 @@ class RealRecoveryCheckpointPerformanceProbeTest {
         long cacheSize;
         long mmapSize;
         long startedAtEpochMs = System.currentTimeMillis();
+        int walProbeRequestedRows = Integer.getInteger("mhl.real.import.probe.rows", 50_000);
+        if (walProbeRequestedRows < 0 || walProbeRequestedRows > 500_000) {
+            throw new IllegalArgumentException("mhl.real.import.probe.rows must be between 0 and 500000");
+        }
+        WalProbeResult walProbe;
 
         try {
             try (HikariDataSource ds = new DataSourceConfig().createDataSourceForPath(db.toString());
@@ -120,18 +128,20 @@ class RealRecoveryCheckpointPerformanceProbeTest {
                 shmBytesAfter = fileSize(Path.of(db + "-shm"));
             }
 
+            // Run a bounded synthetic write transaction against the disposable checkpoint, never the user's DB.
+            walProbe = runWalProbe(checkpoint, walProbeRequestedRows);
             String json = profileJson(db, startedAtEpochMs, sqliteVersion, journalMode, busyTimeoutMs,
                     synchronous, pageCount, pageSize, cacheSize, mmapSize,
                     sourceBytesBeforeOpen, sourceBytesAfter, walBytesBeforeOpen, shmBytesBeforeOpen,
                     walBytesAtStart, shmBytesAtStart, walBytesAfter, shmBytesAfter, checkpointBytes,
                     wallMs, cpuMs, heapBefore, heapAfter, peakHeap, maxHeap,
-                    physicalMemory, freePhysicalBefore, freePhysicalAfter);
+                    physicalMemory, freePhysicalBefore, freePhysicalAfter, walProbe);
             Files.writeString(profile, json);
             System.out.println("REAL_CHECKPOINT_PROFILE_JSON=" + json.replace(System.lineSeparator(), ""));
             System.out.printf(Locale.ROOT,
-                    "REAL_CHECKPOINT_PROFILE_RESULT wallMs=%d cpuMs=%d dbBytes=%d walBytes=%d shmBytes=%d checkpointBytes=%d peakHeapBytes=%d busyTimeoutMs=%d%n",
+                    "REAL_CHECKPOINT_PROFILE_RESULT wallMs=%d cpuMs=%d dbBytes=%d walBytes=%d shmBytes=%d checkpointBytes=%d peakHeapBytes=%d busyTimeoutMs=%d walProbeRows=%d walProbeMs=%d walProbePeakWalBytes=%d%n",
                     wallMs, cpuMs, sourceBytesAfter, walBytesAtStart, shmBytesAtStart,
-                    checkpointBytes, peakHeap, busyTimeoutMs);
+                    checkpointBytes, peakHeap, busyTimeoutMs, walProbe.rowsUpdated(), walProbe.wallMs(), walProbe.peakWalBytes());
 
             assertThat(journalMode).isEqualToIgnoringCase("wal");
             assertThat(checkpointBytes).isGreaterThan(100L);
@@ -139,6 +149,9 @@ class RealRecoveryCheckpointPerformanceProbeTest {
                     sourceBytesAfter + walBytesAtStart + EXTRA_CHECKPOINT_ALLOWANCE_BYTES);
         } finally {
             // The checkpoint contains the user's full catalogue. Do not leave a second copy behind.
+            Files.deleteIfExists(Path.of(checkpoint + "-wal"));
+            Files.deleteIfExists(Path.of(checkpoint + "-shm"));
+            Files.deleteIfExists(Path.of(checkpoint + "-journal"));
             Files.deleteIfExists(checkpoint);
         }
     }
@@ -149,7 +162,8 @@ class RealRecoveryCheckpointPerformanceProbeTest {
             long sourceBytesBeforeOpen, long sourceBytesAfter, long walBytesBeforeOpen, long shmBytesBeforeOpen,
             long walBytesAtStart, long shmBytesAtStart, long walBytesAfter, long shmBytesAfter,
             long checkpointBytes, long wallMs, long cpuMs, long heapBefore, long heapAfter,
-            long peakHeap, long maxHeap, long physicalMemory, long freePhysicalBefore, long freePhysicalAfter) {
+            long peakHeap, long maxHeap, long physicalMemory, long freePhysicalBefore, long freePhysicalAfter,
+            WalProbeResult walProbe) {
         return """
                 {
                   "schema": 1,
@@ -188,7 +202,19 @@ class RealRecoveryCheckpointPerformanceProbeTest {
                   "totalPhysicalMemoryBytes": %d,
                   "freePhysicalMemoryBeforeBytes": %d,
                   "freePhysicalMemoryAfterBytes": %d,
-                  "notes": "No SQLite BUSY exception escaped the checkpoint operation. Xerial JDBC does not expose an aggregate busy-handler retry counter; busyTimeoutMs is the configured per-connection wait limit. The checkpoint is deleted after measurement."
+                  "walProbeRowsRequested": %d,
+                  "walProbeRowsUpdated": %d,
+                  "walProbeWallMs": %d,
+                  "walProbeProcessCpuMs": %d,
+                  "walProbePeakWalBytes": %d,
+                  "walProbePeakShmBytes": %d,
+                  "walProbeWalBytesAfterCommit": %d,
+                  "walProbeShmBytesAfterCommit": %d,
+                  "walProbeDatabaseBytesAfter": %d,
+                  "walProbePeakHeapBytes": %d,
+                  "walProbeBusyTimeoutMs": %d,
+                  "walProbeBusyExceptionsObserved": 0,
+                  "notes": "The WAL probe is a bounded synthetic UPDATE transaction on the disposable checkpoint copy, not a full network INPX import. No SQLite BUSY exception escaped either probe. Xerial JDBC does not expose an aggregate busy-handler retry counter; busyTimeoutMs is the configured per-connection wait limit. The checkpoint and its sidecars are deleted after measurement."
                 }
                 """.formatted(startedAtEpochMs, jsonEscape(db.getFileName().toString()),
                 jsonEscape(System.getProperty("os.name", "")), jsonEscape(System.getProperty("os.version", "")),
@@ -198,8 +224,79 @@ class RealRecoveryCheckpointPerformanceProbeTest {
                 sourceBytesBeforeOpen, sourceBytesAfter, walBytesBeforeOpen, shmBytesBeforeOpen,
                 walBytesAtStart, shmBytesAtStart, walBytesAfter, shmBytesAfter, checkpointBytes,
                 wallMs, cpuMs, heapBefore, heapAfter, peakHeap, maxHeap, physicalMemory,
-                freePhysicalBefore, freePhysicalAfter);
+                freePhysicalBefore, freePhysicalAfter,
+                walProbe.rowsRequested(), walProbe.rowsUpdated(), walProbe.wallMs(), walProbe.cpuMs(),
+                walProbe.peakWalBytes(), walProbe.peakShmBytes(), walProbe.walBytesAfterCommit(),
+                walProbe.shmBytesAfterCommit(), walProbe.databaseBytesAfter(), walProbe.peakHeapBytes(),
+                walProbe.busyTimeoutMs());
     }
+
+    private static WalProbeResult runWalProbe(Path disposableDatabase, int requestedRows) throws Exception {
+        try (HikariDataSource ds = new DataSourceConfig().createDataSourceForPath(disposableDatabase.toString());
+             Connection connection = ds.getConnection()) {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("PRAGMA wal_autocheckpoint=0");
+            }
+            long busyTimeoutMs = scalarLong(connection, "PRAGMA busy_timeout");
+            var os = operatingSystemBean();
+            resetPeakHeapUsage();
+            long cpuBefore = processCpuTimeNanos(os);
+            long started = System.nanoTime();
+            long walPeak = fileSize(Path.of(disposableDatabase + "-wal"));
+            long shmPeak = fileSize(Path.of(disposableDatabase + "-shm"));
+            int updated = 0;
+            String lastId = "";
+
+            connection.setAutoCommit(false);
+            try (PreparedStatement select = connection.prepareStatement(
+                    "SELECT id FROM books WHERE id > ? ORDER BY id LIMIT ?");
+                 PreparedStatement update = connection.prepareStatement(
+                    "UPDATE books SET annotation = 'mhl-wal-probe-' || id WHERE id = ?")) {
+                while (updated < requestedRows) {
+                    int batchLimit = Math.min(1_000, requestedRows - updated);
+                    select.setString(1, lastId);
+                    select.setInt(2, batchLimit);
+                    List<String> ids = new ArrayList<>(batchLimit);
+                    try (ResultSet result = select.executeQuery()) {
+                        while (result.next()) ids.add(result.getString(1));
+                    }
+                    if (ids.isEmpty()) break;
+                    for (String id : ids) {
+                        update.setString(1, id);
+                        update.addBatch();
+                    }
+                    update.executeBatch();
+                    updated += ids.size();
+                    lastId = ids.get(ids.size() - 1);
+                    walPeak = Math.max(walPeak, fileSize(Path.of(disposableDatabase + "-wal")));
+                    shmPeak = Math.max(shmPeak, fileSize(Path.of(disposableDatabase + "-shm")));
+                }
+                walPeak = Math.max(walPeak, fileSize(Path.of(disposableDatabase + "-wal")));
+                shmPeak = Math.max(shmPeak, fileSize(Path.of(disposableDatabase + "-shm")));
+                connection.commit();
+            } catch (Exception failure) {
+                try {
+                    connection.rollback();
+                } catch (SQLException rollbackFailure) {
+                    failure.addSuppressed(rollbackFailure);
+                }
+                throw failure;
+            }
+
+            long wallMs = (System.nanoTime() - started) / 1_000_000L;
+            long cpuAfter = processCpuTimeNanos(os);
+            long cpuMs = cpuBefore < 0L || cpuAfter < cpuBefore ? -1L : (cpuAfter - cpuBefore) / 1_000_000L;
+            return new WalProbeResult(requestedRows, updated, wallMs, cpuMs, walPeak, shmPeak,
+                    fileSize(Path.of(disposableDatabase + "-wal")),
+                    fileSize(Path.of(disposableDatabase + "-shm")),
+                    Files.size(disposableDatabase), peakHeapUsedBytes(), busyTimeoutMs);
+        }
+    }
+
+    private record WalProbeResult(int rowsRequested, int rowsUpdated, long wallMs, long cpuMs,
+                                  long peakWalBytes, long peakShmBytes, long walBytesAfterCommit,
+                                  long shmBytesAfterCommit, long databaseBytesAfter, long peakHeapBytes,
+                                  long busyTimeoutMs) { }
 
     private static String scalarText(Connection connection, String sql) throws SQLException {
         try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery(sql)) {
