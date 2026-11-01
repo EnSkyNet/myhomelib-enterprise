@@ -104,7 +104,7 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
             assertThat(first.title()).isEqualTo("Книга з колекції А");
             assertThat(first.sourceBookId()).contains("Спільна назва бібліотеки", "zip-0001");
             assertThat(first.externalIdentities()).anySatisfy(identity -> {
-                assertThat(identity.scheme()).isEqualTo("mhl-source-book");
+                assertThat(identity.scheme()).isEqualTo("catalog:mhl-source-book");
                 assertThat(identity.value()).startsWith("12:collection-a:");
             });
             assertThat(first.archive()).isEqualTo("books-0001.zip");
@@ -118,7 +118,7 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
             assertThat(second.title()).isEqualTo("Книга з колекції Б");
             assertThat(second.sourceBookId()).contains("Спільна назва бібліотеки", "zip-0002");
             assertThat(second.externalIdentities()).anySatisfy(identity -> {
-                assertThat(identity.scheme()).isEqualTo("mhl-source-book");
+                assertThat(identity.scheme()).isEqualTo("catalog:mhl-source-book");
                 assertThat(identity.value()).startsWith("12:collection-b:");
             });
             assertThat(second.sourceBookId()).isNotEqualTo(first.sourceBookId());
