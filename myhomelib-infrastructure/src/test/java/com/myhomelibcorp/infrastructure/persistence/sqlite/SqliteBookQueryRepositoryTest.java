@@ -279,7 +279,9 @@ public class SqliteBookQueryRepositoryTest {
                 "11111111-1111-4111-8111-111111111111", "Олександр", "Юрійович", "Король");
         jdbc.update("INSERT INTO book_authors(book_id, author_id) VALUES (?,?)", activeId, "11111111-1111-4111-8111-111111111111");
         jdbc.update("INSERT INTO genres(code, name, parent_code, fb2_code) VALUES (?,?,NULL,?)",
-                "fiction-export", "Фантастика", "sf");
+                "literature-export", "Література", "literature");
+        jdbc.update("INSERT INTO genres(code, name, parent_code, fb2_code) VALUES (?,?,?,?)",
+                "fiction-export", "Фантастика", "literature-export", "sf");
         jdbc.update("INSERT INTO book_genres(book_id, genre_code) VALUES (?,?)", activeId, "fiction-export");
 
         BookQuery query = BookQuery.builder()
@@ -307,6 +309,9 @@ public class SqliteBookQueryRepositoryTest {
         assertThat(active.getAuthors()).hasSize(1);
         assertThat(active.getAuthors().getFirst().getLastName()).isEqualTo("Король");
         assertThat(active.getGenres()).hasSize(1);
+        assertThat(active.getGenres().getFirst().getId().asString()).isEqualTo("fiction-export");
+        assertThat(active.getGenres().getFirst().getName()).isEqualTo("Фантастика");
+        assertThat(active.getGenres().getFirst().getParentId().asString()).isEqualTo("literature-export");
         assertThat(active.getGenres().getFirst().getFb2Code()).isEqualTo("sf");
 
         Book deleted = exportPage.content().get(1);
