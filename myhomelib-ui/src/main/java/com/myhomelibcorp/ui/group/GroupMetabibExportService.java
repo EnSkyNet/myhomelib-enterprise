@@ -336,7 +336,7 @@ public class GroupMetabibExportService {
     }
 
     private static Object claim(Object value) {
-        return Map.of("observation", "local", "value", value);
+        return Map.of("observation", "db", "value", value);
     }
 
     private static Map<String, Object> record(Book book, Collection source, String zipId,
@@ -387,9 +387,9 @@ public class GroupMetabibExportService {
         if (book.getLibraryRate() > 0) catalog.put("rating", List.of(claim(book.getLibraryRate())));
         if (book.isDeleted()) catalog.put("deleted", List.of(claim("deleted")));
         List<Object> identities = new ArrayList<>();
-        identities.add(Map.of("scheme", "mhl-source-book", "value", book.getId().asString(), "observation", "local"));
+        identities.add(Map.of("scheme", "mhl-source-book", "value", book.getId().asString(), "observation", "db"));
         if (book.getLibId() != null && book.getLibId().matches("[0-9]{1,18}")) {
-            identities.add(Map.of("scheme", "mhl-source-libid", "value", book.getLibId(), "observation", "local"));
+            identities.add(Map.of("scheme", "mhl-source-libid", "value", book.getLibId(), "observation", "db"));
         }
         String media = switch (extension(book)) {
             case "fb2" -> "application/fb2+xml";
