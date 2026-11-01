@@ -7,7 +7,7 @@ import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.domain.model.collection.Collection;
-import com.myhomelibcorp.infrastructure.archive.ZipArchiveReader;
+import com.myhomelibcorp.infrastructure.cover.ZipArchiveReader;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookListRowMapper;
