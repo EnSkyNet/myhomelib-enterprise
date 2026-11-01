@@ -63,10 +63,11 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
             JdbcTemplate jdbc = new JdbcTemplate(dataSource);
             int initialDataVersion = dataVersion(connection);
             return new ReadSession(database, connection, dataSource, jdbc, initialDataVersion);
-        } catch (SQLException | RuntimeException error) {
+        } catch (IOException | SQLException | RuntimeException error) {
             if (connection != null) {
                 try { connection.close(); } catch (SQLException closeError) { error.addSuppressed(closeError); }
             }
+            if (error instanceof IOException io) throw io;
             throw new IOException("Unable to open read-only collection database: " + database, error);
         }
     }
