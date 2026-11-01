@@ -70,9 +70,9 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
         createCollectionDatabase(databaseB, rootB, 9L, "спільна ГРУПА", bookIdB, "b.fb2",
                 "Книга з колекції Б", "999001", "genre-b", "Наукова фантастика — Б", bytesB.length());
 
-        Collection primary = new Collection("collection-a", "Бібліотека А", rootA,
+        Collection primary = new Collection("collection-a", "Спільна назва бібліотеки", rootA,
                 databaseA.toString(), 0, null, null, null, null, null);
-        Collection secondary = new Collection("collection-b", "Бібліотека Б", rootB,
+        Collection secondary = new Collection("collection-b", "Спільна назва бібліотеки", rootB,
                 databaseB.toString(), 0, null, null, null, null, null);
 
         CollectionManager manager = mock(CollectionManager.class);
@@ -102,7 +102,11 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
 
             var first = imported.next();
             assertThat(first.title()).isEqualTo("Книга з колекції А");
-            assertThat(first.sourceBookId()).contains("Бібліотека А", "zip-0001");
+            assertThat(first.sourceBookId()).contains("Спільна назва бібліотеки", "zip-0001");
+            assertThat(first.externalIdentities()).anySatisfy(identity -> {
+                assertThat(identity.scheme()).isEqualTo("mhl-source-book");
+                assertThat(identity.value()).startsWith("12:collection-a:");
+            });
             assertThat(first.archive()).isEqualTo("books-0001.zip");
             assertThat(first.archiveEntry()).isEqualTo("book-000001.fb2");
             assertThat(first.genres()).containsExactly("sf");
@@ -112,7 +116,12 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
 
             var second = imported.next();
             assertThat(second.title()).isEqualTo("Книга з колекції Б");
-            assertThat(second.sourceBookId()).contains("Бібліотека Б", "zip-0002");
+            assertThat(second.sourceBookId()).contains("Спільна назва бібліотеки", "zip-0002");
+            assertThat(second.externalIdentities()).anySatisfy(identity -> {
+                assertThat(identity.scheme()).isEqualTo("mhl-source-book");
+                assertThat(identity.value()).startsWith("12:collection-b:");
+            });
+            assertThat(second.sourceBookId()).isNotEqualTo(first.sourceBookId());
             assertThat(second.archive()).isEqualTo("books-0002.zip");
             assertThat(second.archiveEntry()).isEqualTo("book-000002.fb2");
             assertThat(second.genres()).containsExactly("sf");
