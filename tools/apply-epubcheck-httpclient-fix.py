@@ -70,7 +70,8 @@ def wrap_manifest(lines: list[str]) -> bytes:
     return ("\r\n".join(physical) + "\r\n").encode("utf-8")
 
 
-def update_manifest(data: bytes, lib_dir: Path) -> bytes:
+def update_manifest(data: bytes, lib_dir: Path, future_files: set[str] | None = None) -> bytes:
+    future_files = future_files or set()
     lines = unfold_manifest(data)
     indexes = [i for i, line in enumerate(lines) if line.startswith("Class-Path: ")]
     if len(indexes) != 1:
@@ -87,7 +88,7 @@ def update_manifest(data: bytes, lib_dir: Path) -> bytes:
         if token.startswith(("http:", "https:", "file:")) or ".." in Path(token).parts:
             raise ValueError(f"Unsafe EPUBCheck manifest Class-Path entry: {token}")
         target = (lib_dir.parent / token).resolve()
-        if not target.is_file() or lib_dir.parent.resolve() not in target.parents:
+        if (not target.is_file() and token not in future_files) or lib_dir.parent.resolve() not in target.parents:
             raise ValueError(f"Manifest Class-Path entry is missing or escapes vendor folder: {token}")
     lines[index] = "Class-Path: " + " ".join(tokens)
     return wrap_manifest(lines)
@@ -106,7 +107,10 @@ def rewrite_epubcheck_jar(jar_path: Path, lib_dir: Path) -> bytes:
         ]
         if signatures:
             raise ValueError(f"Refusing to rewrite signed EPUBCheck JAR: {signatures}")
-        new_manifest = update_manifest(archive.read(MANIFEST_PATH), lib_dir)
+        new_manifest = update_manifest(
+            archive.read(MANIFEST_PATH), lib_dir,
+            future_files={f"lib/httpclient5-{NEW_VERSION}.jar"},
+        )
         output = io.BytesIO()
         with zipfile.ZipFile(output, "w") as updated:
             for info in archive.infolist():
