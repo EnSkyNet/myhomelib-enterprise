@@ -62,7 +62,7 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
             SingleConnectionDataSource dataSource = new SingleConnectionDataSource(connection, true);
             JdbcTemplate jdbc = new JdbcTemplate(dataSource);
             int initialDataVersion = dataVersion(connection);
-            return new ReadSession(database, connection, dataSource, jdbc, initialDataVersion);
+            return new ReadSession(database, connection, jdbc, initialDataVersion);
         } catch (IOException | SQLException | RuntimeException error) {
             if (connection != null) {
                 try { connection.close(); } catch (SQLException closeError) { error.addSuppressed(closeError); }
@@ -83,17 +83,13 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
     private final class ReadSession implements Session {
         private final Path database;
         private final Connection connection;
-        @SuppressWarnings("unused")
-        private final SingleConnectionDataSource dataSource;
         private final JdbcTemplate jdbc;
         private final int initialDataVersion;
         private boolean closed;
 
-        private ReadSession(Path database, Connection connection, SingleConnectionDataSource dataSource,
-                            JdbcTemplate jdbc, int initialDataVersion) {
+        private ReadSession(Path database, Connection connection, JdbcTemplate jdbc, int initialDataVersion) {
             this.database = database;
             this.connection = connection;
-            this.dataSource = dataSource;
             this.jdbc = jdbc;
             this.initialDataVersion = initialDataVersion;
         }
