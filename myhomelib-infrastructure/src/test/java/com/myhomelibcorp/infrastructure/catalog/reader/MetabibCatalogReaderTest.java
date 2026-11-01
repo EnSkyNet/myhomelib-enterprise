@@ -244,7 +244,7 @@ class MetabibCatalogReaderTest {
         }
     }
 
-    private static String dataset() {    private static String dataset() {
+    private static String dataset() {
         return """
                 {"schema":"metabib.dataset/1","id":"test","record_schema":"metabib.dataset_record/1","library":"flibusta","created":"2026-08-30T00:00:00Z","records":1,"generator":{"name":"test","version":"1"},"normalization":{"model":"metabib.norm/1"},"ordering":{"mode":"database_book_id","direction":"ascending"},"processing":{"parse_fb2":true,"archive_content_checksum":{"enabled":false}},"archives":[]}
                 {"schema":"metabib.dataset_record/1","record":{"library":"flibusta","locator":{"kind":"database_book","source":"db","book_id":42}},"identities":{"catalog":[{"scheme":"flibusta","value":"42","observation":"db"}]},"artifacts":[{"name":"42.fb2","media_type":"application/fb2+xml","checksums":[]}],"observations":[{"id":"db"}],"claims":{"bibliographic":{"title":[{"observation":"db","value":"Book title"}],"authors":[{"observation":"db","value":{"first_name":"Ann|Pipe","middle_name":"","last_name":"Smith","identities":[{"scheme":"flibusta-person","value":"7"}]}}],"language":[{"observation":"db","value":"English"}]},"publication":{},"catalog":{}},"issues":[]}
