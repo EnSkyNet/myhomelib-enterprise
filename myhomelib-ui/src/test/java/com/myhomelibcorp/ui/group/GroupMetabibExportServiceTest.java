@@ -171,12 +171,14 @@ class GroupMetabibExportServiceTest {
         when(collections.getCurrentCollection()).thenReturn(current);
 
         List<Book> first = java.util.stream.IntStream.range(0, 100)
-                .mapToObj(i -> book("Title " + i, "b" + i + ".fb2")).toList();
-        Book last = book("Last", "last.fb2");
+                .mapToObj(i -> book(String.format(java.util.Locale.ROOT, "Title %03d", i),
+                        "b" + i + ".fb2")).toList();
+        Book last = book("Title 100", "last.fb2");
         when(repository.findPage(any(BookQuery.class)))
                 .thenReturn(PageResult.of(first, 101, 0, 100));
-        when(repository.findTitlePageByCursor(any(BookQuery.class),
-                eq(new BookPageCursor("Title 99", first.getLast().getId().asString())),
+        // Evaluate the mocked book ID before registering Mockito argument matchers.
+        BookPageCursor expectedCursor = new BookPageCursor("Title 099", first.getLast().getId().asString());
+        when(repository.findTitlePageByCursor(any(BookQuery.class), eq(expectedCursor),
                 eq(BookPageDirection.AFTER), eq(101L)))
                 .thenReturn(PageResult.of(List.of(last), 101, 1, 100));
         when(resources.readBookData(any(Book.class))).thenAnswer(inv ->
