@@ -108,6 +108,9 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
                 assertThat(identity.scheme()).isEqualTo("catalog:mhl-source-book");
                 assertThat(identity.value()).startsWith("12:collection-a:");
             });
+            String firstLocalIdentity = first.externalIdentities().stream()
+                    .filter(identity -> identity.scheme().equals("catalog:mhl-source-book"))
+                    .findFirst().orElseThrow().value();
             assertThat(first.archive()).isEqualTo("books-0001.zip");
             assertThat(first.archiveEntry()).isEqualTo("book-000001.fb2");
             assertThat(first.genres()).containsExactly("sf");
@@ -122,6 +125,10 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
                 assertThat(identity.scheme()).isEqualTo("catalog:mhl-source-book");
                 assertThat(identity.value()).startsWith("12:collection-b:");
             });
+            String secondLocalIdentity = second.externalIdentities().stream()
+                    .filter(identity -> identity.scheme().equals("catalog:mhl-source-book"))
+                    .findFirst().orElseThrow().value();
+            assertThat(secondLocalIdentity).isNotEqualTo(firstLocalIdentity);
             assertThat(second.sourceBookId()).isNotEqualTo(first.sourceBookId());
             assertThat(second.archive()).isEqualTo("books-0002.zip");
             assertThat(second.archiveEntry()).isEqualTo("book-000002.fb2");
