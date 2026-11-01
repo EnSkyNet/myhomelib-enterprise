@@ -20,6 +20,7 @@ import org.sqlite.SQLiteConfig;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.text.Normalizer;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -106,11 +107,14 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
         @Override
         public Optional<Group> findGroupByName(String name) {
             if (name == null || name.isBlank()) return Optional.empty();
-            String normalized = name.strip();
-            // Resolve all case/whitespace variants together. Returning an exact-case
-            // match early would hide a second logical group named "shared" beside "Shared".
+            String normalized = normalizeGroupName(name);
+            if (normalized.isEmpty()) return Optional.empty();
+            // Canonical Unicode and all whitespace runs represent the same logical name.
+            // Resolve every variant before choosing: an exact-looking match must not hide
+            // a second group that differs only by case, spacing or Unicode composition.
             List<Group> matches = jdbc.query("SELECT * FROM groups ORDER BY id", groupRowMapper).stream()
-                    .filter(group -> group.getName() != null && group.getName().strip().equalsIgnoreCase(normalized))
+                    .filter(group -> !normalizeGroupName(group.getName()).isEmpty()
+                            && normalizeGroupName(group.getName()).equalsIgnoreCase(normalized))
                     .limit(2)
                     .toList();
             if (matches.size() > 1) {
@@ -132,7 +136,26 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
             return bookQueries.findGroupExportTitlePageByCursor(jdbc, query, cursor, direction, knownTotal);
         }
 
-        private void requireGroupQuery(BookQuery query) {
+        private static String normalizeGroupName(String value) {
+        if (value == null || value.isEmpty()) return "";
+        String canonical = Normalizer.normalize(value, Normalizer.Form.NFC);
+        StringBuilder normalized = new StringBuilder(canonical.length());
+        boolean pendingSpace = false;
+        for (int offset = 0; offset < canonical.length();) {
+            int codePoint = canonical.codePointAt(offset);
+            offset += Character.charCount(codePoint);
+            if (Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint)) {
+                if (!normalized.isEmpty()) pendingSpace = true;
+                continue;
+            }
+            if (pendingSpace) normalized.append(' ');
+            normalized.appendCodePoint(codePoint);
+            pendingSpace = false;
+        }
+        return normalized.toString();
+    }
+
+    private void requireGroupQuery(BookQuery query) {
             if (query == null || query.groupId() == null) {
                 throw new IllegalArgumentException("A collection-local group query is required");
             }
