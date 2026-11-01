@@ -119,6 +119,9 @@ public class GroupMetabibExportService {
         boolean published = false;
         try {
             ExportResult result = build(groupId, collectionId, sources, stage, target, packageId);
+            // The active collection must still match immediately before publication,
+            // including the single-collection/last-book path with no next-page check.
+            requireCurrentCollection(collectionId);
             if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
                 throw new IOException("Export destination already exists");
             }
