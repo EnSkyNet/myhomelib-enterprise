@@ -385,7 +385,11 @@ public class GroupMetabibExportService {
             // Never resolve a relative legacy path against the process working directory:
             // that could accidentally read a similarly named file from another collection.
             if (isAbsolutePath(book.getFileName())) {
-                return resources.readBookData(book.getFileName(), "", "", book.getArchiveEntry());
+                Path absoluteFile = Path.of(book.getFileName()).toAbsolutePath().normalize();
+                Path parent = absoluteFile.getParent();
+                if (parent == null) return Optional.empty();
+                return resources.readBookData(absoluteFile.getFileName().toString(), "", parent.toString(),
+                        book.getArchiveEntry());
             }
             if (isAbsolutePath(book.getFolder())) {
                 // Treat the absolute folder as the containment root so a relative
