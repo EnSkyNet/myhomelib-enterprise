@@ -20,8 +20,8 @@ import org.sqlite.SQLiteConfig;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.text.Normalizer;
 import java.sql.Connection;
+import java.text.Normalizer;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -113,8 +113,7 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
             // Resolve every variant before choosing: an exact-looking match must not hide
             // a second group that differs only by case, spacing or Unicode composition.
             List<Group> matches = jdbc.query("SELECT * FROM groups ORDER BY id", groupRowMapper).stream()
-                    .filter(group -> !normalizeGroupName(group.getName()).isEmpty()
-                            && normalizeGroupName(group.getName()).equalsIgnoreCase(normalized))
+                    .filter(group -> normalizeGroupName(group.getName()).equalsIgnoreCase(normalized))
                     .limit(2)
                     .toList();
             if (matches.size() > 1) {
