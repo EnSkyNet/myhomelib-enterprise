@@ -424,8 +424,11 @@ public class GroupMetabibExportService {
     private static String extension(Book book) {
         String name = book.hasArchiveEntry() ? book.getArchiveEntry() : book.getFileName();
         int dot = name == null ? -1 : name.lastIndexOf('.');
-        String ext = dot < 0 ? "bin" : name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
-        return ext.matches("[a-z0-9]{1,8}") ? ext : "bin";
+        String ext = dot < 0 ? "" : name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
+        if (ext.matches("[a-z0-9]{1,8}")) return ext;
+        String artifactFormat = book.getPreferredArtifact().map(BookArtifact::getFormat).orElse("");
+        artifactFormat = artifactFormat == null ? "" : artifactFormat.toLowerCase(java.util.Locale.ROOT);
+        return artifactFormat.matches("[a-z0-9]{1,8}") ? artifactFormat : "bin";
     }
 
     private static Object claim(Object value) {
