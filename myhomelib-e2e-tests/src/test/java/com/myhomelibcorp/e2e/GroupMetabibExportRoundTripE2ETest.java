@@ -144,6 +144,9 @@ class GroupMetabibExportRoundTripE2ETest {
         when(book.getId()).thenReturn(BookId.generate());
         when(book.getTitle()).thenReturn(title);
         when(book.getFileName()).thenReturn(fileName);
+        when(book.getCollectionRoot()).thenReturn("/fixture-root");
+        when(book.getFolder()).thenReturn("");
+        when(book.getArchiveEntry()).thenReturn("");
         when(book.getAuthors()).thenReturn(List.of());
         when(book.getGenres()).thenReturn(List.of());
         when(book.getLibId()).thenReturn(libId);
