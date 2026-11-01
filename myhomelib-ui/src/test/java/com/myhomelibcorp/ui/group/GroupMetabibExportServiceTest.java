@@ -172,6 +172,32 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
+    void unicodeDestinationLongerThanWindowsMaxPathPublishesCompletePortablePackage() throws Exception {
+        Fixture f = fixture("long-path");
+        Path destination = temp.resolve("Бібліотека-" + "дуже-довгий-".repeat(13))
+                .resolve("експорт-" + "групи-".repeat(9));
+        assertThat(destination.toString().length()).isGreaterThan(260);
+        Files.createDirectories(destination);
+
+        Book book = book("Довгий шлях — книга", "довгий-шлях.fb2");
+        when(f.activeSession.findPage(any(BookQuery.class)))
+                .thenReturn(PageResult.of(List.of(book), 1, 0, 100));
+        when(f.resources.readBookData(book)).thenReturn(Optional.of(
+                new ByteArrayInputStream("unicode long path".getBytes(StandardCharsets.UTF_8))));
+
+        var result = f.exporter.export(21L, "long-path", destination);
+
+        assertThat(result.exported()).isEqualTo(1);
+        assertThat(result.folder()).startsWith(destination).isDirectory();
+        assertThat(result.folder().resolve("catalog.jsonl")).isRegularFile();
+        try (ZipFile zip = new ZipFile(result.folder().resolve("books-0001.zip").toFile())) {
+            assertThat(zip.getEntry("book-000001.fb2")).isNotNull();
+            assertThat(new String(zip.getInputStream(zip.getEntry("book-000001.fb2")).readAllBytes(),
+                    StandardCharsets.UTF_8)).isEqualTo("unicode long path");
+        }
+    }
+
+    @Test
     void duplicateRegisteredCollectionIdsFailBeforeOpeningAnySourceDatabase() throws Exception {
         Fixture f = fixture("duplicate-id");
         Collection duplicate = mock(Collection.class);
