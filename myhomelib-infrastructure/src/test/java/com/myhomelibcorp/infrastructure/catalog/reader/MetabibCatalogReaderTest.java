@@ -192,6 +192,7 @@ class MetabibCatalogReaderTest {
         Files.writeString(source, header + record, StandardCharsets.UTF_8);
         try (CatalogReadSession session = reader.open(source)) {
             CatalogRecord book = session.next();
+            assertThat(book.sourceBookId()).isEqualTo("flibusta:archive_entry:9:archive-c:0");
             assertThat(book.externalIdentities()).anySatisfy(identity -> {
                 assertThat(identity.scheme()).isEqualTo("catalog:flibusta");
                 assertThat(identity.value()).isEqualTo("893718");
