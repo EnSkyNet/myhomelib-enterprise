@@ -471,7 +471,7 @@ public class GroupMetabibExportService {
             }
             if (!keywords.isEmpty()) bibliographic.put("keywords", keywords);
         }
-        List<Object> genres = new ArrayList<>();
+        List<Object> genreValues = new ArrayList<>();
         for (var genre : book.getGenres()) {
             String sourceCode = genre.getId() == null ? "" : safe(genre.getId().asString());
             String fb2Code = safe(genre.getFb2Code());
@@ -497,9 +497,11 @@ public class GroupMetabibExportService {
                 genreValue.put("parent_code", genre.getParentId().asString());
             }
             if (!fb2Code.isBlank()) genreValue.put("fb2_code", fb2Code);
-            genres.add(claim(genreValue));
+            genreValues.add(genreValue);
         }
-        bibliographic.put("genres", genres);
+        // The public MyHomeLib format wraps the complete genre array in one
+        // observation claim; separate per-genre claims are not interoperable.
+        bibliographic.put("genres", List.of(claim(genreValues)));
         if (book.getSeries() != null && !book.getSeries().isBlank()) {
             Map<String, Object> seq = new LinkedHashMap<>();
             seq.put("name", book.getSeries());
@@ -595,16 +597,24 @@ public class GroupMetabibExportService {
         if (!claims.isArray()) return;
         for (JsonNode claim : claims) {
             JsonNode value = claim.path("value");
-            if (!(value instanceof ObjectNode genreValue)) continue;
-            String sourceCollectionId = genreValue.path("source_collection_id").asString();
-            String sourceCode = genreValue.path("source_code").asString();
-            if (sourceCode.isBlank()) sourceCode = genreValue.path("code").asString();
-            NormalizedGenre mapped = normalized.get(new GenreSourceKey(sourceCollectionId, sourceCode));
-            if (mapped == null || mapped.code().isBlank()) continue;
-            genreValue.put("code", mapped.code());
-            if (mapped.translatedCode().isBlank()) genreValue.remove("translated_code");
-            else genreValue.put("translated_code", mapped.translatedCode());
+            if (value.isArray()) {
+                for (JsonNode genre : value) normalizeGenreValue(genre, normalized);
+            } else {
+                normalizeGenreValue(value, normalized);
+            }
         }
+    }
+
+    private static void normalizeGenreValue(JsonNode value, Map<GenreSourceKey, NormalizedGenre> normalized) {
+        if (!(value instanceof ObjectNode genreValue)) return;
+        String sourceCollectionId = genreValue.path("source_collection_id").asString();
+        String sourceCode = genreValue.path("source_code").asString();
+        if (sourceCode.isBlank()) sourceCode = genreValue.path("code").asString();
+        NormalizedGenre mapped = normalized.get(new GenreSourceKey(sourceCollectionId, sourceCode));
+        if (mapped == null || mapped.code().isBlank()) return;
+        genreValue.put("code", mapped.code());
+        if (mapped.translatedCode().isBlank()) genreValue.remove("translated_code");
+        else genreValue.put("translated_code", mapped.translatedCode());
     }
 
     private static String safe(String value) { return value == null ? "" : value; }
