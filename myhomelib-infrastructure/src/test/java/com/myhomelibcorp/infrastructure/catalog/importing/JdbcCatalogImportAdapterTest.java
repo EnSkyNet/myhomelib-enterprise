@@ -286,6 +286,34 @@ class JdbcCatalogImportAdapterTest {
     }
 
     @Test
+    void modernFlibustaArchiveEntryCatalogIdentityRestoresStableOnlineLibId() {
+        // Modern Flibusta metabib records identify archive entries by ZIP position.
+        // The online book ID is carried separately in identities.catalog.
+        CatalogRecord archiveEntry = new CatalogRecord(
+                "flibusta:archive_entry:10:archive-c:0", "Flibusta archive entry", List.of(),
+                "", null, List.of("fiction"), "eng", "fb2", "893718.fb2",
+                "books-0001.zip", "893718.fb2", 7L, false, "", "", null, "",
+                List.of(), "", List.of(), null, null,
+                Map.of("library", "flibusta", "locator.kind", "archive_entry",
+                        "locator.source", "archive-c", "locator.index", "0"),
+                List.of(), List.of(new ExternalIdentity("catalog:flibusta", "893718")), List.of());
+        reader.records = List.of(archiveEntry);
+
+        ImportResult result = adapter.importCatalog(context(true));
+
+        String expectedBookId = UUID.nameUUIDFromBytes(
+                "inpx:libid:893718".getBytes(StandardCharsets.UTF_8)).toString();
+        assertThat(result.imported()).isOne();
+        assertThat(jdbc.queryForObject("SELECT lib_id FROM books WHERE id=?", String.class, expectedBookId))
+                .isEqualTo("893718");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM books WHERE id=?", Integer.class, expectedBookId))
+                .isOne();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM book_identities WHERE book_id=? AND scheme=? AND external_id=?",
+                Integer.class, expectedBookId, "catalog:flibusta", "893718")).isOne();
+    }
+
+    @Test
     void portableMetabibImportPreservesNumericSourceLibIdWithoutTrustingInvalidIdentityValues() {
         // Real group exports use mhl-portable as the dataset library and carry
         // the original LibID in identities.catalog, not locator.book_id.
