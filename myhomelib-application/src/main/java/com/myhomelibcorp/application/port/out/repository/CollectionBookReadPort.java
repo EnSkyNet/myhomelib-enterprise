@@ -32,8 +32,13 @@ public interface CollectionBookReadPort {
          */
         Optional<Group> findGroupByName(String name);
 
+        /**
+         * Returns complete book records for portable export, including bibliographic
+         * metadata, hydrated authors/genres/artifacts, and deleted group members.
+         */
         PageResult<Book> findPage(BookQuery query);
 
+        /** Same full-record contract using the stable TITLE keyset cursor. */
         PageResult<Book> findTitlePageByCursor(BookQuery query,
                                                BookPageCursor cursor,
                                                BookPageDirection direction,
