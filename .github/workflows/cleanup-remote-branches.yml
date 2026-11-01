@@ -1,0 +1,46 @@
+name: One-time master branch consolidation
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/cleanup-remote-branches.yml'
+      - 'tools/cleanup-remote-branches.py'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: master-branch-consolidation
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Delete only merged or explicitly superseded refs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout the current master with complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Validate cleanup script syntax
+        run: python3 -c "from pathlib import Path; p=Path('tools/cleanup-remote-branches.py'); compile(p.read_text(encoding='utf-8'), str(p), 'exec')"
+
+      - name: Remove branches already merged or audited as superseded
+        env:
+          MHL_EXECUTE_BRANCH_CLEANUP: YES
+        run: python3 tools/cleanup-remote-branches.py --execute
+
+      - name: Upload exact cleanup report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: master-branch-cleanup-\${{ github.run_id }}
+          path: target/branch-cleanup-report.json
+          if-no-files-found: warn
+          retention-days: 30
