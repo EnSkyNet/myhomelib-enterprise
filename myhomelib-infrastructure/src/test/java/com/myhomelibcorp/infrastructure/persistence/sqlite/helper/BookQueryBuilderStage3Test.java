@@ -72,6 +72,53 @@ class BookQueryBuilderStage3Test {
     }
 
     @Test
+    void groupExportLoadsFullRecordsAndIncludesDeletedMembershipWithoutChangingBrowsingDefaults() {
+        BookQuery query = BookQuery.builder()
+                .groupId(GroupId.fromLong(37L))
+                .pagination(com.myhomelibcorp.application.query.common.Pagination.of(100, 0))
+                .sortBy(com.myhomelibcorp.application.query.common.SortBy.TITLE)
+                .direction(com.myhomelibcorp.application.query.common.SortDirection.ASC)
+                .build();
+
+        var page = builder.buildGroupExportPage(query);
+        var count = builder.buildGroupExportCount(query);
+        String pageSql = page.sql().replaceAll("\\s+", " ");
+        String countSql = count.sql().replaceAll("\\s+", " ");
+
+        assertThat(pageSql).startsWith("SELECT b.* FROM books b");
+        assertThat(pageSql).contains("qbg_group.group_id = ?");
+        assertThat(pageSql).doesNotContain("b.deleted = 0");
+        assertThat(pageSql).contains("LIMIT ? OFFSET ?");
+        assertThat(countSql).startsWith("SELECT COUNT(*) FROM books b");
+        assertThat(countSql).contains("qbg_group.group_id = ?");
+        assertThat(countSql).doesNotContain("b.deleted = 0");
+
+        // The public browsing query must continue hiding tombstones.
+        assertThat(builder.build(query).sql()).contains("b.deleted = 0");
+    }
+
+    @Test
+    void groupExportTitleCursorUsesFullRecordsAndKeepsDeletedMembership() {
+        BookQuery query = BookQuery.builder()
+                .groupId(GroupId.fromLong(37L))
+                .pagination(com.myhomelibcorp.application.query.common.Pagination.of(100, 100))
+                .sortBy(com.myhomelibcorp.application.query.common.SortBy.TITLE)
+                .direction(com.myhomelibcorp.application.query.common.SortDirection.ASC)
+                .build();
+
+        var sql = builder.buildGroupExportTitleCursor(query,
+                new BookPageCursor("Title 99", "book-99"), BookPageDirection.AFTER);
+        String normalized = sql.sql().replaceAll("\\s+", " ");
+
+        assertThat(normalized).startsWith("SELECT b.* FROM books b");
+        assertThat(normalized).contains("qbg_group.group_id = ?");
+        assertThat(normalized).contains("(b.title, b.id) > (?, ?)");
+        assertThat(normalized).doesNotContain("b.deleted = 0");
+        assertThat(normalized).doesNotContain("OFFSET");
+        assertThat(Arrays.asList(sql.params())).containsExactly(37L, "Title 99", "book-99", 100);
+    }
+
+    @Test
     void previousTitleCursorScansOppositeDirectionForStableReverse() {
         BookQuery query = BookQuery.builder()
                 .pagination(com.myhomelibcorp.application.query.common.Pagination.of(50, 50))
