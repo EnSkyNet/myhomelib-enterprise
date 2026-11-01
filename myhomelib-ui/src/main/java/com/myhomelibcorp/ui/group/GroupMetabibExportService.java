@@ -251,7 +251,7 @@ public class GroupMetabibExportService {
 
                     Optional<InputStream> input;
                     try {
-                        input = resources.readBookData(book);
+                        input = readBookData(book, source);
                     } catch (UncheckedIOException unreadable) {
                         if (Thread.currentThread().isInterrupted()
                                 || unreadable.getCause() instanceof java.io.InterruptedIOException
@@ -320,6 +320,20 @@ public class GroupMetabibExportService {
             throw new IllegalStateException("Collection changed during group export");
         }
         return collection;
+    }
+
+    /**
+     * Resolve relative resources against the collection currently being exported,
+     * never against the application's active collection. Older catalog rows may
+     * lack books.collection_root while the registered collection still has a root.
+     */
+    private Optional<InputStream> readBookData(Book book, Collection source) {
+        String bookRoot = book.getCollectionRoot();
+        if ((bookRoot == null || bookRoot.isBlank()) && source.getRootFolder() != null) {
+            return resources.readBookData(book.getFileName(), book.getFolder(),
+                    source.getRootFolder().toString(), book.getArchiveEntry());
+        }
+        return resources.readBookData(book);
     }
 
     private static long copyBounded(InputStream source, OutputStream target) throws IOException {
