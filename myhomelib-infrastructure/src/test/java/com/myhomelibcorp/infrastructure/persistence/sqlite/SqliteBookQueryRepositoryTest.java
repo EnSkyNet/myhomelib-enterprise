@@ -1,5 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
+import com.myhomelibcorp.domain.model.book.Book;
+
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
