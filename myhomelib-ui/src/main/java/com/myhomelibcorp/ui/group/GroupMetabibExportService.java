@@ -121,6 +121,10 @@ public class GroupMetabibExportService {
         boolean published = false;
         try {
             ExportResult result = build(groupId, collectionId, sources, stage, target, packageId);
+            // A cancellation arriving after the last stream read must still prevent publication.
+            if (Thread.currentThread().isInterrupted()) {
+                throw new IOException("Portable group export cancelled before publication");
+            }
             // The active collection must still match immediately before publication,
             // including the single-collection/last-book path with no next-page check.
             requireCurrentCollection(collectionId);
