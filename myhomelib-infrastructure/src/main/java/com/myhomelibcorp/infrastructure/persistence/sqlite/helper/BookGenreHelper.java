@@ -58,9 +58,10 @@ public class BookGenreHelper {
     public List<Genre> loadGenres(BookId bookId) {
         JdbcTemplate jdbcTemplate = getJdbcTemplate();
         String sql = """
-            SELECT g.code, g.name, g.parent_code, g.fb2_code
+            SELECT g.code, g.name, g.parent_code, g.fb2_code, parent.name AS parent_name
             FROM genres g
             JOIN book_genres bg ON g.code = bg.genre_code
+            LEFT JOIN genres parent ON parent.code = g.parent_code
             WHERE bg.book_id = ?
             """;
         return jdbcTemplate.query(sql, genreRowMapper, bookId.asString());
@@ -74,9 +75,10 @@ public class BookGenreHelper {
     public void loadGenresForBooks(JdbcTemplate jdbcTemplate, List<Book> books) {
         if (books == null || books.isEmpty()) return;
         BookRelationBatchLoader.load(jdbcTemplate, books, """
-                SELECT bg.book_id, g.code, g.name, g.parent_code, g.fb2_code
+                SELECT bg.book_id, g.code, g.name, g.parent_code, g.fb2_code, parent.name AS parent_name
                 FROM book_genres bg
                 JOIN genres g ON bg.genre_code = g.code
+                LEFT JOIN genres parent ON parent.code = g.parent_code
                 WHERE bg.book_id IN (%s)
                 """, genreRowMapper, Book::addGenre);
         log.debug("Завантажено жанрів для {} книг", books.size());

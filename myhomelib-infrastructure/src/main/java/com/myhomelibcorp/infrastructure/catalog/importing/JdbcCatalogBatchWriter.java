@@ -4,6 +4,7 @@ import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteDateTime
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookUpsertSql;
 import com.myhomelibcorp.application.catalog.importing.CatalogArtifact;
 import com.myhomelibcorp.application.catalog.importing.CatalogDatasetInfo;
+import com.myhomelibcorp.application.catalog.importing.CatalogGenreDefinition;
 import com.myhomelibcorp.application.catalog.importing.CatalogPerson;
 import com.myhomelibcorp.application.catalog.importing.CatalogRecord;
 import com.myhomelibcorp.application.catalog.importing.ExternalIdentity;
@@ -69,9 +70,7 @@ final class JdbcCatalogBatchWriter {
         }
 
         Map<PersonKey, String> authorIds = resolveAuthors(jdbc, states, sourceId);
-        Set<String> genreCodes = new LinkedHashSet<>();
-        for (RecordState state : states) genreCodes.addAll(state.record.genres());
-        persistGenres(jdbc, genreCodes);
+        persistGenres(jdbc, states.stream().map(RecordState::record).toList());
 
         String upsertBook = BookUpsertSql.UPSERT;
 
@@ -236,11 +235,126 @@ final class JdbcCatalogBatchWriter {
         return result;
     }
 
-    private static void persistGenres(JdbcTemplate jdbc, Set<String> genres) {
-        if (genres.isEmpty()) return;
-        jdbc.batchUpdate("INSERT OR IGNORE INTO genres(code,name,parent_code,fb2_code) VALUES (?,?,NULL,?)",
-                genres.stream().filter(g -> g != null && !g.isBlank())
-                        .map(g -> new Object[]{g.trim(), g.trim(), g.trim()}).toList());
+    static void persistGenres(JdbcTemplate jdbc, List<CatalogRecord> records) {
+        if (records == null || records.isEmpty()) return;
+        LinkedHashSet<String> genreCodes = new LinkedHashSet<>();
+        LinkedHashMap<String, CatalogGenreDefinition> definitions = new LinkedHashMap<>();
+        for (CatalogRecord record : records) {
+            if (record == null) continue;
+            for (String code : record.genres()) {
+                if (code != null && !code.isBlank()) genreCodes.add(code.trim());
+            }
+            for (CatalogGenreDefinition definition : record.genreDefinitions()) {
+                if (definition != null && definition.catalog() && !definition.code().isBlank()) {
+                    definitions.putIfAbsent(definition.code(), definition);
+                    genreCodes.add(definition.code());
+                }
+            }
+        }
+        if (genreCodes.isEmpty()) return;
+
+        Set<String> existingCodes = new LinkedHashSet<>();
+        jdbc.query("SELECT code FROM genres",
+                (org.springframework.jdbc.core.RowCallbackHandler) rs -> existingCodes.add(rs.getString(1)));
+        Set<String> reservedCodes = new LinkedHashSet<>(genreCodes);
+        reservedCodes.addAll(existingCodes);
+        Map<String, String> categoryCodes = new LinkedHashMap<>();
+
+        // Database-observed definitions carry curated descriptions and categories.
+        // INSERT OR IGNORE intentionally preserves a destination's existing taxonomy.
+        for (CatalogGenreDefinition definition : definitions.values()) {
+            String code = definition.code();
+            if (existingCodes.contains(code)) continue;
+            String parentCode = ensureGenreCategory(
+                    jdbc, definition.category(), reservedCodes, existingCodes, categoryCodes);
+            String name = firstNonBlank(definition.description(), code);
+            // Match upstream EnsureGenre(code, description, category): the resolved
+            // metabib code is also the FB2 lookup code. translated_code remains in
+            // raw record provenance and must not collapse conflicting genre codes.
+            int inserted = jdbc.update("""
+                    INSERT OR IGNORE INTO genres(code,name,parent_code,fb2_code)
+                    VALUES (?,?,?,?)
+                    """, code, name, parentCode, code);
+            if (inserted > 0) {
+                existingCodes.add(code);
+                reservedCodes.add(code);
+            }
+        }
+
+        // Legacy and FB2-only codes remain usable but cannot invent curated labels.
+        for (String code : genreCodes) {
+            if (existingCodes.contains(code)) continue;
+            int inserted = jdbc.update("""
+                    INSERT OR IGNORE INTO genres(code,name,parent_code,fb2_code)
+                    VALUES (?,?,NULL,?)
+                    """, code, code, code);
+            if (inserted > 0) {
+                existingCodes.add(code);
+                reservedCodes.add(code);
+            }
+        }
+    }
+
+    private static String ensureGenreCategory(
+            JdbcTemplate jdbc,
+            String category,
+            Set<String> reservedCodes,
+            Set<String> existingCodes,
+            Map<String, String> categoryCodes) {
+        if (category == null || category.isBlank()) return null;
+        String normalized = category.trim();
+        String cached = categoryCodes.get(normalized);
+        if (cached != null) return cached;
+
+        List<String> roots = findGenreCategoryRoots(jdbc, normalized);
+        if (!roots.isEmpty()) {
+            String rootCode = roots.getFirst();
+            categoryCodes.put(normalized, rootCode);
+            existingCodes.add(rootCode);
+            reservedCodes.add(rootCode);
+            return rootCode;
+        }
+
+        String stem = "mhl-category-" + UUID.nameUUIDFromBytes(
+                ("myhomelib-category:" + normalized).getBytes(StandardCharsets.UTF_8));
+        int suffix = 0;
+        while (true) {
+            String candidate = suffix == 0 ? stem : stem + "-" + suffix;
+            if (reservedCodes.contains(candidate) || existingCodes.contains(candidate)) {
+                suffix++;
+                continue;
+            }
+            int inserted = jdbc.update("""
+                    INSERT OR IGNORE INTO genres(code,name,parent_code,fb2_code)
+                    VALUES (?,?,NULL,NULL)
+                    """, candidate, normalized);
+            if (inserted > 0) {
+                existingCodes.add(candidate);
+                reservedCodes.add(candidate);
+                categoryCodes.put(normalized, candidate);
+                return candidate;
+            }
+
+            roots = findGenreCategoryRoots(jdbc, normalized);
+            if (!roots.isEmpty()) {
+                String rootCode = roots.getFirst();
+                categoryCodes.put(normalized, rootCode);
+                existingCodes.add(rootCode);
+                reservedCodes.add(rootCode);
+                return rootCode;
+            }
+            existingCodes.add(candidate);
+            reservedCodes.add(candidate);
+            suffix++;
+        }
+    }
+
+    private static List<String> findGenreCategoryRoots(JdbcTemplate jdbc, String name) {
+        return jdbc.query("""
+                SELECT code FROM genres
+                WHERE name = ? AND (parent_code IS NULL OR parent_code = '' OR parent_code = '0')
+                ORDER BY code LIMIT 1
+                """, (rs, rowNum) -> rs.getString(1), name);
     }
 
     private static void deleteRelations(JdbcTemplate jdbc, List<String> bookIds) {
