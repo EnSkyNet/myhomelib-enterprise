@@ -412,7 +412,11 @@ class GroupMetabibExportServiceTest {
         when(current.getName()).thenReturn("Primary");
         when(lifecycle.getCurrentCollection()).thenReturn(current);
         when(collectionRepository.findAll()).thenReturn(List.of(current));
-        when(reader.open(current)).thenReturn(activeSession);
+        try {
+            when(reader.open(current)).thenReturn(activeSession);
+        } catch (IOException impossible) {
+            throw new IllegalStateException("Mock collection reader unexpectedly failed to open", impossible);
+        }
         when(activeSession.findGroupById(anyLong())).thenAnswer(inv -> {
             Long id = inv.getArgument(0);
             return Optional.of(new Group(GroupId.fromLong(id), "Shared group", false));
