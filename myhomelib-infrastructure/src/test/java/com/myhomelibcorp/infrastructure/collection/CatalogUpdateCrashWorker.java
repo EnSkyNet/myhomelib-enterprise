@@ -37,8 +37,16 @@ public final class CatalogUpdateCrashWorker {
             connection.commit();
             if ("AFTER_SQLITE_COMMIT".equals(crashPoint)) halt();
 
-            if ("AFTER_MARKER_REMOVAL".equals(crashPoint)) {
+            if ("AFTER_MARKER_REMOVAL".equals(crashPoint)
+                    || "AFTER_VERSION_COMMIT".equals(crashPoint)) {
                 CatalogUpdateRecoveryFiles.deleteMarkerOnly(collectionId);
+                if ("AFTER_MARKER_REMOVAL".equals(crashPoint)) halt();
+                // Mirrors the final source-state write that follows marker removal in
+                // UpdateCollectionFromNetworkUseCase. A hard kill immediately after
+                // this UPDATE must retain both the new catalog and the new applied version.
+                statement.executeUpdate(
+                        "UPDATE catalog_sources SET applied_version='v2' WHERE source_key='source-1'");
+                connection.commit();
                 halt();
             }
         }
