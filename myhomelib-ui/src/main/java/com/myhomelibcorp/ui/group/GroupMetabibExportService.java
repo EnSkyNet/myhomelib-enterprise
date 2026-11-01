@@ -462,8 +462,26 @@ public class GroupMetabibExportService {
         }
         List<Object> genres = new ArrayList<>();
         for (var genre : book.getGenres()) {
-            String code = genre.getFb2Code();
-            if (code != null && !code.isBlank()) genres.add(claim(Map.of("code", code)));
+            String sourceCode = genre.getId() == null ? "" : safe(genre.getId().asString());
+            String fb2Code = safe(genre.getFb2Code());
+            String importCode = !fb2Code.isBlank() ? fb2Code : sourceCode;
+            if (importCode.isBlank()) continue;
+
+            // Keep the established FB2 import code while retaining the source
+            // collection's stable code, display name and hierarchy. Two libraries
+            // can legitimately disagree about the label for the same genre code;
+            // separate records plus their collection provenance preserve that conflict.
+            Map<String, Object> genreValue = new LinkedHashMap<>();
+            genreValue.put("code", importCode);
+            if (!sourceCode.isBlank()) genreValue.put("source_code", sourceCode);
+            if (genre.getName() != null && !genre.getName().isBlank()) {
+                genreValue.put("name", genre.getName());
+            }
+            if (genre.getParentId() != null) {
+                genreValue.put("parent_code", genre.getParentId().asString());
+            }
+            if (!fb2Code.isBlank()) genreValue.put("fb2_code", fb2Code);
+            genres.add(claim(genreValue));
         }
         bibliographic.put("genres", genres);
         if (book.getSeries() != null && !book.getSeries().isBlank()) {
