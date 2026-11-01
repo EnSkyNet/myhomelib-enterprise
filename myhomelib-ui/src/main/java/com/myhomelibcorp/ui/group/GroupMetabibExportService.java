@@ -3,6 +3,7 @@ package com.myhomelibcorp.ui.group;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.CollectionBookReadPort;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
+import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.book.BookPageCursor;
 import com.myhomelibcorp.application.query.book.BookPageDirection;
