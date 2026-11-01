@@ -12,6 +12,7 @@ import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.book.BookArtifact;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
@@ -257,21 +258,21 @@ public class GroupMetabibExportService {
                     requireCurrentCollection(activeCollectionId);
                     if (book == null) { skipped++; continue; }
 
-                    Optional<InputStream> input;
+                    Optional<ReadableBook> readable;
                     try {
-                        input = readBookData(book, source);
+                        readable = readLocalBookData(book, source);
                     } catch (UncheckedIOException unreadable) {
-                        if (Thread.currentThread().isInterrupted()
-                                || unreadable.getCause() instanceof java.io.InterruptedIOException
-                                || unreadable.getCause() instanceof java.nio.channels.ClosedByInterruptException) {
+                        if (isInterruptedRead(unreadable)) {
                             throw new IOException("Portable group export cancelled during source open", unreadable);
                         }
                         skipped++;
                         continue;
                     }
-                    if (input.isEmpty()) { skipped++; continue; }
+                    if (readable.isEmpty()) { skipped++; continue; }
 
-                    try (InputStream in = input.get()) {
+                    ReadableBook selected = readable.get();
+                    Book exportBook = selected.book();
+                    try (InputStream in = selected.input()) {
                         if (zip == null || archive.entries == MAX_ZIP_ENTRIES) {
                             if (zip != null) {
                                 zip.close();
@@ -283,7 +284,7 @@ public class GroupMetabibExportService {
                                     StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE));
                         }
                         String entry = String.format(java.util.Locale.ROOT, "book-%06d.%s",
-                                exported + 1, extension(book));
+                                exported + 1, extension(exportBook));
                         zip.putNextEntry(new ZipEntry(entry));
                         long actualBytes = copyBounded(in, zip);
                         zip.closeEntry();
@@ -291,7 +292,8 @@ public class GroupMetabibExportService {
                         if (entry.endsWith(".fb2")) archive.fb2Entries++;
                         archive.descriptor.put("entries", archive.entries);
                         archive.descriptor.put("fb2_entries", archive.fb2Entries);
-                        rows.write(mapper.writeValueAsString(record(book, source, archive.id, entry, index, actualBytes)));
+                        rows.write(mapper.writeValueAsString(
+                                record(exportBook, source, archive.id, entry, index, actualBytes)));
                         rows.newLine();
                         exported++;
                     }
@@ -335,6 +337,43 @@ public class GroupMetabibExportService {
      * never against the application's active collection. Older catalog rows may
      * lack books.collection_root while the registered collection still has a root.
      */
+    /**
+     * Prefer a locally available physical artifact, not the logical book's preferred
+     * artifact blindly: the preferred format may be remote while another format is local.
+     * Each local candidate is opened in turn so a stale path does not hide a readable copy.
+     */
+    private Optional<ReadableBook> readLocalBookData(Book book, Collection source) {
+        List<BookArtifact> artifacts = book.getArtifacts();
+        if (artifacts == null || artifacts.isEmpty()) {
+            return readBookData(book, source).map(input -> new ReadableBook(book, input));
+        }
+
+        String preferredId = book.getPreferredArtifactId();
+        List<BookArtifact> localCandidates = artifacts.stream()
+                .filter(BookArtifact::isAvailable)
+                .sorted(Comparator.comparing(artifact -> !artifact.getId().equals(preferredId)))
+                .toList();
+        UncheckedIOException lastFailure = null;
+        for (BookArtifact artifact : localCandidates) {
+            Book candidate = book.withArtifacts(artifacts, artifact.getId());
+            try {
+                Optional<InputStream> input = readBookData(candidate, source);
+                if (input.isPresent()) return Optional.of(new ReadableBook(candidate, input.get()));
+            } catch (UncheckedIOException unreadable) {
+                if (isInterruptedRead(unreadable)) throw unreadable;
+                lastFailure = unreadable;
+            }
+        }
+        if (lastFailure != null) throw lastFailure;
+        return Optional.empty();
+    }
+
+    private static boolean isInterruptedRead(UncheckedIOException unreadable) {
+        return Thread.currentThread().isInterrupted()
+                || unreadable.getCause() instanceof java.io.InterruptedIOException
+                || unreadable.getCause() instanceof java.nio.channels.ClosedByInterruptException;
+    }
+
     private Optional<InputStream> readBookData(Book book, Collection source) {
         String bookRoot = book.getCollectionRoot();
         if (bookRoot == null || bookRoot.isBlank()) {
@@ -491,6 +530,7 @@ public class GroupMetabibExportService {
         });
     }
 
+    private record ReadableBook(Book book, InputStream input) { }
     private record PageResultHolder(List<Book> books, long total) { }
     private record CollectionExportResult(int exported, int skipped) { }
 
