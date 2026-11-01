@@ -276,8 +276,8 @@ public class SqliteBookQueryRepositoryTest {
         jdbc.update("INSERT INTO book_groups(book_id, group_id) VALUES (?, ?)", deletedId, groupId);
 
         jdbc.update("INSERT INTO authors(id, first_name, middle_name, last_name) VALUES (?,?,?,?)",
-                "author-export", "Олександр", "Юрійович", "Король");
-        jdbc.update("INSERT INTO book_authors(book_id, author_id) VALUES (?,?)", activeId, "author-export");
+                "11111111-1111-4111-8111-111111111111", "Олександр", "Юрійович", "Король");
+        jdbc.update("INSERT INTO book_authors(book_id, author_id) VALUES (?,?)", activeId, "11111111-1111-4111-8111-111111111111");
         jdbc.update("INSERT INTO genres(code, name, parent_code, fb2_code) VALUES (?,?,NULL,?)",
                 "fiction-export", "Фантастика", "sf");
         jdbc.update("INSERT INTO book_genres(book_id, genre_code) VALUES (?,?)", activeId, "fiction-export");
