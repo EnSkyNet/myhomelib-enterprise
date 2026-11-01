@@ -113,7 +113,7 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
                     .findFirst().orElseThrow().value();
             assertThat(first.archive()).isEqualTo("books-0001.zip");
             assertThat(first.archiveEntry()).isEqualTo("book-000001.fb2");
-            assertThat(first.genres()).containsExactly("sf");
+            assertThat(first.genres()).containsExactly("mhl-1-sf");
             assertThat(first.sourceMetadata().get("metabib.claims.json"))
                     .contains("\"name\":\"Фантастика — А\"")
                     .contains("\"source_code\":\"genre-a\"");
@@ -132,7 +132,7 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
             assertThat(second.sourceBookId()).isNotEqualTo(first.sourceBookId());
             assertThat(second.archive()).isEqualTo("books-0002.zip");
             assertThat(second.archiveEntry()).isEqualTo("book-000002.fb2");
-            assertThat(second.genres()).containsExactly("sf");
+            assertThat(second.genres()).containsExactly("mhl-2-sf");
             assertThat(second.sourceMetadata().get("metabib.claims.json"))
                     .contains("\"name\":\"Наукова фантастика — Б\"")
                     .contains("\"source_code\":\"genre-b\"");
