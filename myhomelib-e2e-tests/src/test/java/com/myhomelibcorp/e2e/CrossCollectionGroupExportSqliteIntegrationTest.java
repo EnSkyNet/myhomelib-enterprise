@@ -65,9 +65,9 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
 
         String bookIdA = UUID.randomUUID().toString();
         String bookIdB = UUID.randomUUID().toString();
-        createCollectionDatabase(databaseA, rootA, "Спільна група", bookIdA, "a.fb2",
+        createCollectionDatabase(databaseA, rootA, 1L, "Спільна група", bookIdA, "a.fb2",
                 "Книга з колекції А", "893718", "genre-a", "Фантастика — А", bytesA.length());
-        createCollectionDatabase(databaseB, rootB, "спільна ГРУПА", bookIdB, "b.fb2",
+        createCollectionDatabase(databaseB, rootB, 9L, "спільна ГРУПА", bookIdB, "b.fb2",
                 "Книга з колекції Б", "999001", "genre-b", "Наукова фантастика — Б", bytesB.length());
 
         Collection primary = new Collection("collection-a", "Бібліотека А", rootA,
@@ -133,7 +133,7 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
         }
     }
 
-    private static void createCollectionDatabase(Path database, Path root, String groupName,
+    private static void createCollectionDatabase(Path database, Path root, long groupId, String groupName,
                                                  String bookId, String fileName, String title,
                                                  String libId, String genreCode, String genreName,
                                                  long fileSize) {
@@ -142,7 +142,7 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
         Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
 
-        jdbc.update("INSERT INTO groups(id, name, allow_delete) VALUES (1, ?, 1)", groupName);
+        jdbc.update("INSERT INTO groups(id, name, allow_delete) VALUES (?, ?, 1)", groupId, groupName);
         jdbc.update("""
                 INSERT INTO books(
                     id, title, file_name, folder, archive_entry, file_size, collection_root,
@@ -152,7 +152,7 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
                 """, bookId, title, fileName, "", "", fileSize, root.toString(),
                 "uk", 2024, 4, 0, "Збережена анотація", "наука, фантастика",
                 "9780306406157", "Видавництво", libId, 5, "Перекладач", "Київ", "", 0);
-        jdbc.update("INSERT INTO book_groups(book_id, group_id) VALUES (?, 1)", bookId);
+        jdbc.update("INSERT INTO book_groups(book_id, group_id) VALUES (?, ?)", bookId, groupId);
 
         String authorId = UUID.randomUUID().toString();
         jdbc.update("INSERT INTO authors(id, first_name, middle_name, last_name) VALUES (?,?,?,?)",
