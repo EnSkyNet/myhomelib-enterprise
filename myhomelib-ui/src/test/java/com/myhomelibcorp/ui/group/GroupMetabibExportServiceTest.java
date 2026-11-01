@@ -287,6 +287,27 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
+    void legacyRelativeBookPathUsesTheRegisteredSourceCollectionRoot() throws Exception {
+        Fixture f = fixture("rooted");
+        Path collectionRoot = temp.resolve("source-collection-root");
+        when(f.current.getRootFolder()).thenReturn(collectionRoot);
+        Book book = book("Legacy relative path", "legacy.fb2");
+        when(book.getFolder()).thenReturn("");
+        when(book.getArchiveEntry()).thenReturn("");
+        when(book.getCollectionRoot()).thenReturn("");
+        when(f.activeSession.findPage(any(BookQuery.class)))
+                .thenReturn(PageResult.of(List.of(book), 1, 0, 100));
+        when(f.resources.readBookData(eq("legacy.fb2"), eq(""), eq(collectionRoot.toString()), eq("")))
+                .thenReturn(Optional.of(new ByteArrayInputStream(
+                        "legacy bytes".getBytes(StandardCharsets.UTF_8))));
+
+        var result = f.exporter.export(17L, "rooted", temp);
+
+        assertThat(result.exported()).isEqualTo(1);
+        verify(f.resources).readBookData("legacy.fb2", "", collectionRoot.toString(), "");
+    }
+
+    @Test
     void interruptedFileCopyCannotPublishPartialPortableCollection() throws Exception {
         Fixture f = fixture("A");
         Book book = book("Failing", "broken.fb2");
