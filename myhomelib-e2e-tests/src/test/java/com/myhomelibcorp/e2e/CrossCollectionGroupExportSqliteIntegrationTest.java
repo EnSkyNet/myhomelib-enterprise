@@ -34,7 +34,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
+import java.util.zip.ZipFile;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -122,10 +122,15 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
 
             assertThat(imported.hasNext()).isFalse();
         }
-        assertThat(Files.readString(relocated.resolve("books-0001.zip"), StandardCharsets.UTF_8))
-                .isNotEmpty();
-        assertThat(Files.readString(relocated.resolve("books-0002.zip"), StandardCharsets.UTF_8))
-                .isNotEmpty();
+        try (ZipFile firstZip = new ZipFile(relocated.resolve("books-0001.zip").toFile());
+             ZipFile secondZip = new ZipFile(relocated.resolve("books-0002.zip").toFile())) {
+            assertThat(firstZip.getEntry("book-000001.fb2")).isNotNull();
+            assertThat(secondZip.getEntry("book-000002.fb2")).isNotNull();
+            assertThat(new String(firstZip.getInputStream(firstZip.getEntry("book-000001.fb2")).readAllBytes(),
+                    StandardCharsets.UTF_8)).isEqualTo(bytesA);
+            assertThat(new String(secondZip.getInputStream(secondZip.getEntry("book-000002.fb2")).readAllBytes(),
+                    StandardCharsets.UTF_8)).isEqualTo(bytesB);
+        }
     }
 
     private static void createCollectionDatabase(Path database, Path root, String groupName,
