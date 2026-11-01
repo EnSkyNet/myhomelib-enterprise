@@ -264,9 +264,9 @@ public class SqliteBookQueryRepositoryTest {
 
     @Test
     void groupExportHydratesAllBibliographicFieldsAndIncludesDeletedMembers() {
+        jdbc.update("INSERT INTO groups(name, allow_delete) VALUES (?, 1)", "Portable export");
         Long groupId = jdbc.queryForObject(
-                "INSERT INTO groups(name, allow_delete) VALUES (?, 1) RETURNING id",
-                Long.class, "Portable export");
+                "SELECT id FROM groups WHERE name = ?", Long.class, "Portable export");
 
         String activeId = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1";
         String deletedId = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2";
