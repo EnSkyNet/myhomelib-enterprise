@@ -1,7 +1,8 @@
 package com.myhomelibcorp.ui.group;
 
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
-import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.repository.CollectionBookReadPort;
+import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.book.BookPageCursor;
@@ -11,6 +12,9 @@ import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
 import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.book.BookArtifact;
+import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -22,31 +26,40 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 /**
- * Opt-in portable export of a single collection's personal book group.
- * Writes metabib.dataset/1 + bounded ZIP batches (max 1,000 books per ZIP).
- * File bytes are streamed from existing local sources; no network fetching,
- * format conversion, archive rewriting, or mutation of the library database.
+ * Opt-in portable export of a named personal group across registered collections.
  *
- * A staging folder is published only after every ZIP and JSONL are closed.
- * This service is called with an EXPORT lifecycle lease held by the UI.
+ * <p>The selected group is resolved by ID in the active collection. In every other
+ * registered collection the same normalized group name is resolved locally, and
+ * those memberships are included in the package. Collection-local group IDs are
+ * never compared across databases.</p>
+ *
+ * <p>Each collection is read through one isolated read-only SQLite snapshot at a
+ * time. The active collection is never switched, collection databases are never
+ * mutated, and file bytes are streamed into ZIP batches of at most 1,000 books.</p>
+ *
+ * <p>A staging folder is published only after every ZIP and JSONL are closed.
+ * This service is called with an EXPORT lifecycle lease held by the UI.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -54,7 +67,9 @@ public class GroupMetabibExportService {
     private static final int PAGE_SIZE = 100;
     private static final int MAX_ZIP_ENTRIES = 1000;
     private static final long MAX_BOOK_BYTES = 512L * 1024 * 1024;
-    private final BookQueryRepository books;
+
+    private final CollectionBookReadPort collectionBooks;
+    private final CollectionRepository collectionRepository;
     private final BookResourcePort resources;
     private final CollectionLifecyclePort collections;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -65,7 +80,38 @@ public class GroupMetabibExportService {
         if (groupId == null || groupId < 1) throw new IllegalArgumentException("Valid group ID required");
         if (collectionId == null || collectionId.isBlank()) throw new IllegalArgumentException("Collection required");
         Objects.requireNonNull(destinationDirectory, "destinationDirectory");
-        requireCurrentCollection(collectionId);
+
+        Collection active = requireCurrentCollection(collectionId);
+        List<Collection> registered = collectionRepository.findAll();
+        if (registered == null || registered.stream().noneMatch(c -> c != null && collectionId.equals(c.getId()))) {
+            throw new IOException("The active collection is not present in the registered collection list");
+        }
+        Set<String> registeredIds = new HashSet<>();
+        for (Collection item : registered) {
+            if (item == null || item.getId() == null || item.getId().isBlank()
+                    || !registeredIds.add(item.getId())) {
+                throw new IOException("Registered collections contain a blank or duplicate collection ID");
+            }
+        }
+
+        Set<String> collectionIds = new HashSet<>();
+        List<Collection> sources = new ArrayList<>();
+        sources.add(active);
+        registered.stream()
+                .filter(c -> c != null && !collectionId.equals(c.getId()))
+                .sorted(Comparator
+                        .comparing((Collection c) -> safe(c.getName()), String.CASE_INSENSITIVE_ORDER)
+                        .thenComparing(c -> safe(c.getId())))
+                .forEach(sources::add);
+        for (Collection source : sources) {
+            if (source.getId() == null || source.getId().isBlank() || !collectionIds.add(source.getId())) {
+                throw new IOException("Registered collections contain a blank or duplicate collection ID");
+            }
+            if (source.getName() == null || source.getName().isBlank()) {
+                throw new IOException("A registered collection has no name: " + source.getId());
+            }
+        }
+
         Path parent = destinationDirectory.toAbsolutePath().normalize();
         SafeFilePublication.createDirectoriesNoLinks(parent, "Portable group export destination");
         String packageId = "MHL-" + UUID.randomUUID();
@@ -73,15 +119,20 @@ public class GroupMetabibExportService {
         Path stage = Files.createTempDirectory(parent, ".mhl-metabib-");
         boolean published = false;
         try {
-            ExportResult result = build(groupId, collectionId, stage, target, packageId);
+            ExportResult result = build(groupId, collectionId, sources, stage, target, packageId);
+            // A cancellation arriving after the last stream read must still prevent publication.
+            if (Thread.currentThread().isInterrupted()) {
+                throw new IOException("Portable group export cancelled before publication");
+            }
+            // The active collection must still match immediately before publication,
+            // including the single-collection/last-book path with no next-page check.
+            requireCurrentCollection(collectionId);
             if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
                 throw new IOException("Export destination already exists");
             }
-            try {
-                Files.move(stage, target, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException unsupported) {
-                Files.move(stage, target);
-            }
+            // Never downgrade to a non-atomic move: unsupported filesystems must
+            // fail closed rather than risk exposing a partially published package.
+            Files.move(stage, target, StandardCopyOption.ATOMIC_MOVE);
             published = true;
             return result;
         } finally {
@@ -89,93 +140,63 @@ public class GroupMetabibExportService {
         }
     }
 
-    private ExportResult build(Long groupId, String collectionId, Path stage, Path target, String packageId) throws IOException {
+    private ExportResult build(Long activeGroupId, String activeCollectionId, List<Collection> sources,
+                               Path stage, Path target, String packageId) throws IOException {
         Path spool = stage.resolve(".records.tmp");
         List<Map<String, Object>> archiveHeaders = new ArrayList<>();
         int exported = 0;
         int skipped = 0;
-        int offset = 0;
-        long knownTotal = -1L;
-        BookPageCursor cursor = null;
-        ZipOutputStream zip = null;
-        ArchiveState archive = null;
+        String groupName = null;
+
         try (BufferedWriter rows = Files.newBufferedWriter(spool, StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
-            while (true) {
-                if (Thread.currentThread().isInterrupted()) throw new IOException("Portable group export cancelled");
-                requireCurrentCollection(collectionId);
-                BookQuery query = BookQuery.builder()
-                        .groupId(GroupId.fromLong(groupId))
-                        .pagination(Pagination.of(PAGE_SIZE, offset))
-                        .sortBy(SortBy.TITLE)
-                        .direction(SortDirection.ASC)
-                        .build();
-                // The first page obtains the exact total. Continuations use the repository's
-                // indexed TITLE keyset cursor so large exports do not repeatedly scan OFFSET rows.
-                var page = knownTotal < 0
-                        ? books.findPage(query)
-                        : books.findTitlePageByCursor(query, cursor, BookPageDirection.AFTER, knownTotal);
-                if (knownTotal < 0) knownTotal = page.totalElements();
-                if (page.content().isEmpty()) break;
-                for (Book book : page.content()) {
-                    if (Thread.currentThread().isInterrupted()) throw new IOException("Portable group export cancelled");
-                    if (book == null) { skipped++; continue; }
-                    // BookResourceResolver deliberately wraps local open failures in
-                    // UncheckedIOException. Treat those as unreadable source books
-                    // (like Optional.empty), not as a fatal error for the entire group.
-                    // Read/copy/ZIP failures below remain fatal and remove the staging
-                    // package: a partially written ZIP member must never be published.
-                    Optional<InputStream> input;
-                    try {
-                        input = resources.readBookData(book);
-                    } catch (UncheckedIOException unreadable) {
-                        // An interrupted opener signals cancellation, not an
-                        // unavailable book. Never silently continue a cancelled export.
-                        if (Thread.currentThread().isInterrupted()
-                                || unreadable.getCause() instanceof java.io.InterruptedIOException
-                                || unreadable.getCause() instanceof java.nio.channels.ClosedByInterruptException) {
-                            throw new IOException("Portable group export cancelled during source open", unreadable);
-                        }
-                        skipped++;
-                        continue;
-                    }
-                    if (input.isEmpty()) { skipped++; continue; }
-                    try (InputStream in = input.get()) {
-                        if (zip == null || archive.entries == MAX_ZIP_ENTRIES) {
-                            if (zip != null) zip.close();
-                            archive = new ArchiveState(archiveHeaders.size());
-                            archiveHeaders.add(archive.descriptor);
-                            zip = new ZipOutputStream(Files.newOutputStream(stage.resolve(archive.zipFile),
-                                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE));
-                        }
-                        String entry = String.format(java.util.Locale.ROOT, "book-%06d.%s",
-                                exported + 1, extension(book));
-                        zip.putNextEntry(new ZipEntry(entry));
-                        long actualBytes = copyBounded(in, zip);
-                        zip.closeEntry();
-                        int index = archive.entries++;
-                        if (entry.endsWith(".fb2")) archive.fb2Entries++;
-                        archive.descriptor.put("entries", archive.entries);
-                        archive.descriptor.put("fb2_entries", archive.fb2Entries);
-                        rows.write(mapper.writeValueAsString(record(book, archive.id, entry, index, actualBytes)));
-                        rows.newLine();
-                        exported++;
-                    }
+            for (Collection source : sources) {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new IOException("Portable group export cancelled");
                 }
-                Book last = page.content().stream()
-                        .filter(Objects::nonNull)
-                        .reduce((first, next) -> next)
-                        .orElseThrow(() -> new IOException("Group page contains no cursor-eligible books"));
-                cursor = new BookPageCursor(last.getTitle(), last.getId().asString());
-                if (page.content().size() < PAGE_SIZE) break;
-                if (offset > Integer.MAX_VALUE - page.content().size()) throw new IOException("Too many group entries");
-                offset += page.content().size();
+                requireCurrentCollection(activeCollectionId);
+
+                try (CollectionBookReadPort.Session session = collectionBooks.open(source)) {
+                    Group sourceGroup;
+                    if (activeCollectionId.equals(source.getId())) {
+                        sourceGroup = session.findGroupById(activeGroupId)
+                                .orElseThrow(() -> new IOException("Selected group no longer exists in the active collection"));
+                        groupName = sourceGroup.getName();
+                        if (groupName == null || groupName.isBlank()) {
+                            throw new IOException("Selected group has no portable name");
+                        }
+                    } else {
+                        if (groupName == null) {
+                            throw new IOException("The active collection group name was not resolved");
+                        }
+                        Optional<Group> matching;
+                        try {
+                            matching = session.findGroupByName(groupName);
+                        } catch (IllegalStateException ambiguousGroup) {
+                            throw new IOException("Cannot resolve group '" + safe(groupName)
+                                    + "' unambiguously in collection '" + safe(source.getName()) + "'", ambiguousGroup);
+                        }
+                        if (matching.isEmpty()) continue;
+                        sourceGroup = matching.get();
+                    }
+
+                    CollectionExportResult sourceResult = writeCollection(
+                            source, sourceGroup.getId().asLong(), activeCollectionId,
+                            session, stage, archiveHeaders, rows, exported);
+                    exported = sourceResult.exported();
+                    skipped += sourceResult.skipped();
+                } catch (IOException failure) {
+                    throw new IOException("Unable to export group '" + safe(groupName)
+                            + "' from collection '" + safe(source.getName()) + "': " + safe(failure.getMessage()), failure);
+                } catch (RuntimeException failure) {
+                    throw new IOException("Unable to export group '" + safe(groupName)
+                            + "' from collection '" + safe(source.getName()) + "': " + safe(failure.getMessage()), failure);
+                }
             }
         } catch (Exception failure) {
             throw failure instanceof IOException io ? io : new IOException("Portable group export failed", failure);
-        } finally {
-            if (zip != null) zip.close();
         }
+
         if (exported == 0) throw new IOException("No locally readable books in the selected group");
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("schema", "metabib.dataset/1");
@@ -189,6 +210,7 @@ public class GroupMetabibExportService {
         header.put("ordering", Map.of("mode", "archive_entry", "direction", "ascending"));
         header.put("processing", Map.of("parse_fb2", false, "archive_content_checksum", Map.of("enabled", false)));
         header.put("archives", archiveHeaders);
+
         Path catalog = stage.resolve("catalog.jsonl");
         try (BufferedWriter out = Files.newBufferedWriter(catalog, StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
@@ -207,10 +229,184 @@ public class GroupMetabibExportService {
         return new ExportResult(target, exported, skipped);
     }
 
-    private void requireCurrentCollection(String id) {
-        var collection = collections.getCurrentCollection();
+    private CollectionExportResult writeCollection(Collection source, Long groupId, String activeCollectionId,
+                                                     CollectionBookReadPort.Session session,
+                                                     Path stage, List<Map<String, Object>> archiveHeaders,
+                                                     BufferedWriter rows, int exportedBefore) throws IOException {
+        int exported = exportedBefore;
+        int skipped = 0;
+        int offset = 0;
+        long knownTotal = -1L;
+        BookPageCursor cursor = null;
+        ZipOutputStream zip = null;
+        ArchiveState archive = null;
+        try {
+            while (true) {
+                if (Thread.currentThread().isInterrupted()) throw new IOException("Portable group export cancelled");
+                requireCurrentCollection(activeCollectionId);
+                BookQuery query = BookQuery.builder()
+                        .groupId(GroupId.fromLong(groupId))
+                        .pagination(Pagination.of(PAGE_SIZE, offset))
+                        .sortBy(SortBy.TITLE)
+                        .direction(SortDirection.ASC)
+                        .build();
+                PageResultHolder page = page(session, query, cursor, knownTotal);
+                if (knownTotal < 0) knownTotal = page.total();
+                if (page.books().isEmpty()) break;
+
+                for (Book book : page.books()) {
+                    if (Thread.currentThread().isInterrupted()) throw new IOException("Portable group export cancelled");
+                    requireCurrentCollection(activeCollectionId);
+                    if (book == null) { skipped++; continue; }
+
+                    Optional<ReadableBook> readable;
+                    try {
+                        readable = readLocalBookData(book, source);
+                    } catch (UncheckedIOException unreadable) {
+                        if (isInterruptedRead(unreadable)) {
+                            throw new IOException("Portable group export cancelled during source open", unreadable);
+                        }
+                        skipped++;
+                        continue;
+                    }
+                    if (readable.isEmpty()) { skipped++; continue; }
+
+                    ReadableBook selected = readable.get();
+                    Book exportBook = selected.book();
+                    try (InputStream in = selected.input()) {
+                        if (zip == null || archive.entries == MAX_ZIP_ENTRIES) {
+                            if (zip != null) {
+                                zip.close();
+                                zip = null;
+                            }
+                            archive = new ArchiveState(archiveHeaders.size(), source.getId(), source.getName());
+                            archiveHeaders.add(archive.descriptor);
+                            zip = new ZipOutputStream(Files.newOutputStream(stage.resolve(archive.zipFile),
+                                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE));
+                        }
+                        String entry = String.format(java.util.Locale.ROOT, "book-%06d.%s",
+                                exported + 1, extension(exportBook));
+                        zip.putNextEntry(new ZipEntry(entry));
+                        long actualBytes = copyBounded(in, zip);
+                        zip.closeEntry();
+                        int index = archive.entries++;
+                        if (entry.endsWith(".fb2")) archive.fb2Entries++;
+                        archive.descriptor.put("entries", archive.entries);
+                        archive.descriptor.put("fb2_entries", archive.fb2Entries);
+                        rows.write(mapper.writeValueAsString(
+                                record(exportBook, source, archive.id, entry, index, actualBytes)));
+                        rows.newLine();
+                        exported++;
+                    }
+                }
+
+                Book last = page.books().stream()
+                        .filter(Objects::nonNull)
+                        .reduce((first, next) -> next)
+                        .orElseThrow(() -> new IOException("Group page contains no cursor-eligible books"));
+                cursor = new BookPageCursor(last.getTitle(), last.getId().asString());
+                if (page.books().size() < PAGE_SIZE) break;
+                if (offset > Integer.MAX_VALUE - page.books().size()) {
+                    throw new IOException("Too many group entries");
+                }
+                offset += page.books().size();
+            }
+            return new CollectionExportResult(exported, skipped);
+        } finally {
+            if (zip != null) zip.close();
+        }
+    }
+
+    private static PageResultHolder page(CollectionBookReadPort.Session session, BookQuery query,
+                                         BookPageCursor cursor, long knownTotal) {
+        var page = knownTotal < 0
+                ? session.findPage(query)
+                : session.findTitlePageByCursor(query, cursor, BookPageDirection.AFTER, knownTotal);
+        return new PageResultHolder(page.content(), page.totalElements());
+    }
+
+    private Collection requireCurrentCollection(String id) {
+        Collection collection = collections.getCurrentCollection();
         if (collection == null || !id.equals(collection.getId())) {
             throw new IllegalStateException("Collection changed during group export");
+        }
+        return collection;
+    }
+
+    /**
+     * Resolve relative resources against the collection currently being exported,
+     * never against the application's active collection. Older catalog rows may
+     * lack books.collection_root while the registered collection still has a root.
+     */
+    /**
+     * Prefer a locally available physical artifact, not the logical book's preferred
+     * artifact blindly: the preferred format may be remote while another format is local.
+     * Each local candidate is opened in turn so a stale path does not hide a readable copy.
+     */
+    private Optional<ReadableBook> readLocalBookData(Book book, Collection source) {
+        List<BookArtifact> artifacts = book.getArtifacts();
+        if (artifacts == null || artifacts.isEmpty()) {
+            return readBookData(book, source).map(input -> new ReadableBook(book, input));
+        }
+
+        String preferredId = book.getPreferredArtifactId();
+        List<BookArtifact> localCandidates = artifacts.stream()
+                .filter(BookArtifact::isAvailable)
+                .sorted(Comparator.comparing(artifact -> !artifact.getId().equals(preferredId)))
+                .toList();
+        UncheckedIOException lastFailure = null;
+        for (BookArtifact artifact : localCandidates) {
+            Book candidate = book.withArtifacts(artifacts, artifact.getId());
+            try {
+                Optional<InputStream> input = readBookData(candidate, source);
+                if (input.isPresent()) return Optional.of(new ReadableBook(candidate, input.get()));
+            } catch (UncheckedIOException unreadable) {
+                if (isInterruptedRead(unreadable)) throw unreadable;
+                lastFailure = unreadable;
+            }
+        }
+        if (lastFailure != null) throw lastFailure;
+        return Optional.empty();
+    }
+
+    private static boolean isInterruptedRead(UncheckedIOException unreadable) {
+        return Thread.currentThread().isInterrupted()
+                || unreadable.getCause() instanceof java.io.InterruptedIOException
+                || unreadable.getCause() instanceof java.nio.channels.ClosedByInterruptException;
+    }
+
+    private Optional<InputStream> readBookData(Book book, Collection source) {
+        String bookRoot = book.getCollectionRoot();
+        if (bookRoot == null || bookRoot.isBlank()) {
+            if (source.getRootFolder() != null) {
+                return resources.readBookData(book.getFileName(), book.getFolder(),
+                        source.getRootFolder().toString(), book.getArchiveEntry());
+            }
+            // Never resolve a relative legacy path against the process working directory:
+            // that could accidentally read a similarly named file from another collection.
+            if (isAbsolutePath(book.getFileName())) {
+                Path absoluteFile = Path.of(book.getFileName()).toAbsolutePath().normalize();
+                Path parent = absoluteFile.getParent();
+                if (parent == null) return Optional.empty();
+                return resources.readBookData(absoluteFile.getFileName().toString(), "", parent.toString(),
+                        book.getArchiveEntry());
+            }
+            if (isAbsolutePath(book.getFolder())) {
+                // Treat the absolute folder as the containment root so a relative
+                // filename containing ".." cannot escape it.
+                return resources.readBookData(book.getFileName(), "", book.getFolder(), book.getArchiveEntry());
+            }
+            return Optional.empty();
+        }
+        return resources.readBookData(book);
+    }
+
+    private static boolean isAbsolutePath(String value) {
+        if (value == null || value.isBlank()) return false;
+        try {
+            return Path.of(value).isAbsolute();
+        } catch (InvalidPathException invalid) {
+            return false;
         }
     }
 
@@ -229,15 +425,19 @@ public class GroupMetabibExportService {
     private static String extension(Book book) {
         String name = book.hasArchiveEntry() ? book.getArchiveEntry() : book.getFileName();
         int dot = name == null ? -1 : name.lastIndexOf('.');
-        String ext = dot < 0 ? "bin" : name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
-        return ext.matches("[a-z0-9]{1,8}") ? ext : "bin";
+        String ext = dot < 0 ? "" : name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
+        if (ext.matches("[a-z0-9]{1,8}")) return ext;
+        String artifactFormat = book.getPreferredArtifact().map(BookArtifact::getFormat).orElse("");
+        artifactFormat = artifactFormat == null ? "" : artifactFormat.toLowerCase(java.util.Locale.ROOT);
+        return artifactFormat.matches("[a-z0-9]{1,8}") ? artifactFormat : "bin";
     }
 
     private static Object claim(Object value) {
-        return Map.of("observation", "local", "value", value);
+        return Map.of("observation", "db", "value", value);
     }
 
-    private static Map<String, Object> record(Book book, String zipId, String entryName, int index, long actualBytes) {
+    private static Map<String, Object> record(Book book, Collection source, String zipId,
+                                              String entryName, int index, long actualBytes) {
         Map<String, Object> bibliographic = new LinkedHashMap<>();
         bibliographic.put("title", List.of(claim(book.getTitle())));
         if (book.getLanguage() != null) bibliographic.put("language", List.of(claim(book.getLanguage().value())));
@@ -251,8 +451,6 @@ public class GroupMetabibExportService {
                     "last_name", safe(author.getLastName()))));
         }
         bibliographic.put("authors", authors);
-        // The legacy catalog stores translator display text, not structured name
-        // parts. Preserve that text without guessing first/middle/last names.
         if (book.getTranslators() != null && !book.getTranslators().isBlank())
             bibliographic.put("translators", List.of(claim(Map.of("display_name", book.getTranslators()))));
         if (book.getKeywords() != null && !book.getKeywords().isBlank()) {
@@ -264,8 +462,26 @@ public class GroupMetabibExportService {
         }
         List<Object> genres = new ArrayList<>();
         for (var genre : book.getGenres()) {
-            String code = genre.getFb2Code();
-            if (code != null && !code.isBlank()) genres.add(claim(Map.of("code", code)));
+            String sourceCode = genre.getId() == null ? "" : safe(genre.getId().asString());
+            String fb2Code = safe(genre.getFb2Code());
+            String importCode = !fb2Code.isBlank() ? fb2Code : sourceCode;
+            if (importCode.isBlank()) continue;
+
+            // Keep the established FB2 import code while retaining the source
+            // collection's stable code, display name and hierarchy. Two libraries
+            // can legitimately disagree about the label for the same genre code;
+            // separate records plus their collection provenance preserve that conflict.
+            Map<String, Object> genreValue = new LinkedHashMap<>();
+            genreValue.put("code", importCode);
+            if (!sourceCode.isBlank()) genreValue.put("source_code", sourceCode);
+            if (genre.getName() != null && !genre.getName().isBlank()) {
+                genreValue.put("name", genre.getName());
+            }
+            if (genre.getParentId() != null) {
+                genreValue.put("parent_code", genre.getParentId().asString());
+            }
+            if (!fb2Code.isBlank()) genreValue.put("fb2_code", fb2Code);
+            genres.add(claim(genreValue));
         }
         bibliographic.put("genres", genres);
         if (book.getSeries() != null && !book.getSeries().isBlank()) {
@@ -286,9 +502,13 @@ public class GroupMetabibExportService {
         if (book.getLibraryRate() > 0) catalog.put("rating", List.of(claim(book.getLibraryRate())));
         if (book.isDeleted()) catalog.put("deleted", List.of(claim("deleted")));
         List<Object> identities = new ArrayList<>();
-        identities.add(Map.of("scheme", "mhl-source-book", "value", book.getId().asString(), "observation", "local"));
+        // Book IDs are unique only inside one collection database. Scope the local
+        // identity by collection ID so two independent libraries cannot claim the
+        // same (dataset, scheme, external_id) key during import.
+        String sourceBookIdentity = source.getId().length() + ":" + source.getId() + ":" + book.getId().asString();
+        identities.add(Map.of("scheme", "mhl-source-book", "value", sourceBookIdentity, "observation", "db"));
         if (book.getLibId() != null && book.getLibId().matches("[0-9]{1,18}")) {
-            identities.add(Map.of("scheme", "mhl-source-libid", "value", book.getLibId(), "observation", "local"));
+            identities.add(Map.of("scheme", "mhl-source-libid", "value", book.getLibId(), "observation", "db"));
         }
         String media = switch (extension(book)) {
             case "fb2" -> "application/fb2+xml";
@@ -299,16 +519,24 @@ public class GroupMetabibExportService {
             default -> "application/octet-stream";
         };
         Map<String, Object> artifact = Map.of("name", entryName, "media_type", media,
-                // Use the actual streamed byte count, not potentially stale DB metadata.
                 "size", List.of(claim(actualBytes)),
                 "occurrences", List.of(Map.of("archive", zipId, "entry", entryName, "index", index)));
+        Map<String, Object> locator = new LinkedHashMap<>();
+        locator.put("kind", "archive_entry");
+        locator.put("source", zipId);
+        locator.put("index", index);
+        locator.put("collection_id", source.getId());
+        Map<String, Object> databaseObservation = Map.of(
+                "id", "db", "source", source.getId(), "kind", "database_book", "status", "present");
+        Map<String, Object> archiveObservation = Map.of(
+                "id", "archive", "source", zipId, "kind", "archive_entry", "status", "present",
+                "locator", Map.of("entry", entryName, "index", index));
         return Map.of(
                 "schema", "metabib.dataset_record/1",
-                "record", Map.of("library", "mhl-portable",
-                        "locator", Map.of("kind", "archive_entry", "source", zipId, "index", index)),
+                "record", Map.of("library", source.getName(), "locator", locator),
                 "identities", Map.of("catalog", identities),
                 "artifacts", List.of(artifact),
-                "observations", List.of(Map.of("id", "local")),
+                "observations", List.of(databaseObservation, archiveObservation),
                 "claims", Map.of("bibliographic", bibliographic, "publication", publication, "catalog", catalog),
                 "issues", List.of());
     }
@@ -332,6 +560,10 @@ public class GroupMetabibExportService {
         });
     }
 
+    private record ReadableBook(Book book, InputStream input) { }
+    private record PageResultHolder(List<Book> books, long total) { }
+    private record CollectionExportResult(int exported, int skipped) { }
+
     private static final class ArchiveState {
         final String id;
         final String zipFile;
@@ -339,15 +571,16 @@ public class GroupMetabibExportService {
         int entries;
         int fb2Entries;
 
-        ArchiveState(int ordinal) {
+        ArchiveState(int ordinal, String collectionId, String collectionName) {
             this.id = String.format(java.util.Locale.ROOT, "zip-%04d", ordinal + 1);
             this.zipFile = String.format(java.util.Locale.ROOT, "books-%04d.zip", ordinal + 1);
             descriptor.put("id", id);
             descriptor.put("name", zipFile);
             descriptor.put("ordinal", ordinal);
+            descriptor.put("collection_id", collectionId);
+            descriptor.put("collection_name", collectionName);
             descriptor.put("entries", 0);
             descriptor.put("fb2_entries", 0);
         }
-
     }
 }

@@ -4,9 +4,9 @@
 
 ## Як отримати саме перевірений ZIP
 
-1. Відкрийте GitHub Actions → **V34 Windows test-only portable**, виберіть успішний запуск на гілці `master`. Після злиття початкового workflow він запускається автоматично; надалі його можна запустити вручну через `workflow_dispatch`.
-2. У розділі Artifacts завантажте `v34-test-only-windows-portable-<40-значний-SHA>`. У ньому ZIP Portable, `SHA256SUMS`, двічі перевірений `release-candidate-integrity-windows.json` і звіт Unicode Portable smoke.
-3. На Windows перевірте SHA-256 ZIP командою `Get-FileHash -Algorithm SHA256 .\<ім'я-архіву>.zip` та звірте з `SHA256SUMS`. Перевірте, що `candidateSha` в JSON збігається з SHA в назві артефакту та запуску GitHub Actions.
+1. Відкрийте GitHub Actions → **V34 Windows test-only portable**. Workflow запускається автоматично для змін у `master` та для PR до `master`, які зачіпають код, тести або файли пакування Portable. Для PR він checkout-ить точний `head.sha`, а не merge ref; `workflow_dispatch` також дозволяє вручну вибрати гілку-кандидат.
+2. Успішний PR-запуск має створити артефакт `v34-test-only-windows-portable-<40-значний-head-SHA>`. У ньому ZIP Portable, `SHA256SUMS`, двічі перевірений `release-candidate-integrity-windows.json` і звіт Unicode Portable smoke.
+3. На Windows перевірте SHA-256 ZIP командою `Get-FileHash -Algorithm SHA256 .\<ім'я-архіву>.zip` та звірте з `SHA256SUMS`. Перевірте, що `candidateSha` в JSON збігається з SHA в назві артефакту та з `head.sha` PR на момент запуску.
 4. Розпакуйте ZIP у **новий тестовий каталог**. `MyHomeLib.exe` містить власний Java 21 runtime. Не запускайте цей кандидат поверх робочого встановлення чи бази.
 
 ## Послідовність першого живого тесту

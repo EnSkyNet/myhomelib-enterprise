@@ -26,8 +26,28 @@ on:
       - tools/release-candidate-integrity.py
       - tools/stage23-cross-platform-release-check.py
       - tools/provision-test-portable-fbc.ps1
-      # Retest packaged Windows Portable when the incoming-folder SQLite backlog
-      # fix changes; do not publish a release or bypass the production Maven gate.
+      - myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/collection/watch/IncomingFolderWatchAdapter.java
+      - myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/collection/watch/IncomingFolderWatchAdapterTest.java
+  pull_request:
+    branches:
+      - master
+    paths:
+      - .github/workflows/windows-test-portable.yml
+      - 'myhomelib-*/src/main/**'
+      - 'myhomelib-*/src/test/**'
+      - pom.xml
+      - .mvn/**
+      - mvnw
+      - smoke-portable.ps1
+      - smoke-desktop.ps1
+      - package-portable.ps1
+      - package-desktop.ps1
+      - checksums.ps1
+      - tools/smoke-runtime-tools.ps1
+      - tools/windows-acceptance-harness-check.py
+      - tools/release-candidate-integrity.py
+      - tools/stage23-cross-platform-release-check.py
+      - tools/provision-test-portable-fbc.ps1
       - myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/collection/watch/IncomingFolderWatchAdapter.java
       - myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/collection/watch/IncomingFolderWatchAdapterTest.java
   workflow_dispatch:
@@ -42,13 +62,16 @@ concurrency:
 jobs:
   portable:
     name: Verify and build Windows test-only Portable
-    if: github.ref == 'refs/heads/master'
     runs-on: windows-latest
     timeout-minutes: 120
+    env:
+      MHL_CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - name: Checkout exact source candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up JDK 21 with Maven cache
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
@@ -146,12 +169,12 @@ jobs:
         shell: pwsh
         run: |
           $manifest = 'target/release-candidate-integrity/release-candidate-integrity-windows.json'
-          python tools/release-candidate-integrity.py --root . --dist dist --platform windows --candidate-sha "$env:GITHUB_SHA" --out $manifest
+          python tools/release-candidate-integrity.py --root . --dist dist --platform windows --candidate-sha "$env:MHL_CANDIDATE_SHA" --out $manifest
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/release-candidate-integrity.py --verify --root . --dist dist --platform windows --candidate-sha "$env:GITHUB_SHA" --out $manifest
+          python tools/release-candidate-integrity.py --verify --root . --dist dist --platform windows --candidate-sha "$env:MHL_CANDIDATE_SHA" --out $manifest
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "### Windows Portable — TEST ONLY" >> $env:GITHUB_STEP_SUMMARY
-          "Candidate SHA: $env:GITHUB_SHA" >> $env:GITHUB_STEP_SUMMARY
+          "Candidate SHA: $env:MHL_CANDIDATE_SHA" >> $env:GITHUB_STEP_SUMMARY
           "Windows JDK 21 production verify, native launcher/runtime/Unicode Portable smoke and SHA-256 checks passed." >> $env:GITHUB_STEP_SUMMARY
           "Unsigned test artifact; physical Windows 11 4 GB acceptance is still required." >> $env:GITHUB_STEP_SUMMARY
 
@@ -174,8 +197,8 @@ jobs:
             }
           }
           $record = Get-Content -LiteralPath 'target/release-candidate-integrity/release-candidate-integrity-windows.json' -Raw | ConvertFrom-Json
-          if ($record.candidateSha -ne $env:GITHUB_SHA -or $record.platform -ne 'windows' -or $record.overall -ne 'PASS') {
-            throw "Windows Portable integrity manifest is not PASS-bound to the exact master SHA"
+          if ($record.candidateSha -ne $env:MHL_CANDIDATE_SHA -or $record.platform -ne 'windows' -or $record.overall -ne 'PASS') {
+            throw "Windows Portable integrity manifest is not PASS-bound to the exact source candidate SHA"
           }
           $smoke = Get-Content -LiteralPath 'target/windows-portable-acceptance/portable-smoke.json' -Raw | ConvertFrom-Json
           if ($smoke.overall -ne 'PASS') {
@@ -188,7 +211,7 @@ jobs:
       - name: Upload exact-SHA test-only Windows Portable artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: v34-test-only-windows-portable-${{ github.sha }}
+          name: v34-test-only-windows-portable-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           if-no-files-found: error
           retention-days: 30
           path: |

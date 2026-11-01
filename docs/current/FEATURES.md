@@ -1,7 +1,7 @@
 # MYHOMELIB — Features
 
 **Version:** 8.0.0  
-**Snapshot:** 2 October 2026
+**Snapshot:** 1 November 2026
 
 This document describes the current supported product behavior. Historical stage names are intentionally omitted.
 
@@ -104,6 +104,7 @@ Desktop Reader behavior is intentionally not a claim of complete Android/iOS or 
 ## Export, device and actions
 
 - Export/device profiles.
+- Portable metabib group export can collect books from the selected group across registered SQLite collections whose group names match after NFC normalization, Unicode-whitespace collapsing and case-insensitive comparison; ambiguous matches fail closed. Each source is read through its own read-only SQLite snapshot. Only physically available local artifacts are streamed unchanged into ZIP batches of at most 1,000 books; the export does not download or convert files. Source collection identity, LibID, bibliographic metadata, and genre source labels/hierarchy are retained. Cancellation or failure removes the staging package, and only a complete package is published. A relocated package remains readable through the standard metabib import path.
 - External reader/open-file actions.
 - User scripts/book actions with controlled integration.
 - HTML/list/export paths and copy-between-collections flows present in the application feature set.

@@ -1,5 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
+import com.myhomelibcorp.domain.model.book.Book;
+
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
@@ -258,6 +260,88 @@ public class SqliteBookQueryRepositoryTest {
 
         assertThat(candidates).extracting(book -> book.getId().asString())
                 .contains(keywordId, seriesId);
+    }
+
+    @Test
+    void groupExportHydratesAllBibliographicFieldsAndIncludesDeletedMembers() {
+        jdbc.update("INSERT INTO groups(name, allow_delete) VALUES (?, 1)", "Portable export");
+        Long groupId = jdbc.queryForObject(
+                "SELECT id FROM groups WHERE name = ?", Long.class, "Portable export");
+
+        String activeId = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1";
+        String deletedId = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2";
+        insertFullExportBook(activeId, "A active", 0);
+        insertFullExportBook(deletedId, "B deleted", 1);
+        jdbc.update("INSERT INTO book_groups(book_id, group_id) VALUES (?, ?)", activeId, groupId);
+        jdbc.update("INSERT INTO book_groups(book_id, group_id) VALUES (?, ?)", deletedId, groupId);
+
+        jdbc.update("INSERT INTO authors(id, first_name, middle_name, last_name) VALUES (?,?,?,?)",
+                "11111111-1111-4111-8111-111111111111", "Олександр", "Юрійович", "Король");
+        jdbc.update("INSERT INTO book_authors(book_id, author_id) VALUES (?,?)", activeId, "11111111-1111-4111-8111-111111111111");
+        jdbc.update("INSERT INTO genres(code, name, parent_code, fb2_code) VALUES (?,?,NULL,?)",
+                "literature-export", "Література", "literature");
+        jdbc.update("INSERT INTO genres(code, name, parent_code, fb2_code) VALUES (?,?,?,?)",
+                "fiction-export", "Фантастика", "literature-export", "sf");
+        jdbc.update("INSERT INTO book_genres(book_id, genre_code) VALUES (?,?)", activeId, "fiction-export");
+
+        BookQuery query = BookQuery.builder()
+                .groupId(com.myhomelibcorp.domain.model.valueobject.GroupId.fromLong(groupId))
+                .pagination(Pagination.of(10, 0))
+                .sortBy(com.myhomelibcorp.application.query.common.SortBy.TITLE)
+                .direction(com.myhomelibcorp.application.query.common.SortDirection.ASC)
+                .build();
+
+        var exportPage = repository.findGroupExportPage(jdbc, query);
+        assertThat(exportPage.totalElements()).isEqualTo(2);
+        assertThat(exportPage.content()).hasSize(2);
+
+        Book active = exportPage.content().getFirst();
+        assertThat(active.getTitle()).isEqualTo("A active");
+        assertThat(active.getAnnotation()).isEqualTo("Full annotation");
+        assertThat(active.getKeywords()).isEqualTo("alpha,beta");
+        assertThat(active.getIsbn().value()).isEqualTo("9780306406157");
+        assertThat(active.getPublisher()).isEqualTo("Publisher");
+        assertThat(active.getLibId()).isEqualTo("893718");
+        assertThat(active.getLibraryRate()).isEqualTo(5);
+        assertThat(active.getTranslators()).isEqualTo("Translator");
+        assertThat(active.getCity()).isEqualTo("Kyiv");
+        assertThat(active.getSourceUrl()).isEqualTo("https://example.invalid/book");
+        assertThat(active.getAuthors()).hasSize(1);
+        assertThat(active.getAuthors().getFirst().getLastName()).isEqualTo("Король");
+        assertThat(active.getGenres()).hasSize(1);
+        assertThat(active.getGenres().getFirst().getId().asString()).isEqualTo("fiction-export");
+        assertThat(active.getGenres().getFirst().getName()).isEqualTo("Фантастика");
+        assertThat(active.getGenres().getFirst().getParentId().asString()).isEqualTo("literature-export");
+        assertThat(active.getGenres().getFirst().getFb2Code()).isEqualTo("sf");
+
+        Book deleted = exportPage.content().get(1);
+        assertThat(deleted.getTitle()).isEqualTo("B deleted");
+        assertThat(deleted.isDeleted()).isTrue();
+
+        // The same group query through ordinary browsing still excludes tombstones.
+        assertThat(repository.findPage(query).content()).extracting(Book::getTitle)
+                .containsExactly("A active");
+
+        var continuation = repository.findGroupExportTitlePageByCursor(jdbc, query,
+                new com.myhomelibcorp.application.query.book.BookPageCursor(
+                        active.getTitle(), active.getId().asString()),
+                com.myhomelibcorp.application.query.book.BookPageDirection.AFTER, 2L);
+        assertThat(continuation.content()).hasSize(1);
+        assertThat(continuation.content().getFirst().getTitle()).isEqualTo("B deleted");
+        assertThat(continuation.content().getFirst().isDeleted()).isTrue();
+        assertThat(continuation.content().getFirst().getLibId()).isEqualTo("893718");
+    }
+
+    private void insertFullExportBook(String id, String title, int deleted) {
+        jdbc.update("""
+                INSERT INTO books(
+                    id, title, file_name, folder, archive_entry, file_size, collection_root,
+                    language, year, rate, progress, annotation, keywords, isbn, publisher,
+                    lib_id, library_rate, translators, city, source_url, deleted, local
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+                """, id, title, title.replace(' ', '-') + ".fb2", "", "", 123L, "/library",
+                "uk", 2024, 4, 60, "Full annotation", "alpha,beta", "9780306406157",
+                "Publisher", "893718", 5, "Translator", "Kyiv", "https://example.invalid/book", deleted);
     }
 
     private void insertRecommendationBook(String id, String title, String series, String language, int rate, int deleted) {

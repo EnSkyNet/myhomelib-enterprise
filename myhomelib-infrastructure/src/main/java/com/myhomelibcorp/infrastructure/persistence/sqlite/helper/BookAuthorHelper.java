@@ -67,7 +67,13 @@ public class BookAuthorHelper {
     }
 
     public void loadAuthorsForBooks(List<Book> books) {
-        BookRelationBatchLoader.load(getJdbcTemplate(), books, """
+        loadAuthorsForBooks(getJdbcTemplate(), books);
+    }
+
+    /** Hydrates relationships on the caller's connection (including a read-only collection snapshot). */
+    public void loadAuthorsForBooks(JdbcTemplate jdbcTemplate, List<Book> books) {
+        if (books == null || books.isEmpty()) return;
+        BookRelationBatchLoader.load(jdbcTemplate, books, """
                 SELECT b.book_id, a.id, a.first_name, a.middle_name, a.last_name
                 FROM book_authors b
                 JOIN authors a ON b.author_id = a.id
