@@ -1,6 +1,6 @@
 # Current V34 continuation status — 2026-11-01
 
-Base master: `189c943ad5919656aa13e4688f6ac4282099b3ba`. Release remains **NO-GO** until physical Windows acceptance and the remaining supply-chain scan are complete.
+Implementation baseline: `189c943ad5919656aa13e4688f6ac4282099b3ba`; this validation note is a documentation-only update on top of that tested code. Release remains **NO-GO** until physical Windows acceptance and the remaining supply-chain scan are complete.
 
 ## Merged implementation and validation
 
