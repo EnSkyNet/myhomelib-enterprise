@@ -92,7 +92,7 @@ class GroupMetabibExportRoundTripE2ETest {
         Path jsonl = relocated.resolve("catalog.jsonl");
         try (var imported = new MetabibCatalogReader(new ObjectMapper()).open(jsonl)) {
             assertThat(imported.dataset().schema()).isEqualTo("metabib.dataset/1");
-            assertThat(imported.dataset().records()).isEqualTo(2L);
+            assertThat(imported.dataset().declaredRecords()).isEqualTo(2L);
 
             assertThat(imported.hasNext()).isTrue();
             var firstRecord = imported.next();
