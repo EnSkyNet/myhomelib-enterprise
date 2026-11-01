@@ -107,12 +107,17 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
         @Override
         public Optional<Group> findGroupByName(String name) {
             if (name == null || name.isBlank()) return Optional.empty();
-            List<Group> matches = jdbc.query("""
-                    SELECT * FROM groups
-                    WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
-                    ORDER BY id
-                    LIMIT 2
-                    """, groupRowMapper, name);
+            String normalized = name.strip();
+            List<Group> exact = jdbc.query("SELECT * FROM groups WHERE name = ? ORDER BY id LIMIT 2",
+                    groupRowMapper, normalized);
+            if (exact.size() == 1) return Optional.of(exact.getFirst());
+            if (exact.size() > 1) {
+                throw new IllegalStateException("Ambiguous group name in collection database: " + name);
+            }
+            List<Group> matches = jdbc.query("SELECT * FROM groups ORDER BY id", groupRowMapper).stream()
+                    .filter(group -> group.getName() != null && group.getName().strip().equalsIgnoreCase(normalized))
+                    .limit(2)
+                    .toList();
             if (matches.size() > 1) {
                 throw new IllegalStateException("Ambiguous group name in collection database: " + name);
             }
