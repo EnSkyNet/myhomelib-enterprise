@@ -81,42 +81,58 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
     }
 
     private List<Book> enrichBooks(List<Book> books) {
+        return enrichBooks(getJdbcTemplate(), books);
+    }
+
+    private List<Book> enrichBooks(JdbcTemplate jdbcTemplate, List<Book> books) {
         if (books.isEmpty()) return books;
-        if (bookAuthorHelper != null) bookAuthorHelper.loadAuthorsForBooks(books);
-        if (bookGenreHelper != null) bookGenreHelper.loadGenresForBooks(books);
-        return bookArtifactHelper != null ? bookArtifactHelper.attachArtifacts(books) : books;
+        if (bookAuthorHelper != null) bookAuthorHelper.loadAuthorsForBooks(jdbcTemplate, books);
+        if (bookGenreHelper != null) bookGenreHelper.loadGenresForBooks(jdbcTemplate, books);
+        return bookArtifactHelper != null ? bookArtifactHelper.attachArtifacts(jdbcTemplate, books) : books;
     }
 
     // ===== Пошук з пагінацією =====
 
     @Override
     public PageResult<Book> findPage(BookQuery query) {
-        return loadOffsetPage(query, count(query));
+        return findPage(getJdbcTemplate(), query);
+    }
+
+    /** Executes the same bounded query against an explicit collection snapshot connection. */
+    public PageResult<Book> findPage(JdbcTemplate jdbcTemplate, BookQuery query) {
+        return loadOffsetPage(jdbcTemplate, query, count(jdbcTemplate, query));
     }
 
     @Override
     public PageResult<Book> findPage(BookQuery query, long knownTotal) {
         if (knownTotal < 0) throw new IllegalArgumentException("knownTotal cannot be negative");
-        return loadOffsetPage(query, knownTotal);
+        return loadOffsetPage(getJdbcTemplate(), query, knownTotal);
     }
 
-    private PageResult<Book> loadOffsetPage(BookQuery query, long total) {
+    private PageResult<Book> loadOffsetPage(JdbcTemplate jdbcTemplate, BookQuery query, long total) {
         var sqlQuery = queryBuilder.build(query);
-        List<Book> books = getJdbcTemplate().query(sqlQuery.sql(), bookListRowMapper, sqlQuery.params());
-        books = enrichBooks(books);
+        List<Book> books = jdbcTemplate.query(sqlQuery.sql(), bookListRowMapper, sqlQuery.params());
+        books = enrichBooks(jdbcTemplate, books);
         return toPageResult(query, books, total);
     }
 
     @Override
     public PageResult<Book> findTitlePageByCursor(BookQuery query, BookPageCursor cursor,
                                                   BookPageDirection pageDirection, long knownTotal) {
+        return findTitlePageByCursor(getJdbcTemplate(), query, cursor, pageDirection, knownTotal);
+    }
+
+    /** Executes a TITLE keyset continuation against an explicit collection snapshot connection. */
+    public PageResult<Book> findTitlePageByCursor(JdbcTemplate jdbcTemplate, BookQuery query,
+                                                  BookPageCursor cursor, BookPageDirection pageDirection,
+                                                  long knownTotal) {
         if (knownTotal < 0) throw new IllegalArgumentException("knownTotal cannot be negative");
         var sqlQuery = queryBuilder.buildTitleCursor(query, cursor, pageDirection);
-        List<Book> books = getJdbcTemplate().query(sqlQuery.sql(), bookListRowMapper, sqlQuery.params());
+        List<Book> books = jdbcTemplate.query(sqlQuery.sql(), bookListRowMapper, sqlQuery.params());
         if (pageDirection == BookPageDirection.BEFORE && books.size() > 1) {
             Collections.reverse(books);
         }
-        books = enrichBooks(books);
+        books = enrichBooks(jdbcTemplate, books);
         return toPageResult(query, books, knownTotal);
     }
 
@@ -129,8 +145,13 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
     @Override
     public long count(BookQuery query) {
+        return count(getJdbcTemplate(), query);
+    }
+
+    /** Counts against an explicit collection snapshot connection. */
+    public long count(JdbcTemplate jdbcTemplate, BookQuery query) {
         var sqlQuery = queryBuilder.buildCount(query);
-        Long result = getJdbcTemplate().queryForObject(sqlQuery.sql(), Long.class, sqlQuery.params());
+        Long result = jdbcTemplate.queryForObject(sqlQuery.sql(), Long.class, sqlQuery.params());
         return result != null ? result : 0L;
     }
 
