@@ -1,15 +1,18 @@
 package com.myhomelibcorp.ui.group;
 
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
-import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.repository.CollectionBookReadPort;
+import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
-import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.book.BookPageCursor;
 import com.myhomelibcorp.application.query.book.BookPageDirection;
+import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.ObjectMapper;
@@ -28,6 +31,8 @@ import java.util.zip.ZipFile;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class GroupMetabibExportServiceTest {
@@ -35,30 +40,26 @@ class GroupMetabibExportServiceTest {
 
     @Test
     void exportedGroupOpensAsJsonlPlusZipWithOnlyLocallyReadableBooks() throws Exception {
-        BookQueryRepository repository = mock(BookQueryRepository.class);
-        BookResourcePort resources = mock(BookResourcePort.class);
-        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
-        Collection current = mock(Collection.class);
-        when(current.getId()).thenReturn("collection-A");
-        when(collections.getCurrentCollection()).thenReturn(current);
-
+        Fixture f = fixture("collection-A");
         Book first = book("One", "first.fb2");
         Book second = book("Two", "second.fb2");
         Book missing = book("Missing", "missing.fb2");
-        when(repository.findPage(any(BookQuery.class))).thenReturn(
+        when(f.activeSession.findPage(any(BookQuery.class))).thenReturn(
                 PageResult.of(List.of(first, missing, second), 3, 0, 100));
-        when(resources.readBookData(first)).thenAnswer(inv ->
+        when(f.resources.readBookData(first)).thenAnswer(inv ->
                 Optional.of(new ByteArrayInputStream("first book".getBytes(StandardCharsets.UTF_8))));
-        when(resources.readBookData(second)).thenAnswer(inv ->
+        when(f.resources.readBookData(second)).thenAnswer(inv ->
                 Optional.of(new ByteArrayInputStream("second book".getBytes(StandardCharsets.UTF_8))));
-        when(resources.readBookData(missing)).thenReturn(Optional.empty());
+        when(f.resources.readBookData(missing)).thenReturn(Optional.empty());
 
-        var result = new GroupMetabibExportService(repository, resources, collections)
-                .export(21L, "collection-A", temp);
+        var result = f.exporter.export(21L, "collection-A", temp);
         assertThat(result.exported()).isEqualTo(2);
         assertThat(result.skipped()).isEqualTo(1);
         assertThat(result.folder()).exists();
-        assertThat(Files.list(temp).toList()).containsExactly(result.folder());
+        try (var files = Files.list(temp)) {
+            assertThat(files.toList()).containsExactly(result.folder());
+        }
+
         List<String> records = Files.readAllLines(result.folder().resolve("catalog.jsonl"));
         assertThat(records).hasSize(3);
         ObjectMapper mapper = new ObjectMapper();
@@ -67,8 +68,12 @@ class GroupMetabibExportServiceTest {
         assertThat(header.path("records").asInt()).isEqualTo(2);
         assertThat(header.path("archives").get(0).path("entries").asInt()).isEqualTo(2);
         assertThat(header.path("archives").get(0).path("fb2_entries").asInt()).isEqualTo(2);
+        assertThat(header.path("archives").get(0).path("collection_id").asString()).isEqualTo("collection-A");
         var one = mapper.readTree(records.get(1));
         var two = mapper.readTree(records.get(2));
+        assertThat(one.path("record").path("library").asString()).isEqualTo("Primary");
+        assertThat(one.path("record").path("locator").path("collection_id").asString()).isEqualTo("collection-A");
+        assertThat(one.path("observations").size()).isEqualTo(2);
         assertThat(one.path("record").path("locator").path("index").asInt()).isEqualTo(0);
         assertThat(two.path("record").path("locator").path("index").asInt()).isEqualTo(1);
         assertThat(one.path("claims").path("bibliographic").path("title").get(0).path("value").asString()).isEqualTo("One");
@@ -80,28 +85,75 @@ class GroupMetabibExportServiceTest {
             assertThat(new String(zip.getInputStream(zip.getEntry("book-000002.fb2")).readAllBytes(), StandardCharsets.UTF_8))
                     .isEqualTo("second book");
         }
+        verify(f.activeSession).findGroupById(21L);
+        verify(f.activeSession, never()).findGroupByName(any());
+    }
+
+    @Test
+    void sameNamedGroupsFromSeparateCollectionsAreExportedAsDistinctSources() throws Exception {
+        Fixture f = fixture("collection-A");
+        Collection secondCollection = mock(Collection.class);
+        when(secondCollection.getId()).thenReturn("collection-B");
+        when(secondCollection.getName()).thenReturn("Secondary");
+        when(f.collectionRepository.findAll()).thenReturn(List.of(f.current, secondCollection));
+
+        CollectionBookReadPort.Session secondSession = mock(CollectionBookReadPort.Session.class);
+        when(f.reader.open(secondCollection)).thenReturn(secondSession);
+        when(secondSession.findGroupByName("Shared group"))
+                .thenReturn(Optional.of(new Group(GroupId.fromLong(4L), "shared GROUP", true)));
+
+        Book first = book("From primary", "primary.fb2");
+        Book second = book("From secondary", "secondary.fb2");
+        when(f.activeSession.findPage(any(BookQuery.class))).thenReturn(
+                PageResult.of(List.of(first), 1, 0, 100));
+        when(secondSession.findPage(any(BookQuery.class))).thenReturn(
+                PageResult.of(List.of(second), 1, 0, 100));
+        when(f.resources.readBookData(first)).thenAnswer(inv ->
+                Optional.of(new ByteArrayInputStream("primary".getBytes(StandardCharsets.UTF_8))));
+        when(f.resources.readBookData(second)).thenAnswer(inv ->
+                Optional.of(new ByteArrayInputStream("secondary".getBytes(StandardCharsets.UTF_8))));
+
+        var result = f.exporter.export(21L, "collection-A", temp);
+        assertThat(result.exported()).isEqualTo(2);
+        assertThat(result.skipped()).isZero();
+
+        List<String> lines = Files.readAllLines(result.folder().resolve("catalog.jsonl"));
+        assertThat(lines).hasSize(3);
+        ObjectMapper mapper = new ObjectMapper();
+        var header = mapper.readTree(lines.getFirst());
+        assertThat(header.path("archives")).hasSize(2);
+        assertThat(header.path("archives").get(0).path("collection_id").asString()).isEqualTo("collection-A");
+        assertThat(header.path("archives").get(1).path("collection_id").asString()).isEqualTo("collection-B");
+        assertThat(mapper.readTree(lines.get(1)).path("record").path("library").asString()).isEqualTo("Primary");
+        assertThat(mapper.readTree(lines.get(2)).path("record").path("library").asString()).isEqualTo("Secondary");
+        assertThat(mapper.readTree(lines.get(2)).path("record").path("locator").path("collection_id").asString())
+                .isEqualTo("collection-B");
+
+        try (ZipFile primary = new ZipFile(result.folder().resolve("books-0001.zip").toFile());
+             ZipFile secondary = new ZipFile(result.folder().resolve("books-0002.zip").toFile())) {
+            assertThat(primary.size()).isEqualTo(1);
+            assertThat(secondary.size()).isEqualTo(1);
+            assertThat(new String(primary.getInputStream(primary.getEntry("book-000001.fb2")).readAllBytes(),
+                    StandardCharsets.UTF_8)).isEqualTo("primary");
+            assertThat(new String(secondary.getInputStream(secondary.getEntry("book-000002.fb2")).readAllBytes(),
+                    StandardCharsets.UTF_8)).isEqualTo("secondary");
+        }
+        verify(secondSession).findGroupByName("Shared group");
     }
 
     @Test
     void unreadableSourceOpenIsSkippedWithoutDiscardingOtherValidBooks() throws Exception {
-        BookQueryRepository repository = mock(BookQueryRepository.class);
-        BookResourcePort resources = mock(BookResourcePort.class);
-        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
-        Collection current = mock(Collection.class);
-        when(current.getId()).thenReturn("partial");
-        when(collections.getCurrentCollection()).thenReturn(current);
-
+        Fixture f = fixture("partial");
         Book unreadable = book("Cannot open", "unreadable.fb2");
         Book valid = book("Valid", "valid.fb2");
-        when(repository.findPage(any(BookQuery.class))).thenReturn(
+        when(f.activeSession.findPage(any(BookQuery.class))).thenReturn(
                 PageResult.of(List.of(unreadable, valid), 2, 0, 100));
-        when(resources.readBookData(unreadable)).thenThrow(
+        when(f.resources.readBookData(unreadable)).thenThrow(
                 new UncheckedIOException("local file open failed", new IOException("permission denied")));
-        when(resources.readBookData(valid)).thenAnswer(inv ->
+        when(f.resources.readBookData(valid)).thenAnswer(inv ->
                 Optional.of(new ByteArrayInputStream("valid book".getBytes(StandardCharsets.UTF_8))));
 
-        var result = new GroupMetabibExportService(repository, resources, collections)
-                .export(32L, "partial", temp);
+        var result = f.exporter.export(32L, "partial", temp);
         assertThat(result.exported()).isEqualTo(1);
         assertThat(result.skipped()).isEqualTo(1);
         var records = Files.readAllLines(result.folder().resolve("catalog.jsonl"));
@@ -117,21 +169,32 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
+    void unavailableRegisteredCollectionFailsClosedInsteadOfSilentlyOmittingItsBooks() throws Exception {
+        Fixture f = fixture("primary");
+        Collection secondCollection = mock(Collection.class);
+        when(secondCollection.getId()).thenReturn("unavailable");
+        when(secondCollection.getName()).thenReturn("Unavailable");
+        when(f.collectionRepository.findAll()).thenReturn(List.of(f.current, secondCollection));
+        when(f.reader.open(secondCollection)).thenThrow(new IOException("database file is offline"));
+
+        assertThatThrownBy(() -> f.exporter.export(7L, "primary", temp))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("Unavailable");
+        try (var files = Files.list(temp)) {
+            assertThat(files.toList()).isEmpty();
+        }
+    }
+
+    @Test
     void allFailedSourceOpensDoNotPublishEmptyGroupPackage() throws Exception {
-        BookQueryRepository repository = mock(BookQueryRepository.class);
-        BookResourcePort resources = mock(BookResourcePort.class);
-        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
-        Collection current = mock(Collection.class);
-        when(current.getId()).thenReturn("empty");
-        when(collections.getCurrentCollection()).thenReturn(current);
+        Fixture f = fixture("empty");
         Book unreadable = book("Unopenable", "noaccess.fb2");
-        when(repository.findPage(any(BookQuery.class))).thenReturn(
+        when(f.activeSession.findPage(any(BookQuery.class))).thenReturn(
                 PageResult.of(List.of(unreadable), 1, 0, 100));
-        when(resources.readBookData(unreadable)).thenThrow(
+        when(f.resources.readBookData(unreadable)).thenThrow(
                 new UncheckedIOException(new IOException("cannot open")));
 
-        var exporter = new GroupMetabibExportService(repository, resources, collections);
-        assertThatThrownBy(() -> exporter.export(42L, "empty", temp))
+        assertThatThrownBy(() -> f.exporter.export(42L, "empty", temp))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("No locally readable books");
         try (var files = Files.list(temp)) {
@@ -141,20 +204,14 @@ class GroupMetabibExportServiceTest {
 
     @Test
     void interruptedSourceOpenCancelsExportRatherThanSkippingBook() throws Exception {
-        BookQueryRepository repository = mock(BookQueryRepository.class);
-        BookResourcePort resources = mock(BookResourcePort.class);
-        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
-        Collection current = mock(Collection.class);
-        when(current.getId()).thenReturn("cancelled");
-        when(collections.getCurrentCollection()).thenReturn(current);
+        Fixture f = fixture("cancelled");
         Book unreadable = book("Interrupted", "interrupted.fb2");
-        when(repository.findPage(any(BookQuery.class))).thenReturn(
+        when(f.activeSession.findPage(any(BookQuery.class))).thenReturn(
                 PageResult.of(List.of(unreadable), 1, 0, 100));
-        when(resources.readBookData(unreadable)).thenThrow(
+        when(f.resources.readBookData(unreadable)).thenThrow(
                 new UncheckedIOException(new java.io.InterruptedIOException("cancelled by user")));
 
-        var exporter = new GroupMetabibExportService(repository, resources, collections);
-        assertThatThrownBy(() -> exporter.export(42L, "cancelled", temp))
+        assertThatThrownBy(() -> f.exporter.export(42L, "cancelled", temp))
                 .isInstanceOf(IOException.class).hasMessageContaining("cancelled");
         try (var files = Files.list(temp)) {
             assertThat(files.toList()).isEmpty();
@@ -163,35 +220,26 @@ class GroupMetabibExportServiceTest {
 
     @Test
     void largeGroupUsesTitleKeysetContinuationAndCountsOnlyOnce() throws Exception {
-        BookQueryRepository repository = mock(BookQueryRepository.class);
-        BookResourcePort resources = mock(BookResourcePort.class);
-        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
-        Collection current = mock(Collection.class);
-        when(current.getId()).thenReturn("big");
-        when(collections.getCurrentCollection()).thenReturn(current);
-
+        Fixture f = fixture("big");
         List<Book> first = java.util.stream.IntStream.range(0, 100)
                 .mapToObj(i -> book(String.format(java.util.Locale.ROOT, "Title %03d", i),
                         "b" + i + ".fb2")).toList();
         Book last = book("Title 100", "last.fb2");
-        when(repository.findPage(any(BookQuery.class)))
+        when(f.activeSession.findPage(any(BookQuery.class)))
                 .thenReturn(PageResult.of(first, 101, 0, 100));
-        // Evaluate the mocked book ID before registering Mockito argument matchers.
         BookPageCursor expectedCursor = new BookPageCursor("Title 099", first.getLast().getId().asString());
-        when(repository.findTitlePageByCursor(any(BookQuery.class), eq(expectedCursor),
+        when(f.activeSession.findTitlePageByCursor(any(BookQuery.class), eq(expectedCursor),
                 eq(BookPageDirection.AFTER), eq(101L)))
                 .thenReturn(PageResult.of(List.of(last), 101, 1, 100));
-        when(resources.readBookData(any(Book.class))).thenAnswer(inv ->
+        when(f.resources.readBookData(any(Book.class))).thenAnswer(inv ->
                 Optional.of(new ByteArrayInputStream(new byte[]{42})));
 
-        var exported = new GroupMetabibExportService(repository, resources, collections)
-                .export(99L, "big", temp);
+        var exported = f.exporter.export(99L, "big", temp);
         assertThat(exported.exported()).isEqualTo(101);
         assertThat(exported.skipped()).isZero();
-        verify(repository, times(1)).findPage(any(BookQuery.class));
-        verify(repository, times(1)).findTitlePageByCursor(any(BookQuery.class),
-                any(BookPageCursor.class), eq(BookPageDirection.AFTER), eq(101L));
-        verify(repository, never()).findPage(any(BookQuery.class), anyLong());
+        verify(f.activeSession, times(1)).findPage(any(BookQuery.class));
+        verify(f.activeSession, times(1)).findTitlePageByCursor(any(BookQuery.class),
+                any(BookQuery.class), any(), anyLong());
         try (ZipFile zip = new ZipFile(exported.folder().resolve("books-0001.zip").toFile())) {
             assertThat(zip.size()).isEqualTo(101);
         }
@@ -199,19 +247,13 @@ class GroupMetabibExportServiceTest {
 
     @Test
     void archiveBoundaryAtOneThousandEntriesProducesTwoImportableZipBatches() throws Exception {
-        BookQueryRepository repository = mock(BookQueryRepository.class);
-        BookResourcePort resources = mock(BookResourcePort.class);
-        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
-        Collection current = mock(Collection.class);
-        when(current.getId()).thenReturn("batch");
-        when(collections.getCurrentCollection()).thenReturn(current);
-
+        Fixture f = fixture("batch");
         List<Book> items = java.util.stream.IntStream.range(0, 1001)
                 .mapToObj(i -> book(String.format(java.util.Locale.ROOT, "Book %04d", i),
                         "book" + i + ".fb2")).toList();
-        when(repository.findPage(any(BookQuery.class))).thenReturn(
+        when(f.activeSession.findPage(any(BookQuery.class))).thenReturn(
                 PageResult.of(items.subList(0, 100), 1001, 0, 100));
-        when(repository.findTitlePageByCursor(any(BookQuery.class), any(BookPageCursor.class),
+        when(f.activeSession.findTitlePageByCursor(any(BookQuery.class), any(BookPageCursor.class),
                 eq(BookPageDirection.AFTER), eq(1001L))).thenAnswer(inv -> {
             BookPageCursor cursor = inv.getArgument(1);
             int lastIndex = java.util.stream.IntStream.range(0, items.size())
@@ -221,17 +263,15 @@ class GroupMetabibExportServiceTest {
             return PageResult.of(items.subList(start, Math.min(start + 100, items.size())),
                     1001, start / 100, 100);
         });
-        when(resources.readBookData(any(Book.class)))
+        when(f.resources.readBookData(any(Book.class)))
                 .thenAnswer(inv -> Optional.of(new ByteArrayInputStream(new byte[]{65})));
 
-        var result = new GroupMetabibExportService(repository, resources, collections)
-                .export(15L, "batch", temp);
+        var result = f.exporter.export(15L, "batch", temp);
         assertThat(result.exported()).isEqualTo(1001);
         assertThat(result.skipped()).isZero();
-        verify(repository, times(1)).findPage(any(BookQuery.class));
-        verify(repository, times(10)).findTitlePageByCursor(any(BookQuery.class),
+        verify(f.activeSession, times(1)).findPage(any(BookQuery.class));
+        verify(f.activeSession, times(10)).findTitlePageByCursor(any(BookQuery.class),
                 any(BookPageCursor.class), eq(BookPageDirection.AFTER), eq(1001L));
-        verify(repository, never()).findPage(any(BookQuery.class), anyLong());
         try (ZipFile first = new ZipFile(result.folder().resolve("books-0001.zip").toFile());
              ZipFile second = new ZipFile(result.folder().resolve("books-0002.zip").toFile())) {
             assertThat(first.size()).isEqualTo(1000);
@@ -248,19 +288,13 @@ class GroupMetabibExportServiceTest {
 
     @Test
     void interruptedFileCopyCannotPublishPartialPortableCollection() throws Exception {
-        BookQueryRepository repository = mock(BookQueryRepository.class);
-        BookResourcePort resources = mock(BookResourcePort.class);
-        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
-        Collection current = mock(Collection.class);
-        when(current.getId()).thenReturn("A");
-        when(collections.getCurrentCollection()).thenReturn(current);
+        Fixture f = fixture("A");
         Book book = book("Failing", "broken.fb2");
-        when(repository.findPage(any(BookQuery.class))).thenReturn(PageResult.of(List.of(book), 1, 0, 100));
-        when(resources.readBookData(book)).thenReturn(Optional.of(new InputStream() {
+        when(f.activeSession.findPage(any(BookQuery.class))).thenReturn(PageResult.of(List.of(book), 1, 0, 100));
+        when(f.resources.readBookData(book)).thenReturn(Optional.of(new InputStream() {
             @Override public int read() throws IOException { throw new IOException("source unreadable"); }
         }));
-        var exporter = new GroupMetabibExportService(repository, resources, collections);
-        assertThatThrownBy(() -> exporter.export(7L, "A", temp))
+        assertThatThrownBy(() -> f.exporter.export(7L, "A", temp))
                 .isInstanceOf(IOException.class).hasMessageContaining("source unreadable");
         try (var files = Files.list(temp)) {
             assertThat(files.toList()).isEmpty();
@@ -269,16 +303,30 @@ class GroupMetabibExportServiceTest {
 
     @Test
     void rejectingAChangedCollectionDoesNotCreateDestination() {
-        BookQueryRepository repository = mock(BookQueryRepository.class);
-        BookResourcePort resources = mock(BookResourcePort.class);
-        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
-        Collection current = mock(Collection.class);
-        when(current.getId()).thenReturn("old");
-        when(collections.getCurrentCollection()).thenReturn(current);
-        var exporter = new GroupMetabibExportService(repository, resources, collections);
-        assertThatThrownBy(() -> exporter.export(5L, "new", temp))
+        Fixture f = fixture("old");
+        assertThatThrownBy(() -> f.exporter.export(5L, "new", temp))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("Collection changed");
-        verifyNoInteractions(resources, repository);
+        verifyNoInteractions(f.resources, f.reader, f.collectionRepository);
+    }
+
+    private Fixture fixture(String collectionId) {
+        BookResourcePort resources = mock(BookResourcePort.class);
+        CollectionLifecyclePort lifecycle = mock(CollectionLifecyclePort.class);
+        CollectionRepository collectionRepository = mock(CollectionRepository.class);
+        CollectionBookReadPort reader = mock(CollectionBookReadPort.class);
+        CollectionBookReadPort.Session activeSession = mock(CollectionBookReadPort.Session.class);
+        Collection current = mock(Collection.class);
+        when(current.getId()).thenReturn(collectionId);
+        when(current.getName()).thenReturn("Primary");
+        when(lifecycle.getCurrentCollection()).thenReturn(current);
+        when(collectionRepository.findAll()).thenReturn(List.of(current));
+        when(reader.open(current)).thenReturn(activeSession);
+        when(activeSession.findGroupById(anyLong())).thenAnswer(inv -> {
+            Long id = inv.getArgument(0);
+            return Optional.of(new Group(GroupId.fromLong(id), "Shared group", false));
+        });
+        return new Fixture(reader, collectionRepository, resources, lifecycle, current, activeSession,
+                new GroupMetabibExportService(reader, collectionRepository, resources, lifecycle));
     }
 
     private static Book book(String title, String fileName) {
@@ -290,4 +338,12 @@ class GroupMetabibExportServiceTest {
         when(book.getGenres()).thenReturn(List.of());
         return book;
     }
+
+    private record Fixture(CollectionBookReadPort reader,
+                           CollectionRepository collectionRepository,
+                           BookResourcePort resources,
+                           CollectionLifecyclePort lifecycle,
+                           Collection current,
+                           CollectionBookReadPort.Session activeSession,
+                           GroupMetabibExportService exporter) { }
 }
