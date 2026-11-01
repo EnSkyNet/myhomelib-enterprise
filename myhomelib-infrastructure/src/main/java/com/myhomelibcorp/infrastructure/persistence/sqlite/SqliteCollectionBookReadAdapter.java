@@ -57,8 +57,11 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
             SafeFilePublication.requireSafeRegularFile(database, "cross-collection group source database");
             try (Statement statement = connection.createStatement()) {
                 statement.execute("PRAGMA query_only = ON");
-                statement.execute("BEGIN");
             }
+            // Xerial SQLiteConnection.rollback() rejects calls while JDBC auto-commit
+            // is enabled. Let the driver own the read transaction so close() can
+            // reliably release the snapshot on every exit path.
+            connection.setAutoCommit(false);
             SingleConnectionDataSource dataSource = new SingleConnectionDataSource(connection, true);
             JdbcTemplate jdbc = new JdbcTemplate(dataSource);
             int initialDataVersion = dataVersion(connection);
@@ -105,12 +108,8 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
         public Optional<Group> findGroupByName(String name) {
             if (name == null || name.isBlank()) return Optional.empty();
             String normalized = name.strip();
-            List<Group> exact = jdbc.query("SELECT * FROM groups WHERE name = ? ORDER BY id LIMIT 2",
-                    groupRowMapper, normalized);
-            if (exact.size() == 1) return Optional.of(exact.getFirst());
-            if (exact.size() > 1) {
-                throw new IllegalStateException("Ambiguous group name in collection database: " + name);
-            }
+            // Resolve all case/whitespace variants together. Returning an exact-case
+            // match early would hide a second logical group named "shared" beside "Shared".
             List<Group> matches = jdbc.query("SELECT * FROM groups ORDER BY id", groupRowMapper).stream()
                     .filter(group -> group.getName() != null && group.getName().strip().equalsIgnoreCase(normalized))
                     .limit(2)
@@ -124,14 +123,14 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
         @Override
         public PageResult<Book> findPage(BookQuery query) {
             requireGroupQuery(query);
-            return bookQueries.findPage(jdbc, query);
+            return bookQueries.findGroupExportPage(jdbc, query);
         }
 
         @Override
         public PageResult<Book> findTitlePageByCursor(BookQuery query, BookPageCursor cursor,
                                                       BookPageDirection direction, long knownTotal) {
             requireGroupQuery(query);
-            return bookQueries.findTitlePageByCursor(jdbc, query, cursor, direction, knownTotal);
+            return bookQueries.findGroupExportTitlePageByCursor(jdbc, query, cursor, direction, knownTotal);
         }
 
         private void requireGroupQuery(BookQuery query) {
