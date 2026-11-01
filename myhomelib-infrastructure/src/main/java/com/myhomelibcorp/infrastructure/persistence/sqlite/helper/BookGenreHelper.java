@@ -67,7 +67,13 @@ public class BookGenreHelper {
     }
 
     public void loadGenresForBooks(List<Book> books) {
-        BookRelationBatchLoader.load(getJdbcTemplate(), books, """
+        loadGenresForBooks(getJdbcTemplate(), books);
+    }
+
+    /** Hydrates relationships on the caller's connection (including a read-only collection snapshot). */
+    public void loadGenresForBooks(JdbcTemplate jdbcTemplate, List<Book> books) {
+        if (books == null || books.isEmpty()) return;
+        BookRelationBatchLoader.load(jdbcTemplate, books, """
                 SELECT bg.book_id, g.code, g.name, g.parent_code, g.fb2_code
                 FROM book_genres bg
                 JOIN genres g ON bg.genre_code = g.code
