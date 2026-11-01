@@ -168,7 +168,8 @@ public class GroupMetabibExportService {
                     }
 
                     CollectionExportResult sourceResult = writeCollection(
-                            source, sourceGroup.getId().asLong(), session, stage, archiveHeaders, rows, exported);
+                            source, sourceGroup.getId().asLong(), activeCollectionId,
+                            session, stage, archiveHeaders, rows, exported);
                     exported = sourceResult.exported();
                     skipped += sourceResult.skipped();
                 } catch (IOException failure) {
@@ -218,7 +219,7 @@ public class GroupMetabibExportService {
         return new ExportResult(target, exported, skipped);
     }
 
-    private CollectionExportResult writeCollection(Collection source, Long groupId,
+    private CollectionExportResult writeCollection(Collection source, Long groupId, String activeCollectionId,
                                                      CollectionBookReadPort.Session session,
                                                      Path stage, List<Map<String, Object>> archiveHeaders,
                                                      BufferedWriter rows, int exportedBefore) throws IOException {
@@ -232,6 +233,7 @@ public class GroupMetabibExportService {
         try {
             while (true) {
                 if (Thread.currentThread().isInterrupted()) throw new IOException("Portable group export cancelled");
+                requireCurrentCollection(activeCollectionId);
                 BookQuery query = BookQuery.builder()
                         .groupId(GroupId.fromLong(groupId))
                         .pagination(Pagination.of(PAGE_SIZE, offset))
@@ -244,6 +246,7 @@ public class GroupMetabibExportService {
 
                 for (Book book : page.books()) {
                     if (Thread.currentThread().isInterrupted()) throw new IOException("Portable group export cancelled");
+                    requireCurrentCollection(activeCollectionId);
                     if (book == null) { skipped++; continue; }
 
                     Optional<InputStream> input;
