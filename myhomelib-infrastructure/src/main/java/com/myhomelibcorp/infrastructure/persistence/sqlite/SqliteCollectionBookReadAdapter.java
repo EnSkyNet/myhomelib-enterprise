@@ -67,7 +67,6 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
             if (connection != null) {
                 try { connection.close(); } catch (SQLException closeError) { error.addSuppressed(closeError); }
             }
-            if (error instanceof IOException io) throw io;
             throw new IOException("Unable to open read-only collection database: " + database, error);
         }
     }
