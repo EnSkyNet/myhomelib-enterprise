@@ -103,6 +103,6 @@ class SqliteCollectionBookReadAdapterTest {
 
     private Collection collection(Path database) {
         return new Collection("collection-" + database.getFileName(), "Test collection",
-                temp.toString(), database.toString(), CollectionType.LOCAL, null, true);
+                temp.toString(), database.toString(), CollectionType.FB2_LOCAL, null, true);
     }
 }
