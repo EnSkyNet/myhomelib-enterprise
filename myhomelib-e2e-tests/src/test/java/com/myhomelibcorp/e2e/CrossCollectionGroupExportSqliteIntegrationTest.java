@@ -64,7 +64,8 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
         Files.writeString(rootB.resolve("b.fb2"), bytesB, StandardCharsets.UTF_8);
 
         String bookIdA = UUID.randomUUID().toString();
-        String bookIdB = UUID.randomUUID().toString();
+        // Independent collection databases may contain the same local UUID.
+        String bookIdB = bookIdA;
         long activeGroupId = createCollectionDatabase(databaseA, rootA, 3L, "Спільна група", bookIdA, "a.fb2",
                 "Книга з колекції А", "893718", "genre-a", "Фантастика — А", bytesA.length());
         createCollectionDatabase(databaseB, rootB, 9L, "спільна ГРУПА", bookIdB, "b.fb2",
