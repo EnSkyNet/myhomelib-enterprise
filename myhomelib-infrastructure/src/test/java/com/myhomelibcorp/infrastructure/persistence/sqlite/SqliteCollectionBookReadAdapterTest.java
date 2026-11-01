@@ -95,7 +95,7 @@ class SqliteCollectionBookReadAdapterTest {
         try (var session = adapter.open(collection(database))) {
             // The query uses decomposed é and a non-breaking space; stored text uses
             // composed é and repeated ordinary spaces.
-            var match = session.findGroupByName("  CAFE\\u0301\\u00A0 книги  ");
+            var match = session.findGroupByName("  CAFE\u0301\u00A0 книги  ");
             assertThat(match).isPresent();
             assertThat(match.orElseThrow().getId().asLong()).isEqualTo(4L);
         }
