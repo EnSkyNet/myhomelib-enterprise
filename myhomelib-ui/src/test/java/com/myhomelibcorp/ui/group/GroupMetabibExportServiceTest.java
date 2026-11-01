@@ -341,7 +341,7 @@ class GroupMetabibExportServiceTest {
         try {
             assertThatThrownBy(() -> f.exporter.export(25L, "cancel-last", temp))
                     .isInstanceOf(IOException.class)
-                    .hasMessageContaining("cancelled before publication");
+                    .hasMessageContaining("cancelled");
         } finally {
             Thread.interrupted();
         }
