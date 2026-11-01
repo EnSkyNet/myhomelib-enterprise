@@ -177,7 +177,6 @@ class GroupMetabibExportServiceTest {
         Path destination = temp.resolve("Бібліотека-" + "дуже-довгий-".repeat(13))
                 .resolve("експорт-" + "групи-".repeat(9));
         assertThat(destination.toString().length()).isGreaterThan(260);
-        Files.createDirectories(destination);
 
         Book book = book("Довгий шлях — книга", "довгий-шлях.fb2");
         when(f.activeSession.findPage(any(BookQuery.class)))
