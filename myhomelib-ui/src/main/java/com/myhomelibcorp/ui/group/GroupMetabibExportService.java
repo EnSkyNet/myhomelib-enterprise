@@ -27,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
@@ -332,11 +333,27 @@ public class GroupMetabibExportService {
      */
     private Optional<InputStream> readBookData(Book book, Collection source) {
         String bookRoot = book.getCollectionRoot();
-        if ((bookRoot == null || bookRoot.isBlank()) && source.getRootFolder() != null) {
-            return resources.readBookData(book.getFileName(), book.getFolder(),
-                    source.getRootFolder().toString(), book.getArchiveEntry());
+        if (bookRoot == null || bookRoot.isBlank()) {
+            if (source.getRootFolder() != null) {
+                return resources.readBookData(book.getFileName(), book.getFolder(),
+                        source.getRootFolder().toString(), book.getArchiveEntry());
+            }
+            // Never resolve a relative legacy path against the process working directory:
+            // that could accidentally read a similarly named file from another collection.
+            if (!isAbsolutePath(book.getFileName()) && !isAbsolutePath(book.getFolder())) {
+                return Optional.empty();
+            }
         }
         return resources.readBookData(book);
+    }
+
+    private static boolean isAbsolutePath(String value) {
+        if (value == null || value.isBlank()) return false;
+        try {
+            return Path.of(value).isAbsolute();
+        } catch (InvalidPathException invalid) {
+            return false;
+        }
     }
 
     private static long copyBounded(InputStream source, OutputStream target) throws IOException {
