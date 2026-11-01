@@ -3,7 +3,6 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.collection.Collection;
-import com.myhomelibcorp.domain.model.collection.CollectionType;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.GroupRowMapper;
 import org.junit.jupiter.api.Test;
@@ -12,6 +11,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.file.Path;
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
@@ -33,7 +33,7 @@ class SqliteCollectionBookReadAdapterTest {
         Path database = createDatabase("groups.sqlite",
                 "INSERT INTO groups(id, name, allow_delete) VALUES (7, 'Вибране', 0)");
         SqliteBookQueryRepository bookQueries = mock(SqliteBookQueryRepository.class);
-        when(bookQueries.findPage(any(JdbcTemplate.class), any(BookQuery.class))).thenAnswer(invocation -> {
+        when(bookQueries.findGroupExportPage(any(JdbcTemplate.class), any(BookQuery.class))).thenAnswer(invocation -> {
             JdbcTemplate jdbc = invocation.getArgument(0);
             assertThatThrownBy(() -> jdbc.update(
                     "INSERT INTO groups(id, name, allow_delete) VALUES (99, 'must-not-write', 1)"))
@@ -67,7 +67,7 @@ class SqliteCollectionBookReadAdapterTest {
             assertThat(result.next()).isTrue();
             assertThat(result.getInt(1)).isEqualTo(1);
         }
-        verify(bookQueries, times(1)).findPage(any(JdbcTemplate.class), any(BookQuery.class));
+        verify(bookQueries, times(1)).findGroupExportPage(any(JdbcTemplate.class), any(BookQuery.class));
     }
 
     @Test
@@ -83,6 +83,30 @@ class SqliteCollectionBookReadAdapterTest {
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("Ambiguous group name");
         }
+    }
+
+    @Test
+    void readSnapshotDetectsExternalCommitWhileRetainingItsReadTransaction() throws Exception {
+        Path database = createDatabase("changed.sqlite",
+                "INSERT INTO groups(id, name, allow_delete) VALUES (1, 'Snapshot', 1)");
+        try (Connection writer = DriverManager.getConnection("jdbc:sqlite:" + database);
+             Statement statement = writer.createStatement()) {
+            statement.execute("PRAGMA journal_mode = WAL");
+        }
+
+        SqliteCollectionBookReadAdapter adapter = new SqliteCollectionBookReadAdapter(
+                mock(SqliteBookQueryRepository.class), new GroupRowMapper());
+        var session = adapter.open(collection(database));
+        assertThat(session.findGroupByName("Snapshot")).isPresent();
+
+        try (Connection writer = DriverManager.getConnection("jdbc:sqlite:" + database);
+             Statement statement = writer.createStatement()) {
+            statement.executeUpdate("UPDATE groups SET allow_delete = 0 WHERE id = 1");
+        }
+
+        assertThatThrownBy(session::close)
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("changed during portable group export");
     }
 
     private Path createDatabase(String fileName, String... inserts) throws Exception {
@@ -103,6 +127,6 @@ class SqliteCollectionBookReadAdapterTest {
 
     private Collection collection(Path database) {
         return new Collection("collection-" + database.getFileName(), "Test collection",
-                temp.toString(), database.toString(), CollectionType.FB2_LOCAL, null, true);
+                temp, database.toString(), 0, null, null, null, null, null);
     }
 }
