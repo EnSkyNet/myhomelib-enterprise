@@ -4,6 +4,8 @@ import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecycle
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.query.book.BookQuery;
+import com.myhomelibcorp.application.query.book.BookPageCursor;
+import com.myhomelibcorp.application.query.book.BookPageDirection;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -160,7 +162,7 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
-    void largeGroupReusesFirstTotalInsteadOfCountingForEveryPage() throws Exception {
+    void largeGroupUsesTitleKeysetContinuationAndCountsOnlyOnce() throws Exception {
         BookQueryRepository repository = mock(BookQueryRepository.class);
         BookResourcePort resources = mock(BookResourcePort.class);
         CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
@@ -173,7 +175,9 @@ class GroupMetabibExportServiceTest {
         Book last = book("Last", "last.fb2");
         when(repository.findPage(any(BookQuery.class)))
                 .thenReturn(PageResult.of(first, 101, 0, 100));
-        when(repository.findPage(any(BookQuery.class), eq(101L)))
+        when(repository.findTitlePageByCursor(any(BookQuery.class),
+                eq(new BookPageCursor("Title 99", first.getLast().getId().asString())),
+                eq(BookPageDirection.AFTER), eq(101L)))
                 .thenReturn(PageResult.of(List.of(last), 101, 1, 100));
         when(resources.readBookData(any(Book.class))).thenAnswer(inv ->
                 Optional.of(new ByteArrayInputStream(new byte[]{42})));
@@ -183,7 +187,9 @@ class GroupMetabibExportServiceTest {
         assertThat(exported.exported()).isEqualTo(101);
         assertThat(exported.skipped()).isZero();
         verify(repository, times(1)).findPage(any(BookQuery.class));
-        verify(repository, times(1)).findPage(any(BookQuery.class), eq(101L));
+        verify(repository, times(1)).findTitlePageByCursor(any(BookQuery.class),
+                any(BookPageCursor.class), eq(BookPageDirection.AFTER), eq(101L));
+        verify(repository, never()).findPage(any(BookQuery.class), anyLong());
         try (ZipFile zip = new ZipFile(exported.folder().resolve("books-0001.zip").toFile())) {
             assertThat(zip.size()).isEqualTo(101);
         }
@@ -199,14 +205,19 @@ class GroupMetabibExportServiceTest {
         when(collections.getCurrentCollection()).thenReturn(current);
 
         List<Book> items = java.util.stream.IntStream.range(0, 1001)
-                .mapToObj(i -> book("Book " + i, "book" + i + ".fb2")).toList();
+                .mapToObj(i -> book(String.format(java.util.Locale.ROOT, "Book %04d", i),
+                        "book" + i + ".fb2")).toList();
         when(repository.findPage(any(BookQuery.class))).thenReturn(
                 PageResult.of(items.subList(0, 100), 1001, 0, 100));
-        when(repository.findPage(any(BookQuery.class), eq(1001L))).thenAnswer(inv -> {
-            BookQuery query = inv.getArgument(0);
-            int offset = query.pagination().offset();
-            return PageResult.of(items.subList(offset, Math.min(offset + 100, items.size())),
-                    1001, offset / 100, 100);
+        when(repository.findTitlePageByCursor(any(BookQuery.class), any(BookPageCursor.class),
+                eq(BookPageDirection.AFTER), eq(1001L))).thenAnswer(inv -> {
+            BookPageCursor cursor = inv.getArgument(1);
+            int lastIndex = java.util.stream.IntStream.range(0, items.size())
+                    .filter(i -> items.get(i).getId().asString().equals(cursor.id()))
+                    .findFirst().orElseThrow();
+            int start = lastIndex + 1;
+            return PageResult.of(items.subList(start, Math.min(start + 100, items.size())),
+                    1001, start / 100, 100);
         });
         when(resources.readBookData(any(Book.class)))
                 .thenAnswer(inv -> Optional.of(new ByteArrayInputStream(new byte[]{65})));
@@ -216,7 +227,9 @@ class GroupMetabibExportServiceTest {
         assertThat(result.exported()).isEqualTo(1001);
         assertThat(result.skipped()).isZero();
         verify(repository, times(1)).findPage(any(BookQuery.class));
-        verify(repository, times(10)).findPage(any(BookQuery.class), eq(1001L));
+        verify(repository, times(10)).findTitlePageByCursor(any(BookQuery.class),
+                any(BookPageCursor.class), eq(BookPageDirection.AFTER), eq(1001L));
+        verify(repository, never()).findPage(any(BookQuery.class), anyLong());
         try (ZipFile first = new ZipFile(result.folder().resolve("books-0001.zip").toFile());
              ZipFile second = new ZipFile(result.folder().resolve("books-0002.zip").toFile())) {
             assertThat(first.size()).isEqualTo(1000);
