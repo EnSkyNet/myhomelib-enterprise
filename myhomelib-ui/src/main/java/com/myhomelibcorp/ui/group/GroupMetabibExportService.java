@@ -177,6 +177,9 @@ public class GroupMetabibExportService {
                 } catch (IllegalStateException ambiguousGroup) {
                     throw new IOException("Cannot resolve group '" + safe(groupName)
                             + "' unambiguously in collection '" + safe(source.getName()) + "'", ambiguousGroup);
+                } catch (RuntimeException failure) {
+                    throw new IOException("Unable to export group '" + safe(groupName)
+                            + "' from collection '" + safe(source.getName()) + "': " + safe(failure.getMessage()), failure);
                 }
             }
         } catch (Exception failure) {
