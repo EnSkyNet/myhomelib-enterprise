@@ -7,6 +7,8 @@ import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.genre.Genre;
+import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -71,7 +73,13 @@ class GroupMetabibExportRoundTripE2ETest {
         when(first.getCity()).thenReturn("Київ");
         when(first.getKeywords()).thenReturn("наука, фантастика");
         when(first.getTranslators()).thenReturn("А. Б. Перекладач");
+        when(first.getGenres()).thenReturn(List.of(new Genre(
+                new GenreId("fiction-primary"), "Фантастика — бібліотека A",
+                new GenreId("literature-primary"), "sf")));
         Book second = book("Second collection sample", "second.fb2", "999001");
+        when(second.getGenres()).thenReturn(List.of(new Genre(
+                new GenreId("science-fiction-secondary"), "Наукова фантастика — бібліотека B",
+                new GenreId("literature-secondary"), "sf")));
 
         when(primarySession.findPage(any(BookQuery.class))).thenReturn(
                 PageResult.of(List.of(first), 1, 0, 100));
@@ -114,6 +122,11 @@ class GroupMetabibExportRoundTripE2ETest {
                 assertThat(identity.scheme()).isEqualTo("catalog:mhl-source-libid");
                 assertThat(identity.value()).isEqualTo("893718");
             });
+            assertThat(firstRecord.sourceMetadata().get("metabib.claims.json"))
+                    .contains("\"source_code\":\"fiction-primary\"")
+                    .contains("\"name\":\"Фантастика — бібліотека A\"")
+                    .contains("\"parent_code\":\"literature-primary\"")
+                    .contains("\"fb2_code\":\"sf\"");
 
             assertThat(imported.hasNext()).isTrue();
             var secondRecord = imported.next();
@@ -129,6 +142,11 @@ class GroupMetabibExportRoundTripE2ETest {
                 assertThat(identity.scheme()).isEqualTo("catalog:mhl-source-libid");
                 assertThat(identity.value()).isEqualTo("999001");
             });
+            assertThat(secondRecord.sourceMetadata().get("metabib.claims.json"))
+                    .contains("\"source_code\":\"science-fiction-secondary\"")
+                    .contains("\"name\":\"Наукова фантастика — бібліотека B\"")
+                    .contains("\"parent_code\":\"literature-secondary\"")
+                    .contains("\"fb2_code\":\"sf\"");
 
             try (ZipFile primaryZip = new ZipFile(relocated.resolve(firstRecord.archive()).toFile());
                  ZipFile secondaryZip = new ZipFile(relocated.resolve(secondRecord.archive()).toFile())) {
