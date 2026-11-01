@@ -26,7 +26,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.InvalidPathException;
@@ -131,11 +130,9 @@ public class GroupMetabibExportService {
             if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
                 throw new IOException("Export destination already exists");
             }
-            try {
-                Files.move(stage, target, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException unsupported) {
-                Files.move(stage, target);
-            }
+            // Never downgrade to a non-atomic move: unsupported filesystems must
+            // fail closed rather than risk exposing a partially published package.
+            Files.move(stage, target, StandardCopyOption.ATOMIC_MOVE);
             published = true;
             return result;
         } finally {
