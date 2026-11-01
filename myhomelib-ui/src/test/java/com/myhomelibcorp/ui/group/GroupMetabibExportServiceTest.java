@@ -9,9 +9,12 @@ import com.myhomelibcorp.application.query.book.BookPageDirection;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.book.BookArtifact;
+import com.myhomelibcorp.domain.model.book.BookArtifactState;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -317,6 +320,38 @@ class GroupMetabibExportServiceTest {
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("No locally readable books");
         verifyNoInteractions(f.resources);
+    }
+
+    @Test
+    void remotePreferredArtifactDoesNotHideAnAvailableLocalAlternative() throws Exception {
+        Fixture f = fixture("artifacts");
+        Book logical = book("Book with remote preferred artifact", "remote.epub");
+        Book localBook = book("Book with remote preferred artifact", "local.fb2");
+        when(localBook.getId()).thenReturn(logical.getId());
+        when(localBook.getTitle()).thenReturn(logical.getTitle());
+
+        BookArtifact remote = BookArtifact.builder()
+                .id("remote-artifact").name("remote.epub").format("epub")
+                .file(new BookFile("remote.epub", "", "", 20L, "/remote-root"))
+                .remote(true).local(false).state(BookArtifactState.REMOTE_ONLY).build();
+        BookArtifact local = BookArtifact.builder()
+                .id("local-artifact").name("local.fb2").format("fb2")
+                .file(new BookFile("local.fb2", "", "", 30L, "/fixture-root"))
+                .remote(false).local(true).state(BookArtifactState.AVAILABLE).build();
+        List<BookArtifact> artifacts = List.of(remote, local);
+        when(logical.getArtifacts()).thenReturn(artifacts);
+        when(logical.getPreferredArtifactId()).thenReturn("remote-artifact");
+        when(logical.withArtifacts(artifacts, "local-artifact")).thenReturn(localBook);
+        when(f.activeSession.findPage(any(BookQuery.class)))
+                .thenReturn(PageResult.of(List.of(logical), 1, 0, 100));
+        when(f.resources.readBookData(localBook)).thenReturn(Optional.of(
+                new ByteArrayInputStream("local bytes".getBytes(StandardCharsets.UTF_8))));
+
+        var result = f.exporter.export(23L, "artifacts", temp);
+
+        assertThat(result.exported()).isEqualTo(1);
+        verify(f.resources).readBookData(localBook);
+        verify(f.resources, never()).readBookData(logical);
     }
 
     @Test
