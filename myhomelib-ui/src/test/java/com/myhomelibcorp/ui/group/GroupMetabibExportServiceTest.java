@@ -323,6 +323,23 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
+    void activeCollectionChangeDuringBookIterationIsNotReportedAsGroupAmbiguity() throws Exception {
+        Fixture f = fixture("A");
+        Collection changed = mock(Collection.class);
+        when(changed.getId()).thenReturn("B");
+        when(f.lifecycle.getCurrentCollection()).thenReturn(f.current, f.current, f.current, changed);
+        Book book = book("Changing collection", "changing.fb2");
+        when(f.activeSession.findPage(any(BookQuery.class)))
+                .thenReturn(PageResult.of(List.of(book), 1, 0, 100));
+
+        assertThatThrownBy(() -> f.exporter.export(7L, "A", temp))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("Collection changed during group export")
+                .hasMessageNotContaining("unambiguously");
+        verifyNoInteractions(f.resources);
+    }
+
+    @Test
     void rejectingAChangedCollectionDoesNotCreateDestination() {
         Fixture f = fixture("old");
         assertThatThrownBy(() -> f.exporter.export(5L, "new", temp))
