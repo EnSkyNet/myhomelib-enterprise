@@ -86,6 +86,37 @@ class SqliteCollectionBookReadAdapterTest {
     }
 
     @Test
+    void normalizesRepeatedUnicodeWhitespaceAndCanonicalCompositionBeforeMatching() throws Exception {
+        Path database = createDatabase("normalized.sqlite",
+                "INSERT INTO groups(id, name, allow_delete) VALUES (4, 'Café  книги', 1)");
+        SqliteCollectionBookReadAdapter adapter = new SqliteCollectionBookReadAdapter(
+                mock(SqliteBookQueryRepository.class), new GroupRowMapper());
+
+        try (var session = adapter.open(collection(database))) {
+            // The query uses decomposed é and a non-breaking space; stored text uses
+            // composed é and repeated ordinary spaces.
+            var match = session.findGroupByName("  CAFE\\u0301\\u00A0 книги  ");
+            assertThat(match).isPresent();
+            assertThat(match.orElseThrow().getId().asLong()).isEqualTo(4L);
+        }
+    }
+
+    @Test
+    void rejectsGroupsThatDifferOnlyByRepeatedInternalWhitespace() throws Exception {
+        Path database = createDatabase("ambiguous-whitespace.sqlite",
+                "INSERT INTO groups(id, name, allow_delete) VALUES (1, 'Science Fiction', 0)",
+                "INSERT INTO groups(id, name, allow_delete) VALUES (2, 'Science  Fiction', 1)");
+        SqliteCollectionBookReadAdapter adapter = new SqliteCollectionBookReadAdapter(
+                mock(SqliteBookQueryRepository.class), new GroupRowMapper());
+
+        try (var session = adapter.open(collection(database))) {
+            assertThatThrownBy(() -> session.findGroupByName("SCIENCE Fiction"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Ambiguous group name");
+        }
+    }
+
+    @Test
     void readSnapshotDetectsExternalCommitWhileRetainingItsReadTransaction() throws Exception {
         Path database = createDatabase("changed.sqlite",
                 "INSERT INTO groups(id, name, allow_delete) VALUES (1, 'Snapshot', 1)");
