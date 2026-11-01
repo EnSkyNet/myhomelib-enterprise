@@ -84,6 +84,13 @@ public class GroupMetabibExportService {
         if (registered == null || registered.stream().noneMatch(c -> c != null && collectionId.equals(c.getId()))) {
             throw new IOException("The active collection is not present in the registered collection list");
         }
+        Set<String> registeredIds = new HashSet<>();
+        for (Collection item : registered) {
+            if (item == null || item.getId() == null || item.getId().isBlank()
+                    || !registeredIds.add(item.getId())) {
+                throw new IOException("Registered collections contain a blank or duplicate collection ID");
+            }
+        }
 
         Set<String> collectionIds = new HashSet<>();
         List<Collection> sources = new ArrayList<>();
@@ -166,7 +173,7 @@ public class GroupMetabibExportService {
                     skipped += sourceResult.skipped();
                 } catch (IOException failure) {
                     throw new IOException("Unable to export group '" + safe(groupName)
-                            + "' from collection '" + safe(source.getName()) + "'", failure);
+                            + "' from collection '" + safe(source.getName()) + "': " + safe(failure.getMessage()), failure);
                 } catch (IllegalStateException ambiguousGroup) {
                     throw new IOException("Cannot resolve group '" + safe(groupName)
                             + "' unambiguously in collection '" + safe(source.getName()) + "'", ambiguousGroup);
