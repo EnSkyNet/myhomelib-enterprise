@@ -239,7 +239,7 @@ class GroupMetabibExportServiceTest {
         assertThat(exported.skipped()).isZero();
         verify(f.activeSession, times(1)).findPage(any(BookQuery.class));
         verify(f.activeSession, times(1)).findTitlePageByCursor(any(BookQuery.class),
-                any(BookQuery.class), any(), anyLong());
+                any(BookPageCursor.class), eq(BookPageDirection.AFTER), eq(101L));
         try (ZipFile zip = new ZipFile(exported.folder().resolve("books-0001.zip").toFile())) {
             assertThat(zip.size()).isEqualTo(101);
         }
