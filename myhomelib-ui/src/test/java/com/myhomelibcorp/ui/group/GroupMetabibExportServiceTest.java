@@ -198,7 +198,7 @@ class GroupMetabibExportServiceTest {
 
     @Test
     void duplicateRegisteredCollectionIdsFailBeforeOpeningAnySourceDatabase() throws Exception {
-        Fixture f = fixture("duplicate-id");
+        Fixture f = fixture("collection-A");
         Collection duplicate = mock(Collection.class);
         when(duplicate.getId()).thenReturn("collection-A");
         when(duplicate.getName()).thenReturn("Duplicate registration");
@@ -220,6 +220,8 @@ class GroupMetabibExportServiceTest {
         when(secondCollection.getId()).thenReturn("unavailable");
         when(secondCollection.getName()).thenReturn("Unavailable");
         when(f.collectionRepository.findAll()).thenReturn(List.of(f.current, secondCollection));
+        when(f.activeSession.findPage(any(BookQuery.class)))
+                .thenReturn(PageResult.of(List.of(), 0, 0, 100));
         when(f.reader.open(secondCollection)).thenThrow(new IOException("database file is offline"));
 
         assertThatThrownBy(() -> f.exporter.export(7L, "primary", temp))
@@ -396,8 +398,10 @@ class GroupMetabibExportServiceTest {
         Fixture f = fixture("artifacts");
         Book logical = book("Book with remote preferred artifact", "remote.epub");
         Book localBook = book("Book with remote preferred artifact", "local.fb2");
-        when(localBook.getId()).thenReturn(logical.getId());
-        when(localBook.getTitle()).thenReturn(logical.getTitle());
+        var logicalId = logical.getId();
+        var logicalTitle = logical.getTitle();
+        when(localBook.getId()).thenReturn(logicalId);
+        when(localBook.getTitle()).thenReturn(logicalTitle);
 
         BookArtifact remote = BookArtifact.builder()
                 .id("remote-artifact").name("remote.epub").format("epub")
