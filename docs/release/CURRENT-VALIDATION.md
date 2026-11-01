@@ -1,15 +1,27 @@
-# Current V34 continuation status — 2026-10-19
+# Current V34 continuation status — 2026-11-01
 
-Base master: `cc69f26b86a34a391d0ebce2fe36e84a7e206512`. Release remains **NO-GO**.
+Base master: `189c943ad5919656aa13e4688f6ac4282099b3ba`. Release remains **NO-GO** until physical Windows acceptance and the remaining supply-chain scan are complete.
 
-- PR #25/#26 and crash-worker UTF-8 (#28, superseding #27) are merged; PR #31/#34 add recovery optimization and synchronized release history. Do not repeat those fixes.
-- [Full Windows CI #39289554488](https://github.com/EnSkyNet/myhomelib-enterprise/actions/runs/39289554488) succeeded for its PR #29 candidate. Artifact `12204958396` inspected: 706 report XML files under the isolated `reports` tree, **2582 tests / 0 failures / 0 errors / 29 skipped (2553 executed)**. Duplicate artifact copies outside that tree were not counted. Annotation JavaFX 5/5, device-profile export 8/8, ZIP normalization 4/4, process execution 10/10, process workspace cleanup 5/5, SQLite crash recovery 1/1. This is CI evidence for that candidate, not exact-current master or installed-app acceptance.
-- Local full verify of aggregate `3f79cd0a` failed at updater tests because `sh` is absent from PATH. The same failure was reproduced on current master: **4 tests / 2 failures / 1 error / 0 skipped**. No full-build PASS is claimed for this run.
-- Updater test fixtures now launch the current JDK directly, with a bounded health-marker handshake and child exit cleanup. Signature, publication, healthy startup, rollback and stale failed-update evidence assertions remain. On native Windows 11/NTFS/JDK 21, `tools/windows-isolated.ps1 -RunRoot C:/Temp/mhl-v34-master-updater-green -Mode Maven -LocalRepository <isolated-cache> -MavenArguments @('-o','-pl','myhomelib-updater','-am','test')` passes **4/4**, 0 skipped, 3.767 s Maven elapsed. Production updater is unchanged; explicit Windows CI coverage added.
-- Follow-up full verify at `870ebbbe` passed updater but reproduced the same shell dependency in bootstrap ApplicationUpdateInstallerTest (1 failure + 1 error among 3 tests). Its fixture now uses the same bounded current-JDK approach. Combined targeted reactor `-pl myhomelib-bootstrap,myhomelib-updater -am -Dtest=ApplicationUpdaterMainTest,ApplicationUpdateInstallerTest -Dsurefire.failIfNoSpecifiedTests=false test`: **7/7 PASS**, 0 skipped, 8.464 s, evidence `C:/Temp/mhl-v34-bootstrap-updater-green`. Full verification must be rerun on the follow-up commit.
-- NVD credentials now pass preflight. [Current master SCA #39312074179](https://github.com/EnSkyNet/myhomelib-enterprise/actions/runs/39312074179) is scanning at inspection; no completed vulnerability assessment is claimed. Fast gate, source integrity, Windows Organizer and DPAPI succeeded; CodeQL #39312074120 succeeded.
-- Performance #21 and #30 pass the JVM suite under Xvfb but hit the 45-minute job limit in SQLite scale tests. A local SQLite 3.45.1 probe reproduced the filtered author query taking about 21 seconds at 100k books; investigation is ongoing. No performance acceptance claimed.
-- Installed-app GUI, the user's specific book, real Calibre/device, portable and MSI/EXE lifecycle acceptance remain open. Only isolated synthetic data was used.
+## Merged implementation and validation
+
+- PR #155 adds a real-Windows SQLite recovery-checkpoint probe; PR #156 adds the crash-between-marker-and-version-commit regression.
+- PR #160 adds cross-collection group export: each registered collection is read through an isolated read-only SQLite session; the selected group is resolved by name in other collections; export retains collection provenance, metadata and archive-entry identity; ZIP batches are capped at 1,000 books; cancellation, ambiguous group matches and incomplete snapshots fail closed.
+- PR #161 adds genre-taxonomy compatibility: source-scoped conflict codes, preserved original codes/provenance, category hydration and deterministic `db → fb2 → fbd` reader priority.
+- Exact PR #161 candidate `164f51935d0fa06f16fdf74b1ba2b0cc8a290dc7`: Windows root Maven `clean verify` **2,891 tests / 0 failures / 0 errors / 29 skipped** ([run #41330447465](https://github.com/EnSkyNet/myhomelib-enterprise/actions/runs/41330447465)); PR CI PASS ([#41330447562](https://github.com/EnSkyNet/myhomelib-enterprise/actions/runs/41330447562)); CodeQL PASS ([#41330447505](https://github.com/EnSkyNet/myhomelib-enterprise/actions/runs/41330447505)); Windows test-only Portable PASS ([#41330447431](https://github.com/EnSkyNet/myhomelib-enterprise/actions/runs/41330447431)).
+- Post-merge checks for exact master `189c943ad5919656aa13e4688f6ac4282099b3ba`: PR CI PASS ([#41332468356](https://github.com/EnSkyNet/myhomelib-enterprise/actions/runs/41332468356)); CodeQL PASS ([#41332468401](https://github.com/EnSkyNet/myhomelib-enterprise/actions/runs/41332468401)); Windows test-only Portable PASS ([#41332468362](https://github.com/EnSkyNet/myhomelib-enterprise/actions/runs/41332468362)).
+- The Portable artifact is test-only and unsigned. Its CI host is Windows Server 2025, not the user's physical Windows 11 / 4 GB system. It is not a release candidate.
+
+## Remaining external gates
+
+- Issue #132 remains open for physical Windows 11 x64 / 4 GB acceptance with a real library and the user's actual books. CI and synthetic Windows smoke do not replace this.
+- Dependabot PRs #138–#141 have successful Windows full-verify and CodeQL checks (and the #141 performance baseline), but their blocking Dependency-Check job stops before scanning because `NVD_API_KEY` is absent from the **Dependabot** secret context. Configure that key in repository Settings → Secrets and variables → Dependabot, then rerun the four scans. Missing NVD data must not be treated as zero vulnerabilities; no SCA clearance is claimed.
+- Issue #136 (vendored EPUBCheck HttpClient5/JBIG2 dependency triage) remains open; the staging/update utility is not evidence that the shipped HttpClient5 binary has been upgraded or that the CVE is resolved.
+- Installed-app GUI, physical device/Calibre and installer lifecycle acceptance remain external gates.
+
+## Branch consolidation
+
+- PR #162 was closed as superseded, not merged: current master already contains TITLE/ID keyset continuation, the group-membership SQL guard and large-export pagination regressions through PR #160.
+- Four Dependabot PRs #138–#141 remain open. All other reviewed branch tips are either contained in master or have been individually verified as superseded; cleanup is prepared separately and must be run with an explicit confirmation.
 
 The following sections are preserved historical evidence.
 
