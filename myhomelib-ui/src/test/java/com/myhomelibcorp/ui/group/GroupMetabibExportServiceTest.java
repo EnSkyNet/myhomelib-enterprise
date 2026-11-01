@@ -287,6 +287,20 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
+    void relativeLegacyPathWithoutAnyTrustedCollectionRootIsSkipped() throws Exception {
+        Fixture f = fixture("no-root");
+        Book book = book("No trusted root", "relative.fb2");
+        when(book.getCollectionRoot()).thenReturn("");
+        when(f.activeSession.findPage(any(BookQuery.class)))
+                .thenReturn(PageResult.of(List.of(book), 1, 0, 100));
+
+        assertThatThrownBy(() -> f.exporter.export(19L, "no-root", temp))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("No locally readable books");
+        verifyNoInteractions(f.resources);
+    }
+
+    @Test
     void legacyRelativeBookPathUsesTheRegisteredSourceCollectionRoot() throws Exception {
         Fixture f = fixture("rooted");
         Path collectionRoot = temp.resolve("source-collection-root");
@@ -372,6 +386,9 @@ class GroupMetabibExportServiceTest {
         when(book.getId()).thenReturn(BookId.generate());
         when(book.getTitle()).thenReturn(title);
         when(book.getFileName()).thenReturn(fileName);
+        when(book.getCollectionRoot()).thenReturn("/fixture-root");
+        when(book.getFolder()).thenReturn("");
+        when(book.getArchiveEntry()).thenReturn("");
         when(book.getAuthors()).thenReturn(List.of());
         when(book.getGenres()).thenReturn(List.of());
         return book;
