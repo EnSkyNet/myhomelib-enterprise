@@ -315,14 +315,19 @@ public class MetabibCatalogReader implements CatalogReader {
                 if (!parsed.isEmpty()) return parsed;
             }
         }
-        // Older producers may omit observation. Retain their codes without
-        // treating an unknown source as an authoritative catalog definition.
+        // As in ClaimsInOrder, observations outside db/fb2/fbd remain a last
+        // resort in their original order, but never become curated catalog data.
         for (JsonNode claim : claims) {
-            if (!text(claim, "observation").isBlank()) continue;
+            String observation = text(claim, "observation").toLowerCase(Locale.ROOT);
+            if (List.of("db", "fb2", "fbd").contains(observation)) continue;
             List<CatalogGenreDefinition> parsed = parseGenreValues(claim.path("value"), false);
             if (!parsed.isEmpty()) return parsed;
         }
         return List.of();
+    }
+
+    private static boolean isUsableGenreCode(String value) {
+        return value != null && value.codePoints().anyMatch(Character::isLetterOrDigit);
     }
 
     private static List<CatalogGenreDefinition> parseGenreValues(JsonNode value, boolean catalog) {
@@ -334,7 +339,7 @@ public class MetabibCatalogReader implements CatalogReader {
         LinkedHashMap<String, CatalogGenreDefinition> definitions = new LinkedHashMap<>();
         for (JsonNode item : values) {
             String code = item != null && item.isObject() ? text(item, "code") : scalarText(item);
-            if (code.isBlank()) continue;
+            if (!isUsableGenreCode(code)) continue;
             String description = item != null && item.isObject() ? text(item, "description") : "";
             String category = item != null && item.isObject() ? text(item, "meta") : "";
             String translatedCode = item != null && item.isObject() ? text(item, "translated_code") : "";

@@ -244,6 +244,27 @@ class MetabibCatalogReaderTest {
         }
     }
 
+
+    @Test
+    void usesUnknownGenreObservationOnlyAsLastResort() throws Exception {
+        String header = """
+                {"schema":"metabib.dataset/1","id":"genre-unknown","record_schema":"metabib.dataset_record/1","library":"test","created":"2026-11-01T00:00:00Z","records":1,"generator":{"name":"test","version":"1"},"normalization":{"model":"metabib.norm/1"},"ordering":{"mode":"database_book_id","direction":"ascending"},"processing":{"parse_fb2":false,"archive_content_checksum":{"enabled":false}},"archives":[]}
+                """;
+        String record = """
+                {"schema":"metabib.dataset_record/1","record":{"library":"test","locator":{"kind":"database_book","source":"db","book_id":3}},"identities":{},"artifacts":[],"observations":[],"claims":{"bibliographic":{"title":[{"value":"Unknown observation"}],"genres":[{"observation":"custom","value":[{"code":"custom-code","description":"Custom label","meta":"Custom category"}]}]},"publication":{},"catalog":{}},"issues":[]}
+                """;
+        Path source = temp.resolve("genre-unknown.jsonl");
+        Files.writeString(source, header + record, StandardCharsets.UTF_8);
+
+        try (CatalogReadSession session = reader.open(source)) {
+            CatalogRecord imported = session.next();
+            assertThat(imported.genres()).containsExactly("custom-code");
+            assertThat(imported.genreDefinitions()).containsExactly(new CatalogGenreDefinition(
+                    "custom-code", "Custom label", "Custom category", "", false));
+            assertThat(session.hasNext()).isFalse();
+        }
+    }
+
     private static String dataset() {
         return """
                 {"schema":"metabib.dataset/1","id":"test","record_schema":"metabib.dataset_record/1","library":"flibusta","created":"2026-08-30T00:00:00Z","records":1,"generator":{"name":"test","version":"1"},"normalization":{"model":"metabib.norm/1"},"ordering":{"mode":"database_book_id","direction":"ascending"},"processing":{"parse_fb2":true,"archive_content_checksum":{"enabled":false}},"archives":[]}
