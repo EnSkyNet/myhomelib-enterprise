@@ -4,6 +4,8 @@ import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecycle
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.query.book.BookQuery;
+import com.myhomelibcorp.application.query.book.BookPageCursor;
+import com.myhomelibcorp.application.query.book.BookPageDirection;
 import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
@@ -94,6 +96,7 @@ public class GroupMetabibExportService {
         int skipped = 0;
         int offset = 0;
         long knownTotal = -1L;
+        BookPageCursor cursor = null;
         ZipOutputStream zip = null;
         ArchiveState archive = null;
         try (BufferedWriter rows = Files.newBufferedWriter(spool, StandardCharsets.UTF_8,
@@ -107,9 +110,11 @@ public class GroupMetabibExportService {
                         .sortBy(SortBy.TITLE)
                         .direction(SortDirection.ASC)
                         .build();
-                // Only the first group page needs COUNT(*). On very large groups,
-                // re-running it for each offset creates avoidable SQLite work.
-                var page = knownTotal < 0 ? books.findPage(query) : books.findPage(query, knownTotal);
+                // The first page obtains the exact total. Continuations use the repository's
+                // indexed TITLE keyset cursor so large exports do not repeatedly scan OFFSET rows.
+                var page = knownTotal < 0
+                        ? books.findPage(query)
+                        : books.findTitlePageByCursor(query, cursor, BookPageDirection.AFTER, knownTotal);
                 if (knownTotal < 0) knownTotal = page.totalElements();
                 if (page.content().isEmpty()) break;
                 for (Book book : page.content()) {
@@ -157,9 +162,11 @@ public class GroupMetabibExportService {
                         exported++;
                     }
                 }
+                Book last = page.content().getLast();
+                cursor = new BookPageCursor(last.getTitle(), last.getId().asString());
                 if (page.content().size() < PAGE_SIZE) break;
-                if (offset > Integer.MAX_VALUE - PAGE_SIZE) throw new IOException("Too many group entries");
-                offset += PAGE_SIZE;
+                if (offset > Integer.MAX_VALUE - page.content().size()) throw new IOException("Too many group entries");
+                offset += page.content().size();
             }
         } catch (Exception failure) {
             throw failure instanceof IOException io ? io : new IOException("Portable group export failed", failure);
