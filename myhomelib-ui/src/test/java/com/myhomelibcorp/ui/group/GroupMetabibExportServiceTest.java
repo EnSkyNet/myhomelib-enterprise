@@ -323,6 +323,34 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
+    void cancellationObservedAtEndOfLastStreamStillPreventsPublication() throws Exception {
+        Fixture f = fixture("cancel-last");
+        Book book = book("Last stream", "last.fb2");
+        InputStream stream = new ByteArrayInputStream("complete bytes".getBytes(StandardCharsets.UTF_8)) {
+            @Override
+            public synchronized int read(byte[] buffer, int offset, int length) {
+                int count = super.read(buffer, offset, length);
+                if (count == -1) Thread.currentThread().interrupt();
+                return count;
+            }
+        };
+        when(f.activeSession.findPage(any(BookQuery.class)))
+                .thenReturn(PageResult.of(List.of(book), 1, 0, 100));
+        when(f.resources.readBookData(book)).thenReturn(Optional.of(stream));
+
+        try {
+            assertThatThrownBy(() -> f.exporter.export(25L, "cancel-last", temp))
+                    .isInstanceOf(IOException.class)
+                    .hasMessageContaining("cancelled before publication");
+        } finally {
+            Thread.interrupted();
+        }
+        try (var files = Files.list(temp)) {
+            assertThat(files.toList()).isEmpty();
+        }
+    }
+
+    @Test
     void remotePreferredArtifactDoesNotHideAnAvailableLocalAlternative() throws Exception {
         Fixture f = fixture("artifacts");
         Book logical = book("Book with remote preferred artifact", "remote.epub");
