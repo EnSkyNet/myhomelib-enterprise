@@ -607,7 +607,7 @@ public class GroupMetabibExportService {
         }
     }
 
-    private static String safe(String value)    private static String safe(String value) { return value == null ? "" : value; }
+    private static String safe(String value) { return value == null ? "" : value; }
 
     private static void deleteStagingTree(Path stage) throws IOException {
         if (!Files.exists(stage, LinkOption.NOFOLLOW_LINKS)) return;
