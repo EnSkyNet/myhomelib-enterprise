@@ -18,7 +18,9 @@ import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -147,10 +149,13 @@ public class GroupMetabibExportService {
         int exported = 0;
         int skipped = 0;
         String groupName = null;
+        Map<GenreSourceKey, GenreDefinition> genreDefinitions = new LinkedHashMap<>();
 
         try (BufferedWriter rows = Files.newBufferedWriter(spool, StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
-            for (Collection source : sources) {
+            for (int sourceIndex = 0; sourceIndex < sources.size(); sourceIndex++) {
+                Collection source = sources.get(sourceIndex);
+                int sourceOrdinal = sourceIndex + 1;
                 if (Thread.currentThread().isInterrupted()) {
                     throw new IOException("Portable group export cancelled");
                 }
@@ -182,7 +187,7 @@ public class GroupMetabibExportService {
 
                     CollectionExportResult sourceResult = writeCollection(
                             source, sourceGroup.getId().asLong(), activeCollectionId,
-                            session, stage, archiveHeaders, rows, exported);
+                            session, stage, archiveHeaders, rows, exported, sourceOrdinal, genreDefinitions);
                     exported = sourceResult.exported();
                     skipped += sourceResult.skipped();
                 } catch (IOException failure) {
@@ -211,17 +216,20 @@ public class GroupMetabibExportService {
         header.put("processing", Map.of("parse_fb2", false, "archive_content_checksum", Map.of("enabled", false)));
         header.put("archives", archiveHeaders);
 
+        Map<GenreSourceKey, NormalizedGenre> normalizedGenres = normalizeGenreDefinitions(genreDefinitions);
         Path catalog = stage.resolve("catalog.jsonl");
         try (BufferedWriter out = Files.newBufferedWriter(catalog, StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
             out.write(mapper.writeValueAsString(header));
             out.newLine();
             try (var reader = Files.newBufferedReader(spool, StandardCharsets.UTF_8)) {
-                char[] buffer = new char[8192];
-                int n;
-                while ((n = reader.read(buffer)) >= 0) {
+                String line;
+                while ((line = reader.readLine()) != null) {
                     if (Thread.currentThread().isInterrupted()) throw new IOException("Portable group export cancelled");
-                    out.write(buffer, 0, n);
+                    JsonNode record = mapper.readTree(line);
+                    normalizeGenreClaims(record, normalizedGenres);
+                    out.write(mapper.writeValueAsString(record));
+                    out.newLine();
                 }
             }
         }
@@ -232,7 +240,8 @@ public class GroupMetabibExportService {
     private CollectionExportResult writeCollection(Collection source, Long groupId, String activeCollectionId,
                                                      CollectionBookReadPort.Session session,
                                                      Path stage, List<Map<String, Object>> archiveHeaders,
-                                                     BufferedWriter rows, int exportedBefore) throws IOException {
+                                                     BufferedWriter rows, int exportedBefore, int sourceOrdinal,
+                                                     Map<GenreSourceKey, GenreDefinition> genreDefinitions) throws IOException {
         int exported = exportedBefore;
         int skipped = 0;
         int offset = 0;
@@ -294,7 +303,8 @@ public class GroupMetabibExportService {
                         archive.descriptor.put("entries", archive.entries);
                         archive.descriptor.put("fb2_entries", archive.fb2Entries);
                         rows.write(mapper.writeValueAsString(
-                                record(exportBook, source, archive.id, entry, index, actualBytes)));
+                                record(exportBook, source, archive.id, entry, index, actualBytes,
+                                        sourceOrdinal, genreDefinitions)));
                         rows.newLine();
                         exported++;
                     }
@@ -437,7 +447,8 @@ public class GroupMetabibExportService {
     }
 
     private static Map<String, Object> record(Book book, Collection source, String zipId,
-                                              String entryName, int index, long actualBytes) {
+                                              String entryName, int index, long actualBytes, int sourceOrdinal,
+                                              Map<GenreSourceKey, GenreDefinition> genreDefinitions) {
         Map<String, Object> bibliographic = new LinkedHashMap<>();
         bibliographic.put("title", List.of(claim(book.getTitle())));
         if (book.getLanguage() != null) bibliographic.put("language", List.of(claim(book.getLanguage().value())));
@@ -467,16 +478,21 @@ public class GroupMetabibExportService {
             String importCode = !fb2Code.isBlank() ? fb2Code : sourceCode;
             if (importCode.isBlank()) continue;
 
-            // Keep the established FB2 import code while retaining the source
-            // collection's stable code, display name and hierarchy. Two libraries
-            // can legitimately disagree about the label for the same genre code;
-            // separate records plus their collection provenance preserve that conflict.
+            // Emit standard metabib definition fields and retain source-local
+            // identifiers as extension metadata for lossless provenance.
+            if (sourceCode.isBlank()) sourceCode = importCode;
+            String description = safe(genre.getName()).trim();
+            String category = safe(genre.getParentName()).trim();
+            GenreSourceKey key = new GenreSourceKey(source.getId(), sourceCode);
+            genreDefinitions.putIfAbsent(key, new GenreDefinition(
+                    key, importCode, description, category, sourceOrdinal));
             Map<String, Object> genreValue = new LinkedHashMap<>();
             genreValue.put("code", importCode);
-            if (!sourceCode.isBlank()) genreValue.put("source_code", sourceCode);
-            if (genre.getName() != null && !genre.getName().isBlank()) {
-                genreValue.put("name", genre.getName());
-            }
+            genreValue.put("description", description);
+            genreValue.put("meta", category);
+            genreValue.put("source_collection_id", source.getId());
+            genreValue.put("source_code", sourceCode);
+            if (!description.isBlank()) genreValue.put("name", description);
             if (genre.getParentId() != null) {
                 genreValue.put("parent_code", genre.getParentId().asString());
             }
@@ -541,7 +557,57 @@ public class GroupMetabibExportService {
                 "issues", List.of());
     }
 
-    private static String safe(String value) { return value == null ? "" : value; }
+    private static Map<GenreSourceKey, NormalizedGenre> normalizeGenreDefinitions(
+            Map<GenreSourceKey, GenreDefinition> definitions) {
+        Map<String, Set<GenreSignature>> signatures = new LinkedHashMap<>();
+        Set<String> reserved = new HashSet<>();
+        for (GenreDefinition definition : definitions.values()) {
+            if (definition.code().isBlank()) continue;
+            signatures.computeIfAbsent(definition.code(), ignored -> new HashSet<>())
+                    .add(new GenreSignature(definition.description(), definition.category()));
+            reserved.add(definition.code());
+        }
+        Set<String> conflicts = new HashSet<>();
+        signatures.forEach((code, values) -> {
+            if (values.size() > 1) conflicts.add(code);
+        });
+
+        Map<GenreSourceKey, NormalizedGenre> normalized = new LinkedHashMap<>();
+        for (GenreDefinition definition : definitions.values()) {
+            String code = definition.code();
+            String translatedCode = "";
+            if (!code.isBlank() && conflicts.contains(code)) {
+                String stem = "mhl-" + definition.sourceOrdinal() + "-" + code;
+                String candidate = stem;
+                int suffix = 0;
+                while (reserved.contains(candidate)) candidate = stem + "-" + (++suffix);
+                reserved.add(candidate);
+                code = candidate;
+                translatedCode = definition.code();
+            }
+            normalized.put(definition.key(), new NormalizedGenre(code, translatedCode));
+        }
+        return normalized;
+    }
+
+    private void normalizeGenreClaims(JsonNode record, Map<GenreSourceKey, NormalizedGenre> normalized) {
+        JsonNode claims = record.path("claims").path("bibliographic").path("genres");
+        if (!claims.isArray()) return;
+        for (JsonNode claim : claims) {
+            JsonNode value = claim.path("value");
+            if (!(value instanceof ObjectNode genreValue)) continue;
+            String sourceCollectionId = genreValue.path("source_collection_id").asString();
+            String sourceCode = genreValue.path("source_code").asString();
+            if (sourceCode.isBlank()) sourceCode = genreValue.path("code").asString();
+            NormalizedGenre mapped = normalized.get(new GenreSourceKey(sourceCollectionId, sourceCode));
+            if (mapped == null || mapped.code().isBlank()) continue;
+            genreValue.put("code", mapped.code());
+            if (mapped.translatedCode().isBlank()) genreValue.remove("translated_code");
+            else genreValue.put("translated_code", mapped.translatedCode());
+        }
+    }
+
+    private static String safe(String value)    private static String safe(String value) { return value == null ? "" : value; }
 
     private static void deleteStagingTree(Path stage) throws IOException {
         if (!Files.exists(stage, LinkOption.NOFOLLOW_LINKS)) return;
@@ -563,6 +629,11 @@ public class GroupMetabibExportService {
     private record ReadableBook(Book book, InputStream input) { }
     private record PageResultHolder(List<Book> books, long total) { }
     private record CollectionExportResult(int exported, int skipped) { }
+    private record GenreSourceKey(String collectionId, String sourceCode) { }
+    private record GenreDefinition(GenreSourceKey key, String code, String description,
+                                   String category, int sourceOrdinal) { }
+    private record GenreSignature(String description, String category) { }
+    private record NormalizedGenre(String code, String translatedCode) { }
 
     private static final class ArchiveState {
         final String id;

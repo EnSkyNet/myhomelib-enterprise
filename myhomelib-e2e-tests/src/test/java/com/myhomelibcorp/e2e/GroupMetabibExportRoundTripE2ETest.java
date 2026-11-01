@@ -1,5 +1,6 @@
 package com.myhomelibcorp.e2e;
 
+import com.myhomelibcorp.application.catalog.importing.CatalogGenreDefinition;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.CollectionBookReadPort;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
@@ -75,11 +76,11 @@ class GroupMetabibExportRoundTripE2ETest {
         when(first.getTranslators()).thenReturn("А. Б. Перекладач");
         when(first.getGenres()).thenReturn(List.of(new Genre(
                 new GenreId("fiction-primary"), "Фантастика — бібліотека A",
-                new GenreId("literature-primary"), "sf")));
+                new GenreId("literature-primary"), "sf", "Література A")));
         Book second = book("Second collection sample", "second.fb2", "999001");
         when(second.getGenres()).thenReturn(List.of(new Genre(
                 new GenreId("science-fiction-secondary"), "Наукова фантастика — бібліотека B",
-                new GenreId("literature-secondary"), "sf")));
+                new GenreId("literature-secondary"), "sf", "Література B")));
 
         when(primarySession.findPage(any(BookQuery.class))).thenReturn(
                 PageResult.of(List.of(first), 1, 0, 100));
@@ -115,6 +116,9 @@ class GroupMetabibExportRoundTripE2ETest {
             assertThat(firstRecord.sourceBookId()).contains("Source A", "zip-0001");
             assertThat(firstRecord.archive()).isEqualTo("books-0001.zip");
             assertThat(firstRecord.archiveEntry()).isEqualTo("book-000001.fb2");
+            assertThat(firstRecord.genres()).containsExactly("mhl-1-sf");
+            assertThat(firstRecord.genreDefinitions()).containsExactly(new CatalogGenreDefinition(
+                    "mhl-1-sf", "Фантастика — бібліотека A", "Література A", "sf", true));
             assertThat(relocated.resolve(firstRecord.archive())).isRegularFile();
             assertThat(firstRecord.sourceMetadata()).containsEntry("locator.index", "0")
                     .containsEntry("locator.source", "zip-0001");
@@ -136,6 +140,9 @@ class GroupMetabibExportRoundTripE2ETest {
             assertThat(secondRecord.sourceBookId()).contains("Source B", "zip-0002");
             assertThat(secondRecord.archive()).isEqualTo("books-0002.zip");
             assertThat(secondRecord.archiveEntry()).isEqualTo("book-000002.fb2");
+            assertThat(secondRecord.genres()).containsExactly("mhl-2-sf");
+            assertThat(secondRecord.genreDefinitions()).containsExactly(new CatalogGenreDefinition(
+                    "mhl-2-sf", "Наукова фантастика — бібліотека B", "Література B", "sf", true));
             assertThat(secondRecord.sourceMetadata()).containsEntry("locator.index", "0")
                     .containsEntry("locator.source", "zip-0002");
             assertThat(secondRecord.externalIdentities()).anySatisfy(identity -> {

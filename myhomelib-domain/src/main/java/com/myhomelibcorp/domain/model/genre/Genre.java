@@ -9,12 +9,18 @@ public class Genre {
     private String name;
     private GenreId parentId;
     private String fb2Code;
+    private final String parentName;
 
     public Genre(GenreId id, String name, GenreId parentId, String fb2Code) {
+        this(id, name, parentId, fb2Code, "");
+    }
+
+    public Genre(GenreId id, String name, GenreId parentId, String fb2Code, String parentName) {
         this.id = id;
         this.name = name;
         this.parentId = parentId;
         this.fb2Code = fb2Code;
+        this.parentName = parentName == null ? "" : parentName;
     }
 
     public Genre(String code, String name) {

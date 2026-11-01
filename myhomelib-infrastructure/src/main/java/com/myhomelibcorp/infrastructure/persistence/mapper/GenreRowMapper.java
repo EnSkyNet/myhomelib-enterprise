@@ -21,7 +21,8 @@ public class GenreRowMapper implements RowMapper<Genre> {
                 id,
                 rs.getString("name"),
                 parentId,
-                rs.getString("fb2_code")
+                rs.getString("fb2_code"),
+                rs.getString("parent_name")
         );
     }
 }
