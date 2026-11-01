@@ -82,7 +82,7 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
         }
     }
 
-    private final class ReadSession implements Session {
+    private class ReadSession implements Session {
         private final Path database;
         private final Connection connection;
         private final JdbcTemplate jdbc;
