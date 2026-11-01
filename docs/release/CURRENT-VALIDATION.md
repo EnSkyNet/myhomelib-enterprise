@@ -14,7 +14,7 @@ Implementation baseline: `189c943ad5919656aa13e4688f6ac4282099b3ba`; this valida
 ## Remaining external gates
 
 - Issue #132 remains open for physical Windows 11 x64 / 4 GB acceptance with a real library and the user's actual books. CI and synthetic Windows smoke do not replace this.
-- Dependabot PRs #138–#141 have successful Windows full-verify and CodeQL checks (and the #141 performance baseline), but their blocking Dependency-Check job stops before scanning because `NVD_API_KEY` is absent from the **Dependabot** secret context. Configure that key in repository Settings → Secrets and variables → Dependabot, then rerun the four scans. Missing NVD data must not be treated as zero vulnerabilities; no SCA clearance is claimed.
+- Dependabot PRs #138, #139 and #141 pass full root Maven `clean verify`, CodeQL and the core Windows gates; #141's performance baseline also passes. PR #140 is a workflow-only CodeQL Actions update: its Source Integrity, Fast Gate, DPAPI, organizer and CodeQL/CodeQL Java checks pass; no full root Maven job is defined for that change. All four blocking Dependency-Check jobs stop before scanning because `NVD_API_KEY` is absent from the **Dependabot** secret context. Configure that key in repository Settings → Secrets and variables → Dependabot, then rerun the four scans. Missing NVD data must not be treated as zero vulnerabilities; no SCA clearance is claimed.
 - Issue #136 (vendored EPUBCheck HttpClient5/JBIG2 dependency triage) remains open; the staging/update utility is not evidence that the shipped HttpClient5 binary has been upgraded or that the CVE is resolved.
 - Installed-app GUI, physical device/Calibre and installer lifecycle acceptance remain external gates.
 
