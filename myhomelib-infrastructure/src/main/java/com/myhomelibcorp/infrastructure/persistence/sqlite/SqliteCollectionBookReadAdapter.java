@@ -21,10 +21,10 @@ import org.sqlite.SQLiteConfig;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.text.Normalizer;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.text.Normalizer;
 import java.util.List;
 import java.util.Optional;
 
@@ -136,25 +136,25 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
         }
 
         private static String normalizeGroupName(String value) {
-        if (value == null || value.isEmpty()) return "";
-        String canonical = Normalizer.normalize(value, Normalizer.Form.NFC);
-        StringBuilder normalized = new StringBuilder(canonical.length());
-        boolean pendingSpace = false;
-        for (int offset = 0; offset < canonical.length();) {
-            int codePoint = canonical.codePointAt(offset);
-            offset += Character.charCount(codePoint);
-            if (Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint)) {
-                if (!normalized.isEmpty()) pendingSpace = true;
-                continue;
+            if (value == null || value.isEmpty()) return "";
+            String canonical = Normalizer.normalize(value, Normalizer.Form.NFC);
+            StringBuilder normalized = new StringBuilder(canonical.length());
+            boolean pendingSpace = false;
+            for (int offset = 0; offset < canonical.length();) {
+                int codePoint = canonical.codePointAt(offset);
+                offset += Character.charCount(codePoint);
+                if (Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint)) {
+                    if (!normalized.isEmpty()) pendingSpace = true;
+                    continue;
+                }
+                if (pendingSpace) normalized.append(' ');
+                normalized.appendCodePoint(codePoint);
+                pendingSpace = false;
             }
-            if (pendingSpace) normalized.append(' ');
-            normalized.appendCodePoint(codePoint);
-            pendingSpace = false;
+            return normalized.toString();
         }
-        return normalized.toString();
-    }
 
-    private void requireGroupQuery(BookQuery query) {
+        private void requireGroupQuery(BookQuery query) {
             if (query == null || query.groupId() == null) {
                 throw new IllegalArgumentException("A collection-local group query is required");
             }
