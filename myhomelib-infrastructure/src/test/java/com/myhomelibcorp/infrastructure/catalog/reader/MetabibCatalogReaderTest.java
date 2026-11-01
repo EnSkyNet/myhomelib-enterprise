@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.catalog.reader;
 
 import tools.jackson.databind.ObjectMapper;
 import com.github.luben.zstd.ZstdOutputStream;
+import com.myhomelibcorp.application.catalog.importing.CatalogGenreDefinition;
 import com.myhomelibcorp.application.catalog.importing.CatalogReadSession;
 import com.myhomelibcorp.application.catalog.importing.CatalogRecord;
 import org.junit.jupiter.api.Test;
@@ -202,7 +203,48 @@ class MetabibCatalogReaderTest {
         }
     }
 
-    private static String dataset() {
+
+    @Test
+    void prefersDatabaseGenreDefinitionsAndDoesNotMergeFb2Tags() throws Exception {
+        String header = """
+                {"schema":"metabib.dataset/1","id":"genre-priority","record_schema":"metabib.dataset_record/1","library":"flibusta","created":"2026-11-01T00:00:00Z","records":1,"generator":{"name":"test","version":"1"},"normalization":{"model":"metabib.norm/1"},"ordering":{"mode":"database_book_id","direction":"ascending"},"processing":{"parse_fb2":false,"archive_content_checksum":{"enabled":false}},"archives":[]}
+                """;
+        String record = """
+                {"schema":"metabib.dataset_record/1","record":{"library":"flibusta","locator":{"kind":"database_book","source":"db","book_id":1}},"identities":{},"artifacts":[],"observations":[{"id":"db"},{"id":"fb2"}],"claims":{"bibliographic":{"title":[{"observation":"db","value":"Genre priority"}],"genres":[{"observation":"fb2","value":[{"code":"untrusted_tag","description":"FB2 label","meta":"FB2 category"}]},{"observation":"db","value":[{"code":"mhl-1-sf","description":"Catalog description","meta":"Література","translated_code":"sf"}]}]},"publication":{},"catalog":{}},"issues":[]}
+                """;
+        Path source = temp.resolve("genre-priority.jsonl");
+        Files.writeString(source, header + record, StandardCharsets.UTF_8);
+
+        try (CatalogReadSession session = reader.open(source)) {
+            CatalogRecord imported = session.next();
+            assertThat(imported.genres()).containsExactly("mhl-1-sf");
+            assertThat(imported.genreDefinitions()).containsExactly(new CatalogGenreDefinition(
+                    "mhl-1-sf", "Catalog description", "Література", "sf", true));
+            assertThat(session.hasNext()).isFalse();
+        }
+    }
+
+    @Test
+    void fallsBackToFb2GenresOnlyWhenDatabaseDefinitionIsNotUsable() throws Exception {
+        String header = """
+                {"schema":"metabib.dataset/1","id":"genre-fallback","record_schema":"metabib.dataset_record/1","library":"flibusta","created":"2026-11-01T00:00:00Z","records":1,"generator":{"name":"test","version":"1"},"normalization":{"model":"metabib.norm/1"},"ordering":{"mode":"database_book_id","direction":"ascending"},"processing":{"parse_fb2":false,"archive_content_checksum":{"enabled":false}},"archives":[]}
+                """;
+        String record = """
+                {"schema":"metabib.dataset_record/1","record":{"library":"flibusta","locator":{"kind":"database_book","source":"db","book_id":2}},"identities":{},"artifacts":[],"observations":[{"id":"db"},{"id":"fb2"}],"claims":{"bibliographic":{"title":[{"observation":"db","value":"Genre fallback"}],"genres":[{"observation":"db","value":[{"description":"Missing code"}]},{"observation":"fb2","value":[{"code":"sf","description":"FB2 description","meta":"FB2 category"}]}]},"publication":{},"catalog":{}},"issues":[]}
+                """;
+        Path source = temp.resolve("genre-fallback.jsonl");
+        Files.writeString(source, header + record, StandardCharsets.UTF_8);
+
+        try (CatalogReadSession session = reader.open(source)) {
+            CatalogRecord imported = session.next();
+            assertThat(imported.genres()).containsExactly("sf");
+            assertThat(imported.genreDefinitions()).containsExactly(new CatalogGenreDefinition(
+                    "sf", "FB2 description", "FB2 category", "", false));
+            assertThat(session.hasNext()).isFalse();
+        }
+    }
+
+    private static String dataset() {    private static String dataset() {
         return """
                 {"schema":"metabib.dataset/1","id":"test","record_schema":"metabib.dataset_record/1","library":"flibusta","created":"2026-08-30T00:00:00Z","records":1,"generator":{"name":"test","version":"1"},"normalization":{"model":"metabib.norm/1"},"ordering":{"mode":"database_book_id","direction":"ascending"},"processing":{"parse_fb2":true,"archive_content_checksum":{"enabled":false}},"archives":[]}
                 {"schema":"metabib.dataset_record/1","record":{"library":"flibusta","locator":{"kind":"database_book","source":"db","book_id":42}},"identities":{"catalog":[{"scheme":"flibusta","value":"42","observation":"db"}]},"artifacts":[{"name":"42.fb2","media_type":"application/fb2+xml","checksums":[]}],"observations":[{"id":"db"}],"claims":{"bibliographic":{"title":[{"observation":"db","value":"Book title"}],"authors":[{"observation":"db","value":{"first_name":"Ann|Pipe","middle_name":"","last_name":"Smith","identities":[{"scheme":"flibusta-person","value":"7"}]}}],"language":[{"observation":"db","value":"English"}]},"publication":{},"catalog":{}},"issues":[]}

@@ -217,10 +217,8 @@ public class MetabibCatalogReader implements CatalogReader {
             else if (number.has("text")) sequenceNumber = parseDouble(number.get("text").asString());
         }
 
-        List<String> genres = new ArrayList<>();
-        for (JsonNode value : claimValues(bibliographic, "genres")) {
-            if (value.isObject()) addNonBlank(genres, text(value, "code")); else addNonBlank(genres, scalarText(value));
-        }
+        List<CatalogGenreDefinition> genreDefinitions = genreDefinitions(bibliographic.path("genres"));
+        List<String> genres = genreDefinitions.stream().map(CatalogGenreDefinition::code).toList();
 
         String language = LanguageResolver.resolveValue(firstClaimText(bibliographic, "language"));
         String rawIsbn = firstClaimText(publication, "isbn");
@@ -271,7 +269,7 @@ public class MetabibCatalogReader implements CatalogReader {
         if (root.has("artifacts")) sourceMetadata.put("metabib.artifacts.json", root.get("artifacts").toString());
         flattenRelations(root.path("relations"), sourceMetadata);
 
-        return new CatalogRecord(sourceBookId, title, authors, series, sequenceNumber, genres, language,
+        return new CatalogRecord(sourceBookId, title, authors, series, sequenceNumber, genres, genreDefinitions, language,
                 format, fileName, archive, archiveEntry, size, deleted, isbn, publisher, year, city,
                 translators, annotation, keywords, rating, null, sourceMetadata, artifacts, identities, issues);
     }
@@ -300,6 +298,50 @@ public class MetabibCatalogReader implements CatalogReader {
         putIfNonBlank(metadata, "dataset.created", text(header, "created"));
         metadata.put("metabib.header.json", header.toString());
         return Map.copyOf(metadata);
+    }
+
+    /**
+     * Mirrors the published MyHomeLib metabib reader: use the first usable genre
+     * observation in catalog-source priority order. FB2/FBD tags are fallbacks,
+     * not additions to an existing curated database taxonomy.
+     */
+    private static List<CatalogGenreDefinition> genreDefinitions(JsonNode claims) {
+        if (!claims.isArray()) return List.of();
+        for (String observation : List.of("db", "fb2", "fbd")) {
+            for (JsonNode claim : claims) {
+                if (!observation.equalsIgnoreCase(text(claim, "observation"))) continue;
+                List<CatalogGenreDefinition> parsed = parseGenreValues(
+                        claim.path("value"), "db".equals(observation));
+                if (!parsed.isEmpty()) return parsed;
+            }
+        }
+        // Older producers may omit observation. Retain their codes without
+        // treating an unknown source as an authoritative catalog definition.
+        for (JsonNode claim : claims) {
+            if (!text(claim, "observation").isBlank()) continue;
+            List<CatalogGenreDefinition> parsed = parseGenreValues(claim.path("value"), false);
+            if (!parsed.isEmpty()) return parsed;
+        }
+        return List.of();
+    }
+
+    private static List<CatalogGenreDefinition> parseGenreValues(JsonNode value, boolean catalog) {
+        if (value == null || value.isNull() || value.isMissingNode()) return List.of();
+        List<JsonNode> values = new ArrayList<>();
+        if (value.isArray()) value.forEach(values::add);
+        else values.add(value);
+
+        LinkedHashMap<String, CatalogGenreDefinition> definitions = new LinkedHashMap<>();
+        for (JsonNode item : values) {
+            String code = item != null && item.isObject() ? text(item, "code") : scalarText(item);
+            if (code.isBlank()) continue;
+            String description = item != null && item.isObject() ? text(item, "description") : "";
+            String category = item != null && item.isObject() ? text(item, "meta") : "";
+            String translatedCode = item != null && item.isObject() ? text(item, "translated_code") : "";
+            definitions.putIfAbsent(code, new CatalogGenreDefinition(
+                    code, description, category, translatedCode, catalog));
+        }
+        return List.copyOf(definitions.values());
     }
 
     private static List<CatalogPerson> peopleClaims(

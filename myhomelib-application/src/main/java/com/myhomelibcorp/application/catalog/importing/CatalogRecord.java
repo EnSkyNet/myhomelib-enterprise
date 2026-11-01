@@ -17,6 +17,7 @@ public record CatalogRecord(
         String series,
         Double sequence,
         List<String> genres,
+        List<CatalogGenreDefinition> genreDefinitions,
         String language,
         String fileFormat,
         String fileName,
@@ -45,6 +46,7 @@ public record CatalogRecord(
         series = safe(series);
         sequence = finiteOrNull(sequence);
         genres = genres == null ? List.of() : List.copyOf(genres);
+        genreDefinitions = genreDefinitions == null ? List.of() : List.copyOf(genreDefinitions);
         language = safe(language);
         fileFormat = safe(fileFormat);
         fileName = safe(fileName);
@@ -61,6 +63,43 @@ public record CatalogRecord(
         artifacts = artifacts == null ? List.of() : List.copyOf(artifacts);
         externalIdentities = externalIdentities == null ? List.of() : List.copyOf(externalIdentities);
         issues = issues == null ? List.of() : List.copyOf(issues);
+    }
+
+    /**
+     * Compatibility constructor for readers that expose genre codes only.
+     */
+    public CatalogRecord(
+            String sourceBookId,
+            String title,
+            List<CatalogPerson> authors,
+            String series,
+            Double sequence,
+            List<String> genres,
+            String language,
+            String fileFormat,
+            String fileName,
+            String archive,
+            String archiveEntry,
+            Long size,
+            boolean deleted,
+            String isbn,
+            String publisher,
+            Integer publicationYear,
+            String publicationCity,
+            List<CatalogPerson> translators,
+            String annotation,
+            List<String> keywords,
+            Double rating,
+            LocalDateTime sourceUpdatedAt,
+            Map<String, String> sourceMetadata,
+            List<CatalogArtifact> artifacts,
+            List<ExternalIdentity> externalIdentities,
+            List<ImportIssue> issues
+    ) {
+        this(sourceBookId, title, authors, series, sequence, genres, List.of(), language, fileFormat,
+                fileName, archive, archiveEntry, size, deleted, isbn, publisher, publicationYear,
+                publicationCity, translators, annotation, keywords, rating, sourceUpdatedAt,
+                sourceMetadata, artifacts, externalIdentities, issues);
     }
 
     private static String safe(String value) { return value == null ? "" : value.trim(); }
