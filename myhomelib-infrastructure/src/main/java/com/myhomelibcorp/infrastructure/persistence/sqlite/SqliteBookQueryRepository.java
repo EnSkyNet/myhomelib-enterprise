@@ -103,6 +103,35 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         return loadOffsetPage(jdbcTemplate, query, count(jdbcTemplate, query));
     }
 
+    /**
+     * Full-fidelity group export page on an explicit collection snapshot connection.
+     * Uses BookRowMapper and includes deleted group members; ordinary browsing remains
+     * on the smaller BookListRowMapper projection.
+     */
+    public PageResult<Book> findGroupExportPage(JdbcTemplate jdbcTemplate, BookQuery query) {
+        var countQuery = queryBuilder.buildGroupExportCount(query);
+        Long total = jdbcTemplate.queryForObject(countQuery.sql(), Long.class, countQuery.params());
+        var pageQuery = queryBuilder.buildGroupExportPage(query);
+        List<Book> books = jdbcTemplate.query(pageQuery.sql(), bookRowMapper, pageQuery.params());
+        books = enrichBooks(jdbcTemplate, books);
+        return toPageResult(query, books, total == null ? 0L : total);
+    }
+
+    /** Full-record TITLE keyset continuation for one collection's portable group export. */
+    public PageResult<Book> findGroupExportTitlePageByCursor(JdbcTemplate jdbcTemplate, BookQuery query,
+                                                              BookPageCursor cursor,
+                                                              BookPageDirection pageDirection,
+                                                              long knownTotal) {
+        if (knownTotal < 0) throw new IllegalArgumentException("knownTotal cannot be negative");
+        var sqlQuery = queryBuilder.buildGroupExportTitleCursor(query, cursor, pageDirection);
+        List<Book> books = jdbcTemplate.query(sqlQuery.sql(), bookRowMapper, sqlQuery.params());
+        if (pageDirection == BookPageDirection.BEFORE && books.size() > 1) {
+            Collections.reverse(books);
+        }
+        books = enrichBooks(jdbcTemplate, books);
+        return toPageResult(query, books, knownTotal);
+    }
+
     @Override
     public PageResult<Book> findPage(BookQuery query, long knownTotal) {
         if (knownTotal < 0) throw new IllegalArgumentException("knownTotal cannot be negative");
