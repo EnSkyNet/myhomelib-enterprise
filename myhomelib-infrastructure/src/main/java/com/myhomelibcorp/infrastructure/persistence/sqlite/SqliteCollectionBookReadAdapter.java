@@ -58,13 +58,12 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("PRAGMA query_only = ON");
             }
-            // Xerial SQLiteConnection.rollback() rejects calls while JDBC auto-commit
-            // is enabled. Let the driver own the read transaction so close() can
-            // reliably release the snapshot on every exit path.
+            // SQLite data_version is meaningful only when sampled outside a transaction.
+            // Capture it first, then let the JDBC driver own the read snapshot.
+            int initialDataVersion = dataVersion(connection);
             connection.setAutoCommit(false);
             SingleConnectionDataSource dataSource = new SingleConnectionDataSource(connection, true);
             JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-            int initialDataVersion = dataVersion(connection);
             return new ReadSession(database, connection, jdbc, initialDataVersion);
         } catch (IOException | SQLException | RuntimeException error) {
             if (connection != null) {
@@ -145,18 +144,26 @@ public class SqliteCollectionBookReadAdapter implements CollectionBookReadPort {
             closed = true;
             IOException failure = null;
             try {
+                // End the read transaction before sampling data_version: SQLite does not
+                // expose external commits through that pragma while a transaction is active.
+                connection.setAutoCommit(true);
                 int finalDataVersion = dataVersion(connection);
                 if (finalDataVersion != initialDataVersion) {
                     failure = new IOException("Collection database changed during portable group export: " + database);
                 }
             } catch (SQLException error) {
                 failure = new IOException("Unable to validate collection database snapshot: " + database, error);
-            } finally {
-                try { connection.rollback(); }
-                catch (SQLException rollbackError) {
-                    if (failure == null) failure = new IOException("Unable to close collection read snapshot: " + database, rollbackError);
-                    else failure.addSuppressed(rollbackError);
+                try {
+                    if (!connection.getAutoCommit()) {
+                        connection.rollback();
+                        // Xerial starts a fresh deferred transaction after rollback when
+                        // auto-commit is disabled; turn auto-commit back on before closing.
+                        connection.setAutoCommit(true);
+                    }
+                } catch (SQLException cleanupError) {
+                    failure.addSuppressed(cleanupError);
                 }
+            } finally {
                 try { connection.close(); }
                 catch (SQLException closeError) {
                     if (failure == null) failure = new IOException("Unable to close collection read connection: " + database, closeError);
