@@ -44,6 +44,54 @@ public class BookQueryBuilder {
     }
 
     /**
+     * Full-fidelity group export page. Unlike ordinary browsing, portable export must
+     * preserve tombstoned group members and all bibliographic columns.
+     */
+    public SqlQuery buildGroupExportPage(BookQuery query) {
+        var context = new QueryContext();
+        addJoins(context, query);
+        addConditions(context, query, true);
+        return SqlQuery.of(buildSelectSql(context, query, "b.*"), context.params.toArray());
+    }
+
+    /** Exact count for the same full-fidelity export membership, including deleted rows. */
+    public SqlQuery buildGroupExportCount(BookQuery query) {
+        var context = new QueryContext();
+        addJoins(context, query);
+        addConditions(context, query, true);
+        return SqlQuery.of(buildCountSql(context), context.params.toArray());
+    }
+
+    /** Full-record keyset continuation for group export, without OFFSET and without hiding tombstones. */
+    public SqlQuery buildGroupExportTitleCursor(BookQuery query, BookPageCursor cursor,
+                                                BookPageDirection pageDirection) {
+        if (query == null) throw new IllegalArgumentException("query cannot be null");
+        if (cursor == null) throw new IllegalArgumentException("cursor cannot be null");
+        if (pageDirection == null) throw new IllegalArgumentException("pageDirection cannot be null");
+        if (query.onlyInHistory() || query.sortBy() != SortBy.TITLE) {
+            throw new IllegalArgumentException("title cursor paging requires TITLE sort outside reading history");
+        }
+
+        var context = new QueryContext();
+        addJoins(context, query);
+        addConditions(context, query, true);
+
+        boolean ascending = query.direction() != SortDirection.DESC;
+        boolean after = pageDirection == BookPageDirection.AFTER;
+        String operator = (ascending == after) ? ">" : "<";
+        context.conditions.add("(b.title, b.id) " + operator + " (?, ?)");
+        context.params.add(cursor.title());
+        context.params.add(cursor.id());
+
+        String scanDirection = pageDirection == BookPageDirection.BEFORE
+                ? (ascending ? "DESC" : "ASC")
+                : (ascending ? "ASC" : "DESC");
+        String orderBy = "ORDER BY b.title " + scanDirection + ", b.id " + scanDirection;
+        return SqlQuery.of(buildSelectSqlWithoutOffset(context, query, orderBy, "b.*"),
+                context.params.toArray());
+    }
+
+    /**
      * Builds a bounded bidirectional keyset page for TITLE sort. The caller reverses
      * BEFORE results back to display order after the SQL intentionally scans in the
      * opposite direction.
@@ -98,8 +146,13 @@ public class BookQueryBuilder {
     }
 
     private void addConditions(QueryContext ctx, BookQuery query) {
-        // Deleted rows are tombstones used by catalogue updates and must never leak into normal browsing.
-        ctx.conditions.add("b.deleted = 0");
+        addConditions(ctx, query, false);
+    }
+
+    private void addConditions(QueryContext ctx, BookQuery query, boolean includeDeleted) {
+        // Deleted rows are tombstones and stay hidden from normal browsing. Portable
+        // export is the deliberate exception: a group may still contain such members.
+        if (!includeDeleted) ctx.conditions.add("b.deleted = 0");
 
         // AUTHOR
         if (query.authorId() != null) {
@@ -219,7 +272,11 @@ public class BookQueryBuilder {
     }
 
     private String buildSelectSql(QueryContext ctx, BookQuery query) {
-        StringBuilder sql = new StringBuilder("SELECT ").append(BOOK_LIST_PROJECTION).append(" FROM books b");
+        return buildSelectSql(ctx, query, BOOK_LIST_PROJECTION);
+    }
+
+    private String buildSelectSql(QueryContext ctx, BookQuery query, String projection) {
+        StringBuilder sql = new StringBuilder("SELECT ").append(projection).append(" FROM books b");
         for (String join : ctx.joins) {
             sql.append(" ").append(join);
         }
@@ -235,7 +292,12 @@ public class BookQueryBuilder {
     }
 
     private String buildSelectSqlWithoutOffset(QueryContext ctx, BookQuery query, String orderBy) {
-        StringBuilder sql = new StringBuilder("SELECT ").append(BOOK_LIST_PROJECTION).append(" FROM books b");
+        return buildSelectSqlWithoutOffset(ctx, query, orderBy, BOOK_LIST_PROJECTION);
+    }
+
+    private String buildSelectSqlWithoutOffset(QueryContext ctx, BookQuery query, String orderBy,
+                                               String projection) {
+        StringBuilder sql = new StringBuilder("SELECT ").append(projection).append(" FROM books b");
         for (String join : ctx.joins) {
             sql.append(" ").append(join);
         }
