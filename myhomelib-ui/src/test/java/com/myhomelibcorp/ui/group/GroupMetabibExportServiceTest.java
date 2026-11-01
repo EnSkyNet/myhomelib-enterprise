@@ -287,6 +287,25 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
+    void absoluteLegacyFolderBecomesTheContainmentRootWhenCollectionRootIsMissing() throws Exception {
+        Fixture f = fixture("absolute-folder");
+        String absoluteFolder = temp.resolve("legacy-books").toAbsolutePath().toString();
+        Book book = book("Absolute folder", "legacy.fb2");
+        when(book.getCollectionRoot()).thenReturn("");
+        when(book.getFolder()).thenReturn(absoluteFolder);
+        when(f.activeSession.findPage(any(BookQuery.class)))
+                .thenReturn(PageResult.of(List.of(book), 1, 0, 100));
+        when(f.resources.readBookData("legacy.fb2", "", absoluteFolder, ""))
+                .thenReturn(Optional.of(new ByteArrayInputStream(
+                        "legacy bytes".getBytes(StandardCharsets.UTF_8))));
+
+        var result = f.exporter.export(21L, "absolute-folder", temp);
+
+        assertThat(result.exported()).isEqualTo(1);
+        verify(f.resources).readBookData("legacy.fb2", "", absoluteFolder, "");
+    }
+
+    @Test
     void relativeLegacyPathWithoutAnyTrustedCollectionRootIsSkipped() throws Exception {
         Fixture f = fixture("no-root");
         Book book = book("No trusted root", "relative.fb2");
