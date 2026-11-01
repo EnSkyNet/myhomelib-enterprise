@@ -106,6 +106,11 @@ Reproducible helpers include:
 
 The dedicated performance Maven profile and scheduled/manual GitHub workflow must be used for JVM heap/GC, disk-backed Lucene and Reader baselines when dependency access is available.
 
+For a real Windows target-machine checkpoint profile, close MyHomeLib and run:
+`.\tools\run-real-recovery-checkpoint-probe.ps1 -DatabasePath "C:\path\to\collection.db"`
+The opt-in probe creates a temporary full SQLite checkpoint, runs the same backup + full `integrity_check` path used before online updates, and deletes the checkpoint on normal completion. It emits a database/SQLite/Java profile JSON and a separate Windows process profile with physical RAM, sampled Java working set and CPU time. The report includes DB/WAL/SHM sizes, SQLite journal/busy-timeout settings, page/cache/mmap settings, checkpoint wall/CPU time and Java heap measurements. It also runs a bounded synthetic UPDATE transaction (50,000 rows by default) against the disposable checkpoint copy to measure WAL/SHM growth, transaction time and CPU; set `-ImportProbeRows 100000` to change the probe size or `-ImportProbeRows 0` to skip the synthetic write probe. The original library database is not modified, and the report does not export book metadata. Ensure the system has free disk space for a full temporary checkpoint. The SQLite JDBC driver does not expose a cumulative busy-handler retry counter, so the profile reports the configured timeout and whether any busy exception escaped the checkpoint operation; it cannot claim zero internal retries. This probe is deliberately opt-in and must be run on the actual Windows 11 / 4 GiB target to establish target-specific acceptance evidence.
+
+
 ## Database migrations
 
 Flyway migrations are release history. Never edit/reorder an already released migration to make a new test pass. Add a new migration and provide an upgrade regression from representative old data.
