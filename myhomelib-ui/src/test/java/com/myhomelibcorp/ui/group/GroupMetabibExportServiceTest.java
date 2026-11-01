@@ -337,6 +337,27 @@ class GroupMetabibExportServiceTest {
     }
 
     @Test
+    void activeCollectionChangeAfterLastBookPreventsPackagePublication() throws Exception {
+        Fixture f = fixture("A");
+        Collection changed = mock(Collection.class);
+        when(changed.getId()).thenReturn("B");
+        when(f.lifecycle.getCurrentCollection()).thenReturn(
+                f.current, f.current, f.current, f.current, changed);
+        Book book = book("Final book", "final.fb2");
+        when(f.activeSession.findPage(any(BookQuery.class)))
+                .thenReturn(PageResult.of(List.of(book), 1, 0, 100));
+        when(f.resources.readBookData(book)).thenReturn(Optional.of(
+                new ByteArrayInputStream("complete".getBytes(StandardCharsets.UTF_8))));
+
+        assertThatThrownBy(() -> f.exporter.export(7L, "A", temp))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Collection changed during group export");
+        try (var files = Files.list(temp)) {
+            assertThat(files.toList()).isEmpty();
+        }
+    }
+
+    @Test
     void activeCollectionChangeDuringBookIterationIsNotReportedAsGroupAmbiguity() throws Exception {
         Fixture f = fixture("A");
         Collection changed = mock(Collection.class);
