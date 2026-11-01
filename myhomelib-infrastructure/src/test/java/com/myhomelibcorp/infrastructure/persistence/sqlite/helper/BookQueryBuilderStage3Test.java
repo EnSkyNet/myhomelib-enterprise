@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.query.book.BookPageCursor;
 import com.myhomelibcorp.application.query.book.BookPageDirection;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
+import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -48,6 +49,26 @@ class BookQueryBuilderStage3Test {
         assertThat(normalized).contains("ORDER BY b.title ASC, b.id ASC LIMIT ?");
         assertThat(normalized).doesNotContain("OFFSET");
         assertThat(Arrays.asList(sql.params())).containsExactly("Book 449999", "b449999", 50);
+    }
+
+    @Test
+    void titleCursorRetainsSelectedGroupMembershipFilter() {
+        BookQuery query = BookQuery.builder()
+                .groupId(GroupId.fromLong(37L))
+                .pagination(com.myhomelibcorp.application.query.common.Pagination.of(100, 100))
+                .sortBy(com.myhomelibcorp.application.query.common.SortBy.TITLE)
+                .direction(com.myhomelibcorp.application.query.common.SortDirection.ASC)
+                .build();
+
+        var sql = builder.buildTitleCursor(query,
+                new BookPageCursor("Title 99", "book-99"), BookPageDirection.AFTER);
+        String normalized = sql.sql().replaceAll("\\s+", " ");
+
+        assertThat(normalized).contains("JOIN book_groups qbg_group ON qbg_group.book_id = b.id");
+        assertThat(normalized).contains("qbg_group.group_id = ?");
+        assertThat(normalized).contains("(b.title, b.id) > (?, ?)");
+        assertThat(normalized).doesNotContain("OFFSET");
+        assertThat(Arrays.asList(sql.params())).containsExactly(37L, "Title 99", "book-99", 100);
     }
 
     @Test
