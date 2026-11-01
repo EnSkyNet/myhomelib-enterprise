@@ -74,7 +74,7 @@ class GroupMetabibExportServiceTest {
         assertThat(header.path("archives").get(0).path("collection_id").asString()).isEqualTo("collection-A");
         var one = mapper.readTree(records.get(1));
         var two = mapper.readTree(records.get(2));
-        assertThat(one.path("record").path("library").asString()).isEqualTo("Primary");
+        assertThat(one.path("record").path("library").asString()).isEqualTo("Основна бібліотека");
         assertThat(one.path("record").path("locator").path("collection_id").asString()).isEqualTo("collection-A");
         assertThat(one.path("observations").size()).isEqualTo(2);
         assertThat(one.path("record").path("locator").path("index").asInt()).isEqualTo(0);
@@ -97,13 +97,13 @@ class GroupMetabibExportServiceTest {
         Fixture f = fixture("collection-A");
         Collection secondCollection = mock(Collection.class);
         when(secondCollection.getId()).thenReturn("collection-B");
-        when(secondCollection.getName()).thenReturn("Secondary");
+        when(secondCollection.getName()).thenReturn("Додаткова бібліотека");
         when(f.collectionRepository.findAll()).thenReturn(List.of(f.current, secondCollection));
 
         CollectionBookReadPort.Session secondSession = mock(CollectionBookReadPort.Session.class);
         when(f.reader.open(secondCollection)).thenReturn(secondSession);
-        when(secondSession.findGroupByName("Shared group"))
-                .thenReturn(Optional.of(new Group(GroupId.fromLong(4L), "shared GROUP", true)));
+        when(secondSession.findGroupByName("Спільна група Ω"))
+                .thenReturn(Optional.of(new Group(GroupId.fromLong(4L), "спільна ГРУПА ω", true)));
 
         Book first = book("From primary", "primary.fb2");
         Book second = book("From secondary", "secondary.fb2");
@@ -127,8 +127,8 @@ class GroupMetabibExportServiceTest {
         assertThat(header.path("archives")).hasSize(2);
         assertThat(header.path("archives").get(0).path("collection_id").asString()).isEqualTo("collection-A");
         assertThat(header.path("archives").get(1).path("collection_id").asString()).isEqualTo("collection-B");
-        assertThat(mapper.readTree(lines.get(1)).path("record").path("library").asString()).isEqualTo("Primary");
-        assertThat(mapper.readTree(lines.get(2)).path("record").path("library").asString()).isEqualTo("Secondary");
+        assertThat(mapper.readTree(lines.get(1)).path("record").path("library").asString()).isEqualTo("Основна бібліотека");
+        assertThat(mapper.readTree(lines.get(2)).path("record").path("library").asString()).isEqualTo("Додаткова бібліотека");
         assertThat(mapper.readTree(lines.get(2)).path("record").path("locator").path("collection_id").asString())
                 .isEqualTo("collection-B");
 
@@ -141,7 +141,7 @@ class GroupMetabibExportServiceTest {
             assertThat(new String(secondary.getInputStream(secondary.getEntry("book-000002.fb2")).readAllBytes(),
                     StandardCharsets.UTF_8)).isEqualTo("secondary");
         }
-        verify(secondSession).findGroupByName("Shared group");
+        verify(secondSession).findGroupByName("Спільна група Ω");
     }
 
     @Test
@@ -168,6 +168,23 @@ class GroupMetabibExportServiceTest {
         try (ZipFile zip = new ZipFile(result.folder().resolve("books-0001.zip").toFile())) {
             assertThat(zip.size()).isEqualTo(1);
             assertThat(zip.getEntry("book-000001.fb2")).isNotNull();
+        }
+    }
+
+    @Test
+    void duplicateRegisteredCollectionIdsFailBeforeOpeningAnySourceDatabase() throws Exception {
+        Fixture f = fixture("duplicate-id");
+        Collection duplicate = mock(Collection.class);
+        when(duplicate.getId()).thenReturn("collection-A");
+        when(duplicate.getName()).thenReturn("Duplicate registration");
+        when(f.collectionRepository.findAll()).thenReturn(List.of(f.current, duplicate));
+
+        assertThatThrownBy(() -> f.exporter.export(21L, "collection-A", temp))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("duplicate collection ID");
+        verify(f.reader, never()).open(any(Collection.class));
+        try (var files = Files.list(temp)) {
+            assertThat(files.toList()).isEmpty();
         }
     }
 
@@ -471,7 +488,7 @@ class GroupMetabibExportServiceTest {
         CollectionBookReadPort.Session activeSession = mock(CollectionBookReadPort.Session.class);
         Collection current = mock(Collection.class);
         when(current.getId()).thenReturn(collectionId);
-        when(current.getName()).thenReturn("Primary");
+        when(current.getName()).thenReturn("Основна бібліотека");
         when(lifecycle.getCurrentCollection()).thenReturn(current);
         when(collectionRepository.findAll()).thenReturn(List.of(current));
         try {
@@ -481,7 +498,7 @@ class GroupMetabibExportServiceTest {
         }
         when(activeSession.findGroupById(anyLong())).thenAnswer(inv -> {
             Long id = inv.getArgument(0);
-            return Optional.of(new Group(GroupId.fromLong(id), "Shared group", false));
+            return Optional.of(new Group(GroupId.fromLong(id), "Спільна група Ω", false));
         });
         return new Fixture(reader, collectionRepository, resources, lifecycle, current, activeSession,
                 new GroupMetabibExportService(reader, collectionRepository, resources, lifecycle));
