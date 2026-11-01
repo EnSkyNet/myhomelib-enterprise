@@ -30,6 +30,11 @@ public class BookArtifactHelper {
      * that have not yet received the V50 backfill.
      */
     public List<Book> attachArtifacts(List<Book> books) {
+        return attachArtifacts(jdbc(), books);
+    }
+
+    /** Attaches artifacts using the caller's connection, preserving a read-only collection snapshot. */
+    public List<Book> attachArtifacts(JdbcTemplate jdbc, List<Book> books) {
         if (books == null || books.isEmpty()) return books == null ? List.of() : books;
 
         List<String> ids = books.stream().map(b -> b.getId().asString()).toList();
@@ -39,7 +44,7 @@ public class BookArtifactHelper {
 
         SqliteInClauseSupport.forEachChunk(ids, part -> {
             String placeholders = SqliteInClauseSupport.placeholders(part.size());
-            jdbc().query("""
+            jdbc.query("""
                     SELECT artifact_id, book_id, source_id, artifact_name, media_type, file_format,
                            file_name, archive_name, archive_entry, size_bytes, sha256,
                            content_fingerprint, remote, local, collection_root, folder, state
@@ -55,7 +60,7 @@ public class BookArtifactHelper {
                 rowsByBook.computeIfAbsent(row.bookId(), ignored -> new ArrayList<>()).add(row);
             }, part.toArray());
 
-            jdbc().query("""
+            jdbc.query("""
                     SELECT book_id, preferred_artifact_id
                       FROM book_artifact_preferences
                      WHERE book_id IN (""" + placeholders + ")", rs -> {
@@ -67,7 +72,7 @@ public class BookArtifactHelper {
                 .map(ArtifactRow::artifactId).toList();
         SqliteInClauseSupport.forEachChunk(artifactIds, part -> {
             String placeholders = SqliteInClauseSupport.placeholders(part.size());
-            jdbc().query("""
+            jdbc.query("""
                     SELECT artifact_id, metadata_key, metadata_value
                       FROM book_artifact_metadata
                      WHERE artifact_id IN (""" + placeholders + ") ORDER BY artifact_id, metadata_key", rs -> {
