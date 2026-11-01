@@ -65,7 +65,7 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
 
         String bookIdA = UUID.randomUUID().toString();
         String bookIdB = UUID.randomUUID().toString();
-        createCollectionDatabase(databaseA, rootA, 1L, "Спільна група", bookIdA, "a.fb2",
+        long activeGroupId = createCollectionDatabase(databaseA, rootA, 3L, "Спільна група", bookIdA, "a.fb2",
                 "Книга з колекції А", "893718", "genre-a", "Фантастика — А", bytesA.length());
         createCollectionDatabase(databaseB, rootB, 9L, "спільна ГРУПА", bookIdB, "b.fb2",
                 "Книга з колекції Б", "999001", "genre-b", "Наукова фантастика — Б", bytesB.length());
@@ -90,7 +90,7 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
         when(lifecycle.getCurrentCollection()).thenReturn(primary);
 
         var result = new GroupMetabibExportService(readPort, collectionRepository, resources, lifecycle)
-                .export(1L, "collection-a", temp);
+                .export(activeGroupId, "collection-a", temp);
 
         assertThat(result.exported()).isEqualTo(2);
         assertThat(result.skipped()).isZero();
@@ -133,15 +133,17 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
         }
     }
 
-    private static void createCollectionDatabase(Path database, Path root, long groupId, String groupName,
-                                                 String bookId, String fileName, String title,
-                                                 String libId, String genreCode, String genreName,
-                                                 long fileSize) {
+    private static long createCollectionDatabase(Path database, Path root, long requestedGroupId, String groupName,
+                                                  String bookId, String fileName, String title,
+                                                  String libId, String genreCode, String genreName,
+                                                  long fileSize) {
         SQLiteDataSource dataSource = new SQLiteDataSource();
         dataSource.setUrl("jdbc:sqlite:" + database);
         Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
 
+        Long maximumGroupId = jdbc.queryForObject("SELECT COALESCE(MAX(id), 0) FROM groups", Long.class);
+        long groupId = Math.max(requestedGroupId, (maximumGroupId == null ? 0L : maximumGroupId) + 1L);
         jdbc.update("INSERT INTO groups(id, name, allow_delete) VALUES (?, ?, 1)", groupId, groupName);
         jdbc.update("""
                 INSERT INTO books(
@@ -162,5 +164,6 @@ class CrossCollectionGroupExportSqliteIntegrationTest {
         jdbc.update("INSERT INTO genres(code, name, parent_code, fb2_code) VALUES (?,?,NULL,?)",
                 genreCode, genreName, "sf");
         jdbc.update("INSERT INTO book_genres(book_id, genre_code) VALUES (?,?)", bookId, genreCode);
+        return groupId;
     }
 }
