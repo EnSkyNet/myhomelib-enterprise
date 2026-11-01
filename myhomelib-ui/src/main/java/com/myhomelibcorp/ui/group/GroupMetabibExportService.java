@@ -162,7 +162,10 @@ public class GroupMetabibExportService {
                         exported++;
                     }
                 }
-                Book last = page.content().getLast();
+                Book last = page.content().stream()
+                        .filter(Objects::nonNull)
+                        .reduce((first, next) -> next)
+                        .orElseThrow(() -> new IOException("Group page contains no cursor-eligible books"));
                 cursor = new BookPageCursor(last.getTitle(), last.getId().asString());
                 if (page.content().size() < PAGE_SIZE) break;
                 if (offset > Integer.MAX_VALUE - page.content().size()) throw new IOException("Too many group entries");
