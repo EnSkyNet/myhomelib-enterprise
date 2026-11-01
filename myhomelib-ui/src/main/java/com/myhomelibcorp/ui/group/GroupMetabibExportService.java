@@ -502,7 +502,11 @@ public class GroupMetabibExportService {
         if (book.getLibraryRate() > 0) catalog.put("rating", List.of(claim(book.getLibraryRate())));
         if (book.isDeleted()) catalog.put("deleted", List.of(claim("deleted")));
         List<Object> identities = new ArrayList<>();
-        identities.add(Map.of("scheme", "mhl-source-book", "value", book.getId().asString(), "observation", "db"));
+        // Book IDs are unique only inside one collection database. Scope the local
+        // identity by collection ID so two independent libraries cannot claim the
+        // same (dataset, scheme, external_id) key during import.
+        String sourceBookIdentity = source.getId().length() + ":" + source.getId() + ":" + book.getId().asString();
+        identities.add(Map.of("scheme", "mhl-source-book", "value", sourceBookIdentity, "observation", "db"));
         if (book.getLibId() != null && book.getLibId().matches("[0-9]{1,18}")) {
             identities.add(Map.of("scheme", "mhl-source-libid", "value", book.getLibId(), "observation", "db"));
         }
