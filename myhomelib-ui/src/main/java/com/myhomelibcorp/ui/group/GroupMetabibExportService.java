@@ -162,7 +162,13 @@ public class GroupMetabibExportService {
                         if (groupName == null) {
                             throw new IOException("The active collection group name was not resolved");
                         }
-                        Optional<Group> matching = session.findGroupByName(groupName);
+                        Optional<Group> matching;
+                        try {
+                            matching = session.findGroupByName(groupName);
+                        } catch (IllegalStateException ambiguousGroup) {
+                            throw new IOException("Cannot resolve group '" + safe(groupName)
+                                    + "' unambiguously in collection '" + safe(source.getName()) + "'", ambiguousGroup);
+                        }
                         if (matching.isEmpty()) continue;
                         sourceGroup = matching.get();
                     }
@@ -175,9 +181,6 @@ public class GroupMetabibExportService {
                 } catch (IOException failure) {
                     throw new IOException("Unable to export group '" + safe(groupName)
                             + "' from collection '" + safe(source.getName()) + "': " + safe(failure.getMessage()), failure);
-                } catch (IllegalStateException ambiguousGroup) {
-                    throw new IOException("Cannot resolve group '" + safe(groupName)
-                            + "' unambiguously in collection '" + safe(source.getName()) + "'", ambiguousGroup);
                 } catch (RuntimeException failure) {
                     throw new IOException("Unable to export group '" + safe(groupName)
                             + "' from collection '" + safe(source.getName()) + "': " + safe(failure.getMessage()), failure);
