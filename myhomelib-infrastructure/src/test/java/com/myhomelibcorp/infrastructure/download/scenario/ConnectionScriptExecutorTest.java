@@ -133,7 +133,7 @@ class ConnectionScriptExecutorTest {
         Path target = temp.resolve("book.txt");
 
         assertThatThrownBy(() -> executor(cfg).execute(
-                "GET " + baseUrl() + "truncated\\nCHECK",
+                "GET " + baseUrl() + "truncated\nCHECK",
                 book, collection(null, null), temp, "book.txt", target,
                 false, null, ignored -> { }))
                 .isInstanceOf(DownloadScenarioException.class)
