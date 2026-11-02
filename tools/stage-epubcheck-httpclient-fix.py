@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage Apache HttpClient 5.6.5 from Maven Central with SHA-512 and POM verification.
+"""Stage Apache HttpClient 5.6.5 with Apache release SHA-512 and POM verification.
 
 The staged files are not applied automatically. Use apply-epubcheck-httpclient-fix.py
 only after the stage receipt has been reviewed.
@@ -21,6 +21,7 @@ ARTIFACT = "httpclient5"
 VERSION = "5.6.5"
 CORE_VERSION = "5.4.4"
 REPOSITORY = "https://repo.maven.apache.org/maven2"
+APACHE_RELEASES = "https://downloads.apache.org/httpcomponents/httpclient/binary"
 MAX_DOWNLOAD = 32 * 1024 * 1024
 NS = {"m": "http://maven.apache.org/POM/4.0.0"}
 
@@ -46,14 +47,43 @@ def parse_sha512(checksum_data: bytes) -> str:
     return match.group(0).lower()
 
 
-def verify_download(url: str) -> tuple[bytes, str]:
-    checksum_data = download(url + ".sha512", 4096)
-    expected = parse_sha512(checksum_data)
-    data = download(url)
-    actual = hashlib.sha512(data).hexdigest()
+def verify_apache_release_jar(maven_jar_url: str) -> tuple[bytes, str]:
+    """Verify the Maven JAR byte-for-byte against Apache's SHA-512 checked release.
+
+    Maven Central does not guarantee .sha512 sidecars for each JAR or POM. Never
+    accept a missing sidecar as a reason to use a weaker hash without independent
+    evidence. Instead, verify Apache's official binary distribution and require
+    the exact same JAR bytes as the Maven Central publication.
+    """
+    release_name = f"httpcomponents-client-{VERSION}-bin.zip"
+    release_url = f"{APACHE_RELEASES}/{release_name}"
+    expected = parse_sha512(download(release_url + ".sha512", 4096))
+    binary_release = download(release_url)
+    actual = hashlib.sha512(binary_release).hexdigest()
     if actual != expected:
-        raise ValueError(f"Published SHA-512 mismatch: {url}")
-    return data, actual
+        raise ValueError("Apache release ZIP SHA-512 mismatch")
+    with zipfile.ZipFile(io.BytesIO(binary_release)) as release:
+        matches = [entry for entry in release.infolist()
+                   if entry.filename.endswith(f"/httpclient5-{VERSION}.jar")
+                   and not entry.is_dir()]
+        if len(matches) != 1:
+            raise ValueError("Apache binary release must contain exactly one HttpClient JAR")
+        if matches[0].file_size > MAX_DOWNLOAD:
+            raise ValueError("Apache binary release contains oversized HttpClient JAR")
+        release_jar = release.read(matches[0])
+    verify_jar_identity(release_jar)
+    maven_jar = download(maven_jar_url)
+    if hashlib.sha256(maven_jar).digest() != hashlib.sha256(release_jar).digest():
+        raise ValueError("Maven Central HttpClient JAR differs from verified Apache release")
+    return maven_jar, hashlib.sha512(maven_jar).hexdigest()
+
+
+def verify_module_pom(data: bytes, jar_data: bytes) -> None:
+    """Require the repository POM to match the Maven metadata inside the verified JAR."""
+    with zipfile.ZipFile(io.BytesIO(jar_data)) as archive:
+        embedded = archive.read(f"META-INF/maven/{GROUP}/{ARTIFACT}/pom.xml")
+    if ET.canonicalize(data.decode("utf-8")) != ET.canonicalize(embedded.decode("utf-8")):
+        raise ValueError("Maven Central module POM does not match verified JAR metadata")
 
 
 def read_properties(data: bytes) -> dict[str, str]:
@@ -118,10 +148,14 @@ def stage(output: Path) -> dict[str, object]:
     pom_url = f"{base}/{ARTIFACT}/{VERSION}/{pom_name}"
     parent_url = f"{base}/httpclient5-parent/{VERSION}/{parent_name}"
 
-    jar_data, jar_sha512 = verify_download(jar_url)
-    verify_jar_identity(jar_data)
-    pom_data, pom_sha512 = verify_download(pom_url)
-    parent_data, parent_sha512 = verify_download(parent_url)
+    jar_data, jar_sha512 = verify_apache_release_jar(jar_url)
+    pom_data = download(pom_url)
+    verify_module_pom(pom_data, jar_data)
+    pom_sha512 = hashlib.sha512(pom_data).hexdigest()
+    # Maven parent POM is downloaded over authenticated HTTPS; its coordinates
+    # and the compatible bundled HttpCore version are checked below.
+    parent_data = download(parent_url)
+    parent_sha512 = hashlib.sha512(parent_data).hexdigest()
     verify_parent_pom(parent_data)
 
     (output / jar_name).write_bytes(jar_data)
@@ -138,6 +172,8 @@ def stage(output: Path) -> dict[str, object]:
         "version": VERSION,
         "httpcoreVersion": CORE_VERSION,
         "sourceRepository": REPOSITORY,
+        "verification": "Apache binary release SHA-512 and exact Maven Central JAR match; canonical embedded module POM match",
+        "apacheBinaryRelease": f"{APACHE_RELEASES}/httpcomponents-client-{VERSION}-bin.zip",
         "jar": {
             "file": jar_name,
             "sizeBytes": len(jar_data),

@@ -240,6 +240,7 @@ def apply(root: Path, staging: Path) -> None:
     third_party = third_party_path.read_text(encoding="utf-8")
     replacements = (
         (f"httpclient5-{OLD_VERSION}.jar", f"httpclient5-{NEW_VERSION}.jar"),
+        (f"Apache HttpClient, {OLD_VERSION}", f"Apache HttpClient, {NEW_VERSION}"),
         (f"HttpClient {OLD_VERSION}", f"HttpClient {NEW_VERSION}"),
         (f"httpclient5 {OLD_VERSION}", f"httpclient5 {NEW_VERSION}"),
     )

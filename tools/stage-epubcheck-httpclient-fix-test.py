@@ -6,6 +6,7 @@ import io
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 SCRIPT = Path(__file__).with_name("stage-epubcheck-httpclient-fix.py")
@@ -67,6 +68,59 @@ class HttpClientStageTest(unittest.TestCase):
     def test_wrong_httpcore_parent_version_is_rejected(self):
         with self.assertRaises(ValueError):
             stage.verify_parent_pom(fake_parent("5.3.4"))
+
+    def test_apache_release_verifier_rejects_bad_zip_checksum(self):
+        release_jar = fake_client_jar()
+        content = io.BytesIO()
+        with zipfile.ZipFile(content, "w") as archive:
+            archive.writestr("httpcomponents-client-5.6.5/lib/httpclient5-5.6.5.jar", release_jar)
+        archive_url = stage.APACHE_RELEASES + "/httpcomponents-client-5.6.5-bin.zip"
+        with patch.object(stage, "download", side_effect=lambda url, limit=stage.MAX_DOWNLOAD:
+                          b"0" * 128 if url.endswith(".sha512") else content.getvalue()):
+            with self.assertRaisesRegex(ValueError, "release ZIP SHA-512 mismatch"):
+                stage.verify_apache_release_jar("https://repo.maven.apache.org/fake.jar")
+
+    def test_apache_release_verifier_requires_exact_maven_jar(self):
+        release_jar = fake_client_jar()
+        content = io.BytesIO()
+        with zipfile.ZipFile(content, "w") as archive:
+            archive.writestr("httpcomponents-client-5.6.5/lib/httpclient5-5.6.5.jar", release_jar)
+        binary = content.getvalue()
+        checksum = hashlib.sha512(binary).hexdigest().encode("ascii")
+        def fake_download(url, limit=stage.MAX_DOWNLOAD):
+            if url.endswith(".sha512"):
+                return checksum
+            if url.endswith(".zip"):
+                return binary
+            return b"not the release jar"
+        with patch.object(stage, "download", side_effect=fake_download):
+            with self.assertRaisesRegex(ValueError, "differs from verified Apache release"):
+                stage.verify_apache_release_jar("https://repo.maven.apache.org/fake.jar")
+
+    def test_apache_release_verifier_accepts_exact_maven_jar(self):
+        release_jar = fake_client_jar()
+        content = io.BytesIO()
+        with zipfile.ZipFile(content, "w") as archive:
+            archive.writestr("httpcomponents-client-5.6.5/lib/httpclient5-5.6.5.jar", release_jar)
+        binary = content.getvalue()
+        checksum = hashlib.sha512(binary).hexdigest().encode("ascii")
+        def fake_download(url, limit=stage.MAX_DOWNLOAD):
+            if url.endswith(".sha512"):
+                return checksum
+            if url.endswith(".zip"):
+                return binary
+            return release_jar
+        with patch.object(stage, "download", side_effect=fake_download):
+            data, digest = stage.verify_apache_release_jar("https://repo.maven.apache.org/fake.jar")
+        self.assertEqual(release_jar, data)
+        self.assertEqual(hashlib.sha512(release_jar).hexdigest(), digest)
+
+    def test_module_pom_must_match_verified_jar(self):
+        with zipfile.ZipFile(io.BytesIO(fake_client_jar())) as jar:
+            original = jar.read("META-INF/maven/org.apache.httpcomponents.client5/httpclient5/pom.xml")
+        stage.verify_module_pom(original, fake_client_jar())
+        with self.assertRaisesRegex(ValueError, "does not match verified JAR metadata"):
+            stage.verify_module_pom(original.replace(b"5.6.5", b"5.6.4"), fake_client_jar())
 
     def test_staging_refuses_nonempty_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
