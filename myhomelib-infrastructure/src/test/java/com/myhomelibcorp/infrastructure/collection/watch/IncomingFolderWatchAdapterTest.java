@@ -693,6 +693,61 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(value = 20)
+    void lateOverflowAfterStopCannotReenrollDisabledWatcherButManualScanStillWorks() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("stopped-overflow"));
+        adapter.configure("c1", incoming, true, 3600, 3600);
+        var registrationsField = IncomingFolderWatchAdapter.class.getDeclaredField("watchers");
+        registrationsField.setAccessible(true);
+        var registrations = (java.util.Map<?, ?>) registrationsField.get(adapter);
+        Object stoppedRegistration = registrations.get("c1");
+        assertThat(stoppedRegistration).isNotNull();
+
+        adapter.stopMonitoring("c1");
+        Files.writeString(incoming.resolve("manual-only.txt"), "synthetic");
+        var staleOverflowScan = IncomingFolderWatchAdapter.class.getDeclaredMethod(
+                "scanNow", String.class, stoppedRegistration.getClass());
+        staleOverflowScan.setAccessible(true);
+        staleOverflowScan.invoke(adapter, "c1", stoppedRegistration);
+
+        var enrolledField = IncomingFolderWatchAdapter.class.getDeclaredField("queuedCollections");
+        enrolledField.setAccessible(true);
+        assertThat((java.util.Set<?>) enrolledField.get(adapter)).doesNotContain("c1");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1'", Integer.class)).isZero();
+
+        // Explicit user action is different: a disabled watcher may be scanned manually.
+        assertThat(adapter.scanNow("c1").status()).isEqualTo("SCAN_SCHEDULED:1");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1'", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 20)
+    void lateOverflowFromReplacedWatcherCannotOverwriteCurrentWatchStatus() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path first = Files.createDirectory(tempDir.resolve("overflow-old"));
+        Path second = Files.createDirectory(tempDir.resolve("overflow-new"));
+        adapter.configure("c1", first, true, 3600, 3600);
+        var registrationsField = IncomingFolderWatchAdapter.class.getDeclaredField("watchers");
+        registrationsField.setAccessible(true);
+        var registrations = (java.util.Map<?, ?>) registrationsField.get(adapter);
+        Object oldRegistration = registrations.get("c1");
+        adapter.configure("c1", second, true, 3600, 3600);
+        assertThat(registrations.get("c1")).isNotSameAs(oldRegistration);
+
+        jdbc.update("UPDATE incoming_folder_watch SET last_status='ACTIVE_WATCH_MARKER' WHERE collection_id='c1'");
+        var staleOverflowScan = IncomingFolderWatchAdapter.class.getDeclaredMethod(
+                "scanNow", String.class, oldRegistration.getClass());
+        staleOverflowScan.setAccessible(true);
+        staleOverflowScan.invoke(adapter, "c1", oldRegistration);
+        assertThat(adapter.findState("c1").orElseThrow().status()).isEqualTo("ACTIVE_WATCH_MARKER");
+    }
+
+    @Test
     void reconfigureRefreshesWatcherRegistrationSettings() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));

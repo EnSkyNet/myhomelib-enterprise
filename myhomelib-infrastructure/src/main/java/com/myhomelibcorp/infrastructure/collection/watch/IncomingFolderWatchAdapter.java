@@ -155,15 +155,32 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
 
     @Override
     public IncomingFolderWatchState scanNow(String collectionId) {
+        // Explicit user scans are allowed even for a disabled watch.
+        return scanNow(collectionId, null);
+    }
+
+    /**
+     * Event-driven overflow scans belong to one concrete WatchService registration.
+     * A closed or superseded registration cannot re-enroll a stopped folder.
+     */
+    private IncomingFolderWatchState scanNow(String collectionId, WatchRegistration source) {
         IncomingFolderWatchState state = findState(collectionId)
                 .orElseThrow(() -> new IllegalArgumentException("Incoming folder is not configured: " + collectionId));
+        if (source != null && !isActiveRegistration(source)) return state;
         Path folder = state.folder();
         if (folder == null || !isSafeIncomingDirectory(folder)) {
             updateWatchStatus(collectionId, "FOLDER_MISSING", true);
             return findState(collectionId).orElseThrow();
         }
         int scheduled = 0;
-        queuedCollections.add(collectionId);
+        synchronized (pendingLock) {
+            if (source == null) {
+                queuedCollections.add(collectionId);
+            } else if (!isActiveRegistration(source)) {
+                // stopMonitoring may have run while the folder was inspected.
+                return state;
+            }
+        }
         WatchSettings scanSettings = new WatchSettings(state.folder(), state.enabled(),
                 state.debounceSeconds(), state.stabilitySeconds());
         List<Path> firstCandidates = new ArrayList<>(MAX_PENDING_CANDIDATES);
@@ -175,6 +192,9 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
             var iterator = stream.filter(IncomingFolderWatchAdapter::isSafeIncomingRegularFile)
                     .filter(IncomingFolderWatchAdapter::isIncomingSupported).iterator();
             while (iterator.hasNext()) {
+                if (source != null && !isActiveRegistration(source)) {
+                    return findState(collectionId).orElseThrow();
+                }
                 Path candidate = iterator.next();
                 page.add(candidate);
                 if (firstCandidates.size() < MAX_PENDING_CANDIDATES) firstCandidates.add(candidate);
@@ -186,10 +206,20 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
             updateWatchStatus(collectionId, "SCAN_ERROR: " + safeMessage(failure), true);
             throw new IllegalStateException("Cannot scan incoming folder", failure);
         }
+        // A stopped/replaced watcher must not submit tasks from its old scan.
+        if (source != null && !isActiveRegistration(source)) {
+            return findState(collectionId).orElseThrow();
+        }
         // Every staged path (including the first 256) now has durable WAITING evidence.
         // A failed/deleted observer cannot silently drop a discovered incoming file.
         for (Path candidate : firstCandidates) {
+            if (source != null && !isActiveRegistration(source)) {
+                return findState(collectionId).orElseThrow();
+            }
             scheduleCandidate(collectionId, candidate, 0, scanSettings);
+        }
+        if (source != null && !isActiveRegistration(source)) {
+            return findState(collectionId).orElseThrow();
         }
         refillPendingFromDatabase();
         if (scheduled > MAX_PENDING_CANDIDATES) {
@@ -197,8 +227,17 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                 if (queuedCollections.contains(collectionId)) ensureOverflowRetryLocked();
             }
         }
+        if (source != null && !isActiveRegistration(source)) {
+            return findState(collectionId).orElseThrow();
+        }
         updateWatchStatus(collectionId, "SCAN_SCHEDULED:" + scheduled, true);
         return findState(collectionId).orElseThrow();
+    }
+
+    private boolean isActiveRegistration(WatchRegistration registration) {
+        return !registration.closed.get()
+                && watchers.get(registration.collectionId) == registration
+                && queuedCollections.contains(registration.collectionId);
     }
 
     private void persistScanPage(String collectionId, List<Path> page) {
@@ -313,8 +352,9 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
             try {
                 WatchKey key = registration.watchService.take();
                 for (WatchEvent<?> event : key.pollEvents()) {
+                    if (!isActiveRegistration(registration)) break;
                     if (event.kind() == OVERFLOW) {
-                        scanNow(registration.collectionId);
+                        scanNow(registration.collectionId, registration);
                         continue;
                     }
                     if (!(event.context() instanceof Path relative)) continue;
