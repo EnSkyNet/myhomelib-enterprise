@@ -406,6 +406,20 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    void sqliteReplayFixtureUsesTheProductionPartialWaitingIndex() {
+        JdbcTemplate jdbc = metadataJdbc();
+        var plan = jdbc.query("""
+                EXPLAIN QUERY PLAN
+                SELECT collection_id, file_path FROM incoming_folder_file
+                 WHERE status='WAITING'
+                   AND (collection_id>? OR (collection_id=? AND file_path>?))
+                 ORDER BY collection_id, file_path LIMIT ?
+                """, (rs, row) -> rs.getString("detail"), "", "", "", 128);
+        assertThat(plan).anySatisfy(detail ->
+                assertThat(detail).contains("idx_incoming_folder_waiting_replay"));
+    }
+
+    @Test
     void oversizedManualScanUsesBoundedTimersAndReplaysOverflowFromSqlite() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
@@ -1244,6 +1258,22 @@ class IncomingFolderWatchAdapterTest {
                     error_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
                     PRIMARY KEY(collection_id,file_path),
                     FOREIGN KEY(collection_id) REFERENCES incoming_folder_watch(collection_id) ON DELETE CASCADE)
+                """);
+        // Match the real V6 and V12 metadata migrations. Without these indexes,
+        // the large-directory regression exercises a different SQLite query plan
+        // from production and may time out on a shared Windows CI runner.
+        jdbc.execute("""
+                CREATE INDEX idx_incoming_folder_file_ready
+                    ON incoming_folder_file(collection_id, status, detected_at)
+                """);
+        jdbc.execute("""
+                CREATE INDEX idx_incoming_folder_file_fingerprint
+                    ON incoming_folder_file(collection_id, fingerprint, status)
+                """);
+        jdbc.execute("""
+                CREATE INDEX idx_incoming_folder_waiting_replay
+                    ON incoming_folder_file(collection_id, file_path)
+                    WHERE status='WAITING'
                 """);
         return jdbc;
     }
