@@ -694,6 +694,45 @@ class IncomingFolderWatchAdapterTest {
 
     @Test
     @org.junit.jupiter.api.Timeout(value = 20)
+    void switchingFoldersStopsOldWatcherBeforeDeletingItsRows() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        var inspectOldRows = new java.util.concurrent.atomic.AtomicBoolean(false);
+        var oldRowsAtStop = new java.util.concurrent.atomic.AtomicInteger(-1);
+        adapter = new IncomingFolderWatchAdapter(
+                jdbc, mock(Flyway.class), mock(DomainEventPublisher.class)) {
+            @Override
+            public synchronized void stopMonitoring(String collectionId) {
+                if (inspectOldRows.get() && oldRowsAtStop.get() < 0) {
+                    oldRowsAtStop.set(jdbc.queryForObject("""
+                            SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id=?
+                            """, Integer.class, collectionId));
+                }
+                super.stopMonitoring(collectionId);
+            }
+        };
+        Path first = Files.createDirectory(tempDir.resolve("old-configured-folder"));
+        Path second = Files.createDirectory(tempDir.resolve("new-configured-folder"));
+        adapter.configure("c1", first, false, 3600, 3600);
+        Files.writeString(first.resolve("old-book.txt"), "synthetic");
+        adapter.scanNow("c1");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1'
+                """, Integer.class)).isEqualTo(1);
+
+        inspectOldRows.set(true);
+        adapter.configure("c1", second, false, 3600, 3600);
+
+        assertThat(oldRowsAtStop.get())
+                .as("old watcher must be cancelled while its original SQLite rows still exist")
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1'
+                """, Integer.class)).isZero();
+        assertThat(adapter.findState("c1").orElseThrow().folder()).isEqualTo(second);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 20)
     void lazyDirectoryEnumerationFailurePreservesCandidatesAndReportsScanError() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         Path incoming = Files.createDirectory(tempDir.resolve("broken-lazy-scan"));

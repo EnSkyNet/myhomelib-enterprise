@@ -131,6 +131,9 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         Optional<IncomingFolderWatchState> previous = findState(collectionId);
         boolean sameFolder = previous.map(IncomingFolderWatchState::folder)
                 .map(path -> path.toAbsolutePath().normalize().equals(normalized)).orElse(false);
+        // Stop the old watcher before deleting rows or publishing the new configuration.
+        // Otherwise a running observer can publish READY against a removed old-file row.
+        stopMonitoring(collectionId);
         if (!sameFolder) jdbc.update("DELETE FROM incoming_folder_file WHERE collection_id=?", collectionId);
         String status = isSafeIncomingDirectory(normalized) ? "CONFIGURED" : "FOLDER_MISSING";
         jdbc.update("""
@@ -145,7 +148,6 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                     last_status=excluded.last_status,
                     updated_at=excluded.updated_at
                 """, collectionId, normalized.toString(), enabled ? 1 : 0, debounce, stability, status, now());
-        stopMonitoring(collectionId);
         if (enabled) {
             startMonitoring(collectionId);
             scanNow(collectionId);
