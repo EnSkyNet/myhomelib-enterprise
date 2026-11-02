@@ -185,7 +185,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                 state.debounceSeconds(), state.stabilitySeconds());
         List<Path> firstCandidates = new ArrayList<>(MAX_PENDING_CANDIDATES);
         List<Path> page = new ArrayList<>(SCAN_WRITE_PAGE_SIZE);
-        try (var stream = Files.list(folder)) {
+        try (var stream = listIncomingFolder(folder)) {
             // Persist at most 128 paths per transaction, then release the SQLite writer.
             // Do not start the first 256 timer workers until staging finishes: an immediate
             // observer otherwise races the scanner for SQLite's single writer lock.
@@ -202,8 +202,28 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                 if (page.size() == SCAN_WRITE_PAGE_SIZE) persistScanPage(collectionId, page);
             }
             if (!page.isEmpty()) persistScanPage(collectionId, page);
-        } catch (IOException failure) {
-            updateWatchStatus(collectionId, "SCAN_ERROR: " + safeMessage(failure), true);
+        } catch (IOException | java.io.UncheckedIOException failure) {
+            // Files.list() can fail lazily through Stream.iterator() with
+            // UncheckedIOException. Preserve already enumerated candidates,
+            // including the final short page, instead of silently losing them.
+            boolean stillActive = source == null || isActiveRegistration(source);
+            if (stillActive) {
+                try {
+                    if (!page.isEmpty()) persistScanPage(collectionId, page);
+                    if (scheduled > 0 && queuedCollections.contains(collectionId)) {
+                        synchronized (pendingLock) {
+                            if (queuedCollections.contains(collectionId)) ensureOverflowRetryLocked();
+                        }
+                        // A failed scan must not strand staged WAITING records.
+                        refillPendingFromDatabase();
+                    }
+                    updateWatchStatus(collectionId, "SCAN_ERROR: " + safeMessage(failure), true);
+                } catch (RuntimeException recoveryFailure) {
+                    failure.addSuppressed(recoveryFailure);
+                    log.warn("Cannot stage or replay partial incoming scan for {}: {}",
+                            collectionId, safeMessage(recoveryFailure));
+                }
+            }
             throw new IllegalStateException("Cannot scan incoming folder", failure);
         }
         // A stopped/replaced watcher must not submit tasks from its old scan.
@@ -232,6 +252,11 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         }
         updateWatchStatus(collectionId, "SCAN_SCHEDULED:" + scheduled, true);
         return findState(collectionId).orElseThrow();
+    }
+
+    // Package-private seam for testing an I/O failure during lazy directory enumeration.
+    java.util.stream.Stream<Path> listIncomingFolder(Path folder) throws IOException {
+        return Files.list(folder);
     }
 
     private boolean isActiveRegistration(WatchRegistration registration) {

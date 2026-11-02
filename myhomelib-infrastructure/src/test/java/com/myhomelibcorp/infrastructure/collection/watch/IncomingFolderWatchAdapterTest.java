@@ -694,6 +694,56 @@ class IncomingFolderWatchAdapterTest {
 
     @Test
     @org.junit.jupiter.api.Timeout(value = 20)
+    void lazyDirectoryEnumerationFailurePreservesCandidatesAndReportsScanError() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        Path incoming = Files.createDirectory(tempDir.resolve("broken-lazy-scan"));
+        Path discovered = incoming.resolve("found-before-error.txt");
+        Files.writeString(discovered, "synthetic book");
+        adapter = new IncomingFolderWatchAdapter(
+                jdbc, mock(Flyway.class), mock(DomainEventPublisher.class)) {
+            @Override
+            java.util.stream.Stream<Path> listIncomingFolder(Path folder) {
+                java.util.Iterator<Path> failing = new java.util.Iterator<>() {
+                    boolean yielded;
+                    @Override public boolean hasNext() {
+                        if (yielded) {
+                            throw new java.io.UncheckedIOException(
+                                    new java.io.IOException("synthetic directory iteration failure"));
+                        }
+                        return true;
+                    }
+                    @Override public Path next() {
+                        if (yielded) throw new java.util.NoSuchElementException();
+                        yielded = true;
+                        return discovered;
+                    }
+                };
+                return java.util.stream.StreamSupport.stream(
+                        java.util.Spliterators.spliteratorUnknownSize(failing, 0), false);
+            }
+        };
+        adapter.configure("c1", incoming, false, 3600, 3600);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> adapter.scanNow("c1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Cannot scan incoming folder")
+                .hasCauseInstanceOf(java.io.UncheckedIOException.class);
+        assertThat(adapter.findState("c1").orElseThrow().status())
+                .startsWith("SCAN_ERROR:")
+                .contains("synthetic directory iteration failure");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM incoming_folder_file
+                 WHERE collection_id='c1' AND status='WAITING'
+                """, Integer.class)).isEqualTo(1);
+        // The partial result remains durably replayable after the scan failed.
+        var pendingField = IncomingFolderWatchAdapter.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        assertThat(((java.util.Map<?, ?>) pendingField.get(adapter)).size()).isLessThanOrEqualTo(
+                IncomingFolderWatchAdapter.MAX_PENDING_CANDIDATES);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 20)
     void lateOverflowAfterStopCannotReenrollDisabledWatcherButManualScanStillWorks() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
