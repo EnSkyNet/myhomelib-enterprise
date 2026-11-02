@@ -105,8 +105,10 @@ def main() -> None:
     if sha_entries.get(client_path) != hashlib.sha256(client.read_bytes()).hexdigest():
         fail("CONVERTERS-SHA256.txt does not match HttpClient 5.6.5")
     third_party = (VENDOR / "THIRD-PARTY.txt").read_text(encoding="utf-8")
-    if "httpclient5-5.6.5.jar" not in third_party and "HttpClient 5.6.5" not in third_party:
-        fail("THIRD-PARTY.txt does not record HttpClient 5.6.5")
+    if "Apache HttpClient, 5.6.5" not in third_party:
+        fail("THIRD-PARTY.txt does not record the upgraded Apache HttpClient 5.6.5")
+    if "Apache HttpClient, 5.1.3" in third_party:
+        fail("THIRD-PARTY.txt retains the replaced HttpClient 5.1.3 declaration")
 
     java = shutil.which("java")
     javac = shutil.which("javac")
