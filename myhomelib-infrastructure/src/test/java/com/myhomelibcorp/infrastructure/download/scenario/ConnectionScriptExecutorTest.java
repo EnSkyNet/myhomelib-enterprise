@@ -350,7 +350,7 @@ class ConnectionScriptExecutorTest {
         logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
         try {
             var result = executor(settings()).execute(
-                    "ADD access_key " + secret + "\\nGET " + baseUrl() + "%PASS%?view=public\\nCHECK",
+                    "ADD access_key " + secret + "\nGET " + baseUrl() + "%PASS%?view=public\nCHECK",
                     book, collection(null, secret), temp, "book.txt",
                     temp.resolve("book.txt"), false, null, ignored -> { });
             assertThat(Files.readString(result.payload())).isEqualTo("book");
