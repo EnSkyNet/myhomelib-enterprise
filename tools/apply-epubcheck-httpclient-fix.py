@@ -63,7 +63,10 @@ def wrap_manifest(lines: list[str]) -> bytes:
             candidate = current + ("" if current == prefix else " ") + token
             if len(candidate.encode("utf-8")) > 70 and current != prefix:
                 physical.append(current)
-                current = " " + token
+                # The first space on a continuation line is stripped by the
+                # JAR manifest reader. A second space preserves the separator
+                # between two Class-Path entries across the physical wrap.
+                current = "  " + token
             else:
                 current = candidate
         physical.append(current)

@@ -10,6 +10,7 @@ on:
       - 'tools/apply-epubcheck-httpclient-fix.py'
       - 'tools/test-epubcheck-httpclient-fix.py'
       - 'tools/stage-epubcheck-httpclient-fix-test.py'
+      - 'tools/apply-epubcheck-httpclient-fix-test.py'
       - 'tools/tests/epubcheck/HttpClientPoolLeakProbe.java'
   workflow_dispatch:
 
@@ -45,8 +46,10 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Test offline staging safety
-        run: python3 -B tools/stage-epubcheck-httpclient-fix-test.py
+      - name: Test offline staging and manifest safety
+        run: |
+          python3 -B tools/stage-epubcheck-httpclient-fix-test.py
+          python3 -B tools/apply-epubcheck-httpclient-fix-test.py
 
       - name: Download and verify Apache Maven Central release
         shell: bash
