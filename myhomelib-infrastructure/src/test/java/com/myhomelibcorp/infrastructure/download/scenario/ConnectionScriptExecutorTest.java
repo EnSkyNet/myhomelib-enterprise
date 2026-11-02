@@ -329,6 +329,43 @@ class ConnectionScriptExecutorTest {
     }
 
     @Test
+    void scriptOperandsAndExpandedPasswordPathsNeverAppearInDebugLogs() throws Exception {
+        String secret = "private-script-token-very-distinctive";
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            byte[] body = "book".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        BookDto book = BookDto.builder().id("log-audit").fileName("book.txt").build();
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ConnectionScriptExecutor.class);
+        ch.qos.logback.classic.Level priorLevel = logger.getLevel();
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs =
+                new ch.qos.logback.core.read.ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        try {
+            var result = executor(settings()).execute(
+                    "ADD access_key " + secret + "\\nGET " + baseUrl() + "%PASS%?view=public\\nCHECK",
+                    book, collection(null, secret), temp, "book.txt",
+                    temp.resolve("book.txt"), false, null, ignored -> { });
+            assertThat(Files.readString(result.payload())).isEqualTo("book");
+            var messages = logs.list.stream()
+                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+            assertThat(messages).anyMatch(message -> message.contains("command[0]: type=ADD"));
+            assertThat(messages).noneMatch(message -> message.contains(secret));
+        } finally {
+            logger.setLevel(priorLevel);
+            logger.detachAppender(logs);
+            logs.stop();
+        }
+    }
+
+    @Test
     void neverIncludesPassMacroValueInNetworkError() {
         String secret = "super-secret-value";
         BookDto book = BookDto.builder().id("1").fileName("book.txt").build();

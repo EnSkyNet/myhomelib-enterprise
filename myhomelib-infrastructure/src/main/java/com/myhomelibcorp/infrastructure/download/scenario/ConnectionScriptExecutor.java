@@ -74,9 +74,10 @@ public final class ConnectionScriptExecutor {
 
         List<DownloadScenarioCommand> commands = DownloadScenarioParser.parse(script);
         log.info("  parsed {} commands", commands.size());
+        // Never log command operands: ADD may contain literal passwords/tokens and
+        // GET/POST templates can carry %PASS% or credentials under arbitrary keys.
         for (int i = 0; i < commands.size(); i++) {
-            log.debug("    command[{}]: type={}, first={}, second={}",
-                    i, commands.get(i).type(), commands.get(i).first(), commands.get(i).second());
+            log.debug("    command[{}]: type={}", i, commands.get(i).type());
         }
 
         if (commands.isEmpty()) {
@@ -107,7 +108,7 @@ public final class ConnectionScriptExecutor {
                         String name = macros.expand(command.first(), state == null ? null : uriText(state.responseUri()));
                         String value = macros.expand(command.second(), state == null ? null : uriText(state.responseUri()));
                         fields.add(new FormField(name, value));
-                        log.debug("  ADD: {}={}", name, value != null ? "[VALUE]" : "null");
+                        log.debug("  ADD field registered (value present={})", value != null);
                     }
                     case PAUSE -> {
                         long ms = Long.parseLong(command.first());
@@ -117,29 +118,29 @@ public final class ConnectionScriptExecutor {
                     case GET -> {
                         String expanded = macros.expand(command.first(), state == null ? null : uriText(state.responseUri()));
                         URI uri = safeHttpUri(expanded);
-                        log.info("  GET request: {}", SensitiveDataSanitizer.sanitizeUri(uri));
+                        log.info("  GET request: {}", safeEndpoint(uri));
                         state = send(session, "GET", uri, fields, responseFile, collection, cancel, progress);
                         checked = false;
                         resolvedArchiveEntry = "";
                         validatedSha256 = "";
-                        log.info("  GET response: uri={}, payload={}", SensitiveDataSanitizer.sanitizeUri(state.responseUri()), state.payload());
+                        log.info("  GET response: uri={}, payload={}", safeEndpoint(state.responseUri()), state.payload());
                     }
                     case POST -> {
                         String expanded = macros.expand(command.first(), state == null ? null : uriText(state.responseUri()));
                         URI uri = safeHttpUri(expanded);
-                        log.info("  POST request: {}", SensitiveDataSanitizer.sanitizeUri(uri));
+                        log.info("  POST request: {}", safeEndpoint(uri));
                         state = send(session, "POST", uri, fields, responseFile, collection, cancel, progress);
                         checked = false;
                         resolvedArchiveEntry = "";
                         validatedSha256 = "";
-                        log.info("  POST response: uri={}, payload={}", SensitiveDataSanitizer.sanitizeUri(state.responseUri()), state.payload());
+                        log.info("  POST response: uri={}, payload={}", safeEndpoint(state.responseUri()), state.payload());
                     }
                     case REDIR -> {
                         log.debug("  REDIR");
                         if (state == null || !state.redirected()) {
                             throw new DownloadScenarioException("ConnectionScript REDIR: попередній request не мав redirect-result");
                         }
-                        log.info("  REDIR from: {} to: {}", SensitiveDataSanitizer.sanitizeUri(state.requestedUri()), SensitiveDataSanitizer.sanitizeUri(state.responseUri()));
+                        log.info("  REDIR from: {} to: {}", safeEndpoint(state.requestedUri()), safeEndpoint(state.responseUri()));
                     }
                     case CHECK -> {
                         log.debug("  CHECK");
@@ -181,11 +182,13 @@ public final class ConnectionScriptExecutor {
             }
 
             log.info("ConnectionScript SUCCESS: payload={}, responseUri={}, resolvedArchiveEntry={}",
-                    state.payload(), SensitiveDataSanitizer.sanitizeUri(state.responseUri()), resolvedArchiveEntry);
+                    state.payload(), safeEndpoint(state.responseUri()), resolvedArchiveEntry);
             return new Result(state.payload(), state.responseUri(), checked, resolvedArchiveEntry, validatedSha256);
 
         } catch (Exception e) {
-            log.error("ConnectionScript FAILED: {}", e.getMessage(), e);
+            // Throwable messages/stack frames can include expanded URLs or script
+            // literals. Log only the failure kind; the caller retains the exception.
+            log.warn("ConnectionScript FAILED: type={}", e.getClass().getSimpleName());
             // responseFile has a random per-execution name. If it was concurrently replaced,
             // preserve the unexpected bytes rather than deleting an unverified filesystem entry.
             if (Files.exists(responseFile, LinkOption.NOFOLLOW_LINKS)) {
@@ -235,7 +238,7 @@ public final class ConnectionScriptExecutor {
 
     private ResponseState send(ScriptClientSession session, String method, URI uri, List<FormField> fields, Path responseFile,
                                Collection collection, AtomicBoolean cancel, DoubleConsumer progress) throws Exception {
-        log.info("send() START: method={}, uri={}", method, SensitiveDataSanitizer.sanitizeUri(uri));
+        log.info("send() START: method={}, uri={}", method, safeEndpoint(uri));
 
         int retries = method.equals("GET") ? OnlineRetryPolicy.retryCount(settings) : 0;
         Exception last = null;
@@ -270,7 +273,7 @@ public final class ConnectionScriptExecutor {
                 URI responseUri = response.uri();
 
                 log.info("  HTTP {} in {} ms, Content-Type: {}, Content-Length: {}, Response URI: {}",
-                        status, duration, contentType, contentLength, SensitiveDataSanitizer.sanitizeUri(responseUri));
+                        status, duration, contentType, contentLength, safeEndpoint(responseUri));
 
                 if (status < 200 || status >= 300) {
                     String retryAfter = response.headers().firstValue("Retry-After").orElse(null);
@@ -280,7 +283,7 @@ public final class ConnectionScriptExecutor {
                     if (status >= 300 && status < 400) {
                         String location = response.headers().firstValue("Location").orElse(null);
                         if (location != null) {
-                            log.info("  Redirect to: {}", SensitiveDataSanitizer.sanitizeText(location));
+                            log.info("  Redirect received (Location header present)");
                             return new ResponseState(null, uri, URI.create(location));
                         }
                     }
@@ -361,7 +364,7 @@ public final class ConnectionScriptExecutor {
                 // replace e.g. "HTTP 502 ... after 3 attempts" with its class name.
                 throw e;
             } catch (IOException e) {
-                log.warn("  IO error: {}", e.getMessage());
+                log.warn("  IO error: {}", e.getClass().getSimpleName());
                 last = e;
                 boolean retryable = shouldRetryIoForScript(e, method, attempt, retries);
                 if (!retryable
@@ -427,12 +430,26 @@ public final class ConnectionScriptExecutor {
         String token = Base64.getEncoder().encodeToString(
                 (collection.getUser() + ":" + (secret == null ? "" : secret)).getBytes(StandardCharsets.UTF_8));
         request.header("Authorization", "Basic " + token);
-        log.debug("  Added Basic Auth for user: {}", collection.getUser());
+        log.debug("  Added Basic Auth for configured account");
     }
 
     private String decryptPassword(Collection collection) {
         try { return collection.getDecryptedPassword(); }
         catch (Exception e) { throw new SecurityException("Не вдалося дешифрувати credentials online-колекції"); }
+    }
+
+    /**
+     * ConnectionScript URLs may contain expanded %PASS% in path segments or
+     * query parameters with nonstandard names. URI sanitization by key cannot
+     * recognize those. Log only the network endpoint, never path/query/userinfo.
+     */
+    private static String safeEndpoint(URI uri) {
+        if (uri == null || uri.getScheme() == null || uri.getHost() == null) return "<redacted endpoint>";
+        String host = uri.getHost();
+        String printableHost = host.indexOf(':') >= 0 && !host.startsWith("[")
+                ? "[" + host + "]" : host;
+        int port = uri.getPort();
+        return uri.getScheme() + "://" + printableHost + (port >= 0 ? ":" + port : "");
     }
 
     private static URI safeHttpUri(String raw) throws DownloadScenarioException {
@@ -448,7 +465,7 @@ public final class ConnectionScriptExecutor {
             if (uri.getHost() == null) {
                 throw new DownloadScenarioException("ConnectionScript URL не містить host");
             }
-            log.debug("  safe URI: {}", SensitiveDataSanitizer.sanitizeUri(uri));
+            log.debug("  safe URI: {}", safeEndpoint(uri));
             return uri;
         } catch (IllegalArgumentException e) {
             throw new DownloadScenarioException("Некоректний ConnectionScript URL");
