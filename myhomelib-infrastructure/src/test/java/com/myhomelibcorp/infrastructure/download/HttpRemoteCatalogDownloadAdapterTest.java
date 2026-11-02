@@ -176,7 +176,7 @@ class HttpRemoteCatalogDownloadAdapterTest {
                 settings(Map.of("online.retryBaseDelayMs", "1", "online.retryJitterPercent", "0"))).download(
                 null, url, new AtomicBoolean(false), ignored -> { }))
                 .isInstanceOf(IOException.class)
-                .hasMessageContaining("Неповне завантаження каталогу");
+                .hasMessageContaining("Не вдалося завантажити каталог");
         assertThat(requests.get()).isGreaterThanOrEqualTo(1);
         Path target = part.resolveSibling(part.getFileName().toString().replace(".inpx.part", ".inpx"));
         assertThat(target).doesNotExist();
