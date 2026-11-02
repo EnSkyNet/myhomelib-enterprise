@@ -714,7 +714,7 @@ class IncomingFolderWatchAdapterTest {
 
         var enrolledField = IncomingFolderWatchAdapter.class.getDeclaredField("queuedCollections");
         enrolledField.setAccessible(true);
-        assertThat((java.util.Set<?>) enrolledField.get(adapter)).doesNotContain("c1");
+        assertThat(((java.util.Set<?>) enrolledField.get(adapter)).contains("c1")).isFalse();
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM incoming_folder_file WHERE collection_id='c1'", Integer.class)).isZero();
 
