@@ -145,6 +145,61 @@ class JdbcCatalogImportAdapterTest {
     }
 
     @Test
+    void watcherFingerprintChangeReimportsDespiteIdenticalSizeAndMtime() throws Exception {
+        reader.records = List.of(record("original", false, person("Ann", "", "One", "person", "1")));
+        adapter.importCatalog(context(true));
+        int initialOpens = reader.opens;
+        String originalFingerprint = Sha256Support.file(source);
+        var originalMtime = Files.getLastModifiedTime(source);
+
+        // Rewriting equal-length bytes and restoring mtime defeats a size/mtime fast path.
+        Files.writeString(source, "dataset-v2", StandardCharsets.UTF_8);
+        Files.setLastModifiedTime(source, originalMtime);
+        assertThat(Files.size(source)).isEqualTo("dataset-v1".length());
+        assertThat(Files.getLastModifiedTime(source).toMillis())
+                .isEqualTo(originalMtime.toMillis());
+        String newFingerprint = Sha256Support.file(source);
+        assertThat(newFingerprint).isNotEqualTo(originalFingerprint);
+
+        reader.records = List.of(record("replacement", false,
+                person("Bob", "", "Two", "person", "2")));
+        ImportResult result = adapter.importCatalog(watcherContext(newFingerprint));
+
+        assertThat(result.imported()).isOne();
+        assertThat(reader.opens).isEqualTo(initialOpens + 1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM books WHERE id=?",
+                Integer.class, stableId("replacement"))).isOne();
+        assertThat(jdbc.queryForObject("SELECT fingerprint FROM catalog_manifests WHERE source_key=?",
+                String.class, SOURCE_KEY)).isEqualTo(newFingerprint);
+        assertThat(jdbc.queryForObject("PRAGMA integrity_check", String.class)).isEqualTo("ok");
+    }
+
+    @Test
+    void staleWatcherFingerprintCannotReuseManifestWhenMetadataIsUnchanged() throws Exception {
+        reader.records = List.of(record("original", false,
+                person("Ann", "", "One", "person", "1")));
+        adapter.importCatalog(context(true));
+        int initialOpens = reader.opens;
+        String staleFingerprint = Sha256Support.file(source);
+        var originalMtime = Files.getLastModifiedTime(source);
+
+        Files.writeString(source, "dataset-v2", StandardCharsets.UTF_8);
+        Files.setLastModifiedTime(source, originalMtime);
+        assertThat(Files.getLastModifiedTime(source).toMillis())
+                .isEqualTo(originalMtime.toMillis());
+        assertThat(Sha256Support.file(source)).isNotEqualTo(staleFingerprint);
+
+        assertThatThrownBy(() -> adapter.importCatalog(watcherContext(staleFingerprint)))
+                .isInstanceOf(StaleImportSourceException.class)
+                .hasMessageContaining("changed after watcher validation");
+        assertThat(reader.opens).isEqualTo(initialOpens);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM books", Integer.class)).isOne();
+        assertThat(jdbc.queryForObject("SELECT fingerprint FROM catalog_manifests WHERE source_key=?",
+                String.class, SOURCE_KEY)).isEqualTo(staleFingerprint);
+        assertThat(jdbc.queryForObject("PRAGMA integrity_check", String.class)).isEqualTo("ok");
+    }
+
+    @Test
     void incompatibleManifestForcesReparseEvenWhenFileMetadataIsUnchanged() {
         reader.records = List.of(record("one", false, person("Ann", "", "One", "person", "1")));
         adapter.importCatalog(context(true));
@@ -340,6 +395,18 @@ class JdbcCatalogImportAdapterTest {
                 List.of(), "", List.of(), null, null,
                 Map.of("library", "mhl-portable", "locator.kind", "archive_entry"),
                 List.of(), List.of(new ExternalIdentity("catalog:mhl-source-libid", sourceLibId)), List.of());
+    }
+
+    private ImportContext watcherContext(String expectedFingerprint) {
+        return ImportContext.builder()
+                .file(source)
+                .rootDirectory(temp)
+                .catalogSourceKey(SOURCE_KEY)
+                .catalogFullSnapshot(true)
+                .indexAfterSave(false)
+                .batchSize(2)
+                .expectedSourceSha256(expectedFingerprint)
+                .build();
     }
 
     private ImportContext context(boolean full) {

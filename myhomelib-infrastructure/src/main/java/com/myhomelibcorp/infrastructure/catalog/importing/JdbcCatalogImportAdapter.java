@@ -100,7 +100,21 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
         String sourceFormat = reader.formatName();
         CatalogImportManifestStore.Manifest manifest = manifestStore.find(jdbc, sourceKey);
         boolean compatibleManifest = manifestStore.isCompatible(manifest, source, sourceFormat);
-        if (compatibleManifest && manifest.sizeBytes() == size && manifest.mtimeMillis() == mtime) {
+        String expectedWatcherFingerprint = safeExpectedFingerprint(context);
+        if (compatibleManifest && manifest.sizeBytes() == size && manifest.mtimeMillis() == mtime
+                && (expectedWatcherFingerprint.isBlank()
+                    || expectedWatcherFingerprint.equalsIgnoreCase(manifest.fingerprint()))) {
+            // Size and mtime can be preserved by an in-place rewrite or a replace.
+            // A watcher supplies stronger evidence: even when metadata is unchanged,
+            // verify that the actual bytes still match its READY fingerprint.
+            if (!expectedWatcherFingerprint.isBlank()) {
+                assertSourceStatUnchanged(source, sourceStat, context);
+                ImportSourceFingerprintVerifier.verifyExpected(context);
+                assertSourceStatUnchanged(source, sourceStat, context);
+            }
+            if (isCancelled(context.getCancelFlag())) {
+                return ImportResult.cancelled(System.currentTimeMillis() - started);
+            }
             log.info("Catalog source unchanged; reusing compatible v7.1 manifest for {}", source);
             return new ImportResult(0, Math.max(0, manifest.recordCount()), 0, 0,
                     System.currentTimeMillis() - started, ImportStatus.SUCCESS,
@@ -110,7 +124,6 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
         // Watcher-triggered imports have already computed a stable SHA-256 before queueing. Reuse
         // that value here and verify it again immediately before transaction commit. Manual imports
         // compute the strong checksum once after the cheap manifest stat fast-path misses.
-        String expectedWatcherFingerprint = safeExpectedFingerprint(context);
         String fingerprint = !expectedWatcherFingerprint.isBlank()
                 ? expectedWatcherFingerprint
                 : manifestStore.fingerprint(source, context.getCancelFlag());
