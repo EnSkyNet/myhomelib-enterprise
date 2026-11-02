@@ -3,9 +3,28 @@
   "scope": "vendor files; supplementary to Maven; no CVE or license clearance",
   "components": [
     {
+      "path": "tools/converters/libmobi/mobitool.exe",
+      "sha256": "5010513a6b77972fa7da4184501233b826b47528fe713f85938e09f33644cdb8",
+      "sizeBytes": 438351,
+      "name": "mobitool",
+      "version": "unknown (runtime not verified)",
+      "license": "LGPL-3.0 (bundled notice; exact build requires review)",
+      "licenseEvidence": [
+        "tools/converters/libmobi/COPYING"
+      ],
+      "identityEvidence": [
+        "tools/converters/libmobi/mobitool.exe (distribution filename)"
+      ],
+      "metadataStatus": "unverified-native-build",
+      "checkedOn": "2026-10-13",
+      "runtimeVersionVerified": false,
+      "sourceURL": null,
+      "sourceKind": "unresolved upstream build provenance"
+    },
+    {
       "path": "tools/validators/epubcheck/epubcheck.jar",
-      "sha256": "2146665a124998dc6c908010ffe0d09dc4f4c8014f2c8fd6a1aa11f64c40ac93",
-      "sizeBytes": 1244719,
+      "sha256": "9e217890e5e60c00ca9e85b2c5d9d25ab9748e432aad9c07b0a499abffb88be9",
+      "sizeBytes": 1232615,
       "name": "epubcheck",
       "version": "5.4.0",
       "license": "BSD-3-Clause",
@@ -17,8 +36,8 @@
         "tools/validators/epubcheck/epubcheck.jar!/META-INF/maven/org.w3c/epubcheck/pom.properties"
       ],
       "metadataStatus": "embedded-maven-metadata",
-      "checkedOn": "2026-10-13",
-      "runtimeVersionVerified": false,
+      "checkedOn": "2026-11-02",
+      "runtimeVersionVerified": true,
       "sourceURL": "https://repo.maven.apache.org/maven2/org/w3c/epubcheck/5.4.0/",
       "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
       "embeddedMavenComponents": [
@@ -417,33 +436,35 @@
       "purl": "pkg:maven/com.google.guava/guava@33.4.8-jre"
     },
     {
-      "path": "tools/validators/epubcheck/lib/httpclient5-5.1.3.jar",
-      "sha256": "28c759254f4e35319e078bb6ffea75676608dc12cb243b24fb3c8732522977fe",
-      "sizeBytes": 797934,
+      "path": "tools/validators/epubcheck/lib/httpclient5-5.6.5.jar",
+      "sha256": "a10b555f7c85a720d1011a086d679d854b155816cde91a40198cc98c2b0867e8",
+      "sizeBytes": 1059031,
       "name": "httpclient5",
-      "version": "5.1.3",
+      "version": "5.6.5",
       "license": "Apache-2.0",
       "licenseEvidence": [
         "tools/validators/epubcheck/THIRD-PARTY.txt"
       ],
       "identityEvidence": [
-        "tools/validators/epubcheck/lib/httpclient5-5.1.3.jar (distribution filename)",
-        "tools/validators/epubcheck/lib/httpclient5-5.1.3.jar!/META-INF/maven/org.apache.httpcomponents.client5/httpclient5/pom.properties"
+        "tools/validators/epubcheck/lib/httpclient5-5.6.5.jar (distribution filename)",
+        "tools/validators/epubcheck/lib/httpclient5-5.6.5.jar!/META-INF/maven/org.apache.httpcomponents.client5/httpclient5/pom.properties",
+        "tools/validators/epubcheck/lib/httpclient5-5.6.5.jar!/META-INF/maven/org.apache.httpcomponents.client5/httpclient5/pom.xml",
+        "httpclient5-parent-5.6.5.pom (httpcore.version=5.4.4)"
       ],
       "metadataStatus": "embedded-maven-metadata",
-      "checkedOn": "2026-10-13",
-      "runtimeVersionVerified": false,
-      "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/client5/httpclient5/5.1.3/",
-      "sourceKind": "Maven coordinates from local metadata, not an upstream hash verification",
+      "checkedOn": "2026-11-02",
+      "runtimeVersionVerified": true,
+      "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/client5/httpclient5/5.6.5/httpclient5-5.6.5.jar",
+      "sourceKind": "Maven Central SHA-512 verified; embedded Maven metadata and parent dependency management verified",
       "embeddedMavenComponents": [
         {
           "artifactId": "httpclient5",
           "groupId": "org.apache.httpcomponents.client5",
-          "version": "5.1.3"
+          "version": "5.6.5"
         }
       ],
       "group": "org.apache.httpcomponents.client5",
-      "purl": "pkg:maven/org.apache.httpcomponents.client5/httpclient5@5.1.3"
+      "purl": "pkg:maven/org.apache.httpcomponents.client5/httpclient5@5.6.5"
     },
     {
       "path": "tools/validators/epubcheck/lib/httpcore5-5.4.4.jar",
@@ -460,8 +481,8 @@
         "tools/validators/epubcheck/lib/httpcore5-5.4.4.jar!/META-INF/maven/org.apache.httpcomponents.core5/httpcore5/pom.properties"
       ],
       "metadataStatus": "embedded-maven-metadata",
-      "checkedOn": "2026-10-20",
-      "runtimeVersionVerified": false,
+      "checkedOn": "2026-11-02",
+      "runtimeVersionVerified": true,
       "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5/5.4.4/",
       "sourceKind": "Maven Central SHA-256 verified, embedded Maven metadata verified",
       "embeddedMavenComponents": [
@@ -489,8 +510,8 @@
         "tools/validators/epubcheck/lib/httpcore5-h2-5.4.4.jar!/META-INF/maven/org.apache.httpcomponents.core5/httpcore5-h2/pom.properties"
       ],
       "metadataStatus": "embedded-maven-metadata",
-      "checkedOn": "2026-10-20",
-      "runtimeVersionVerified": false,
+      "checkedOn": "2026-11-02",
+      "runtimeVersionVerified": true,
       "sourceURL": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5-h2/5.4.4/",
       "sourceKind": "Maven Central SHA-256 verified, embedded Maven metadata verified",
       "embeddedMavenComponents": [
@@ -1092,25 +1113,6 @@
       "sourceURL": "https://github.com/w3c/epubcheck",
       "sourceKind": "upstream project; exact distribution build not independently verified",
       "embeddedMavenComponents": []
-    },
-    {
-      "path": "tools/converters/libmobi/mobitool.exe",
-      "sha256": "5010513a6b77972fa7da4184501233b826b47528fe713f85938e09f33644cdb8",
-      "sizeBytes": 438351,
-      "name": "mobitool",
-      "version": "unknown (runtime not verified)",
-      "license": "LGPL-3.0 (bundled notice; exact build requires review)",
-      "licenseEvidence": [
-        "tools/converters/libmobi/COPYING"
-      ],
-      "identityEvidence": [
-        "tools/converters/libmobi/mobitool.exe (distribution filename)"
-      ],
-      "metadataStatus": "unverified-native-build",
-      "checkedOn": "2026-10-13",
-      "runtimeVersionVerified": false,
-      "sourceURL": null,
-      "sourceKind": "unresolved upstream build provenance"
     }
   ]
 }

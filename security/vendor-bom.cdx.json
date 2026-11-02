@@ -13,6 +13,43 @@
   },
   "components": [
     {
+      "type": "file",
+      "bom-ref": "tools/converters/libmobi/mobitool.exe",
+      "name": "mobitool",
+      "version": "unknown (runtime not verified)",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5010513a6b77972fa7da4184501233b826b47528fe713f85938e09f33644cdb8"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "LGPL-3.0 (bundled notice; exact build requires review)"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "myhomelib:path",
+          "value": "tools/converters/libmobi/mobitool.exe"
+        },
+        {
+          "name": "myhomelib:checkedOn",
+          "value": "2026-10-13"
+        },
+        {
+          "name": "myhomelib:metadataStatus",
+          "value": "unverified-native-build"
+        },
+        {
+          "name": "myhomelib:sourceKind",
+          "value": "unresolved upstream build provenance"
+        }
+      ]
+    },
+    {
       "type": "library",
       "bom-ref": "tools/validators/epubcheck/epubcheck.jar",
       "name": "epubcheck",
@@ -20,7 +57,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "2146665a124998dc6c908010ffe0d09dc4f4c8014f2c8fd6a1aa11f64c40ac93"
+          "content": "9e217890e5e60c00ca9e85b2c5d9d25ab9748e432aad9c07b0a499abffb88be9"
         }
       ],
       "licenses": [
@@ -37,7 +74,7 @@
         },
         {
           "name": "myhomelib:checkedOn",
-          "value": "2026-10-13"
+          "value": "2026-11-02"
         },
         {
           "name": "myhomelib:metadataStatus",
@@ -687,13 +724,13 @@
     },
     {
       "type": "library",
-      "bom-ref": "tools/validators/epubcheck/lib/httpclient5-5.1.3.jar",
+      "bom-ref": "tools/validators/epubcheck/lib/httpclient5-5.6.5.jar",
       "name": "httpclient5",
-      "version": "5.1.3",
+      "version": "5.6.5",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "28c759254f4e35319e078bb6ffea75676608dc12cb243b24fb3c8732522977fe"
+          "content": "a10b555f7c85a720d1011a086d679d854b155816cde91a40198cc98c2b0867e8"
         }
       ],
       "licenses": [
@@ -706,11 +743,11 @@
       "properties": [
         {
           "name": "myhomelib:path",
-          "value": "tools/validators/epubcheck/lib/httpclient5-5.1.3.jar"
+          "value": "tools/validators/epubcheck/lib/httpclient5-5.6.5.jar"
         },
         {
           "name": "myhomelib:checkedOn",
-          "value": "2026-10-13"
+          "value": "2026-11-02"
         },
         {
           "name": "myhomelib:metadataStatus",
@@ -718,15 +755,15 @@
         },
         {
           "name": "myhomelib:sourceKind",
-          "value": "Maven coordinates from local metadata, not an upstream hash verification"
+          "value": "Maven Central SHA-512 verified; embedded Maven metadata and parent dependency management verified"
         }
       ],
-      "purl": "pkg:maven/org.apache.httpcomponents.client5/httpclient5@5.1.3",
+      "purl": "pkg:maven/org.apache.httpcomponents.client5/httpclient5@5.6.5",
       "group": "org.apache.httpcomponents.client5",
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/client5/httpclient5/5.1.3/"
+          "url": "https://repo.maven.apache.org/maven2/org/apache/httpcomponents/client5/httpclient5/5.6.5/httpclient5-5.6.5.jar"
         }
       ]
     },
@@ -755,7 +792,7 @@
         },
         {
           "name": "myhomelib:checkedOn",
-          "value": "2026-10-20"
+          "value": "2026-11-02"
         },
         {
           "name": "myhomelib:metadataStatus",
@@ -800,7 +837,7 @@
         },
         {
           "name": "myhomelib:checkedOn",
-          "value": "2026-10-20"
+          "value": "2026-11-02"
         },
         {
           "name": "myhomelib:metadataStatus",
@@ -1795,43 +1832,6 @@
         {
           "type": "website",
           "url": "https://github.com/w3c/epubcheck"
-        }
-      ]
-    },
-    {
-      "type": "file",
-      "bom-ref": "tools/converters/libmobi/mobitool.exe",
-      "name": "mobitool",
-      "version": "unknown (runtime not verified)",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "5010513a6b77972fa7da4184501233b826b47528fe713f85938e09f33644cdb8"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "name": "LGPL-3.0 (bundled notice; exact build requires review)"
-          }
-        }
-      ],
-      "properties": [
-        {
-          "name": "myhomelib:path",
-          "value": "tools/converters/libmobi/mobitool.exe"
-        },
-        {
-          "name": "myhomelib:checkedOn",
-          "value": "2026-10-13"
-        },
-        {
-          "name": "myhomelib:metadataStatus",
-          "value": "unverified-native-build"
-        },
-        {
-          "name": "myhomelib:sourceKind",
-          "value": "unresolved upstream build provenance"
         }
       ]
     }
