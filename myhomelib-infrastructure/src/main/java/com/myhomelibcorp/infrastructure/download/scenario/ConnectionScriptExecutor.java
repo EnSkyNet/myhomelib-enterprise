@@ -300,6 +300,15 @@ public final class ConnectionScriptExecutor {
                     throw new NonRetryableRequestException(failure.getMessage());
                 }
 
+                // ConnectionScript always requests a complete representation (no Range).
+                // A 206 body may be only a small valid-looking prefix, so treating
+                // it as an ordinary 2xx download silently publishes truncated books.
+                if (status == 206) {
+                    try (InputStream ignoredBody = response.body()) { }
+                    throw new NonRetryableRequestException(
+                            "HTTP 206: неповний payload без запиту Range у ConnectionScript");
+                }
+
                 long total = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
                 long maxDownloadBytes = maxDownloadBytes();
                 long minFreeSpaceBytes = minFreeSpaceBytes();

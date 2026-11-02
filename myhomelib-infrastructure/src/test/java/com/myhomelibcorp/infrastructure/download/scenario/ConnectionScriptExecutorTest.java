@@ -114,6 +114,36 @@ class ConnectionScriptExecutorTest {
     }
 
     @Test
+    void rejectsUnrequestedPartial206WithoutPublishingTruncatedBook() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/truncated", exchange -> {
+            requests.incrementAndGet();
+            assertThat(exchange.getRequestHeaders().getFirst("Range")).isNull();
+            byte[] fragment = "book".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Range", "bytes 0-3/100");
+            exchange.sendResponseHeaders(206, fragment.length);
+            exchange.getResponseBody().write(fragment);
+            exchange.close();
+        });
+        server.start();
+        MemorySettings cfg = settings();
+        cfg.put("online.retryCount", "3");
+        BookDto book = BookDto.builder().id("partial").fileName("book.txt").build();
+        Path target = temp.resolve("book.txt");
+
+        assertThatThrownBy(() -> executor(cfg).execute(
+                "GET " + baseUrl() + "truncated\\nCHECK",
+                book, collection(null, null), temp, "book.txt", target,
+                false, null, ignored -> { }))
+                .isInstanceOf(DownloadScenarioException.class)
+                .hasMessageContaining("HTTP 206")
+                .hasMessageContaining("Range");
+        assertThat(requests.get()).isOne();
+        assertThat(target).doesNotExist();
+    }
+
+    @Test
     void defaultPolicyRetriesTransient502AndThenSucceeds() throws Exception {
         AtomicInteger requests = new AtomicInteger();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
