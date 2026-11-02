@@ -280,6 +280,16 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 HttpResponse<InputStream> response = client().send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
                 int status = response.statusCode();
 
+                // No Range was sent for a fresh request. Even a structurally valid
+                // INPX/ZIP may be only a partial representation when the server
+                // advertises 206, so it must never be published as a full catalog.
+                if (status == 206 && offset == 0L) {
+                    closeQuietly(response.body());
+                    throw new NonRetryableCatalogDownloadException(
+                            "HTTP 206: неповний каталог без запиту Range: "
+                                    + SensitiveDataSanitizer.sanitizeUri(uri));
+                }
+
                 boolean resumed = offset > 0 && status == 206;
                 if (resumed) {
                     try {
@@ -328,6 +338,10 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 }
 
                 long responseLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+                // Content-Length may be absent for chunked HTTP 206. The Content-Range
+                // still declares exactly how many bytes must have arrived in this response.
+                long expectedPartialBodyLength = resumed
+                        ? HttpResumeSupport.expectedPartialBodyLength(response) : -1L;
                 long maxDownloadBytes = maxDownloadBytes();
                 long minFreeSpaceBytes = minFreeSpaceBytes();
                 if (offset > maxDownloadBytes
@@ -416,6 +430,14 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 if (bodyFailure != null) throw bodyFailure;
 
                 long actual = partSnapshot.size();
+                if (expectedPartialBodyLength >= 0
+                        && actual - offset != expectedPartialBodyLength) {
+                    throw new RetryableDownloadException(
+                            "Неповне завантаження каталогу: отримано " + (actual - offset)
+                                    + " з " + expectedPartialBodyLength
+                                    + " байт поточної HTTP-відповіді для "
+                                    + SensitiveDataSanitizer.sanitizeUri(uri));
+                }
                 if (expectedTotal > 0 && actual != expectedTotal) {
                     if (actual > expectedTotal) {
                         removeOwnedCatalogPartial(part, partSnapshot, "Oversized catalog partial cleanup");

@@ -122,6 +122,66 @@ class HttpRemoteCatalogDownloadAdapterTest {
     }
 
 
+
+    @Test
+    void unsolicitedHttp206CannotPublishEvenValidZipBytes() throws Exception {
+        byte[] archive = validInpx("20261102");
+        AtomicInteger requests = new AtomicInteger();
+        server = start(exchange -> {
+            requests.incrementAndGet();
+            assertThat(exchange.getRequestHeaders().getFirst("Range")).isNull();
+            exchange.getResponseHeaders().add("Content-Type", "application/zip");
+            exchange.getResponseHeaders().add("Content-Range",
+                    "bytes 0-" + (archive.length - 1) + "/" + (archive.length + 20));
+            respond(exchange, 206, archive);
+        });
+        String url = baseUrl() + "catalog.inpx";
+
+        assertThatThrownBy(() -> new HttpRemoteCatalogDownloadAdapter().download(
+                null, url, new AtomicBoolean(false), ignored -> { }))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("HTTP 206")
+                .hasMessageContaining("Range");
+        assertThat(requests.get()).isOne();
+        Path target = temp.resolve("cache/catalog-updates/catalog-" + shortHash(url) + ".inpx");
+        assertThat(target).doesNotExist();
+    }
+
+    @Test
+    void chunkedResumeMustMatchAdvertisedRangeEvenWithValidZipBytes() throws Exception {
+        byte[] archive = validInpx("20261102");
+        int prefix = Math.min(32, archive.length / 2);
+        AtomicInteger requests = new AtomicInteger();
+        server = start(exchange -> {
+            requests.incrementAndGet();
+            String range = exchange.getRequestHeaders().getFirst("Range");
+            assertThat(range).startsWith("bytes=").endsWith("-");
+            assertThat(exchange.getRequestHeaders().getFirst("If-Range")).isEqualTo("\"catalog-v11\"");
+            int start = Integer.parseInt(range.substring(6, range.length() - 1));
+            byte[] suffix = Arrays.copyOfRange(archive, Math.min(start, archive.length), archive.length);
+            exchange.getResponseHeaders().add("Content-Type", "application/zip");
+            exchange.getResponseHeaders().add("ETag", "\"catalog-v11\"");
+            exchange.getResponseHeaders().add("Content-Range",
+                    "bytes " + start + "-" + (start + suffix.length + 7) + "/*");
+            exchange.sendResponseHeaders(206, 0); // chunked: no Content-Length
+            exchange.getResponseBody().write(suffix);
+        });
+        String url = baseUrl() + "catalog.inpx";
+        Path part = temp.resolve("cache/catalog-updates/catalog-" + shortHash(url) + ".inpx.part");
+        Files.createDirectories(part.getParent());
+        Files.write(part, Arrays.copyOf(archive, prefix));
+        writeResumeMetadata(part.resolveSibling(part.getFileName() + ".meta"), url, "\"catalog-v11\"");
+
+        assertThatThrownBy(() -> new HttpRemoteCatalogDownloadAdapter(
+                settings(Map.of("online.retryBaseDelayMs", "1", "online.retryJitterPercent", "0"))).download(
+                null, url, new AtomicBoolean(false), ignored -> { }))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("Неповне завантаження каталогу");
+        assertThat(requests.get()).isGreaterThanOrEqualTo(1);
+        Path target = part.resolveSibling(part.getFileName().toString().replace(".inpx.part", ".inpx"));
+        assertThat(target).doesNotExist();
+    }
+
     @Test
     void malformedResumeRangeFallsBackToFreshCatalogDownload() throws Exception {
         byte[] archive = validInpx("20260927");
