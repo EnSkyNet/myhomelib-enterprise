@@ -354,6 +354,16 @@ class ConnectionScriptExecutorTest {
                     book, collection(null, secret), temp, "book.txt",
                     temp.resolve("book.txt"), false, null, ignored -> { });
             assertThat(Files.readString(result.payload())).isEqualTo("book");
+            // The error path must also avoid dumping expanded URLs in throwable
+            // stack traces or raw IOException messages.
+            MemorySettings noRetry = settings();
+            noRetry.put("online.retryCount", "0");
+            assertThatThrownBy(() -> executor(noRetry).execute(
+                    "GET http://127.0.0.1:1/%PASS%?view=public",
+                    book, collection(null, secret), temp, "failed.txt",
+                    temp.resolve("failed.txt"), false, null, ignored -> { }))
+                    .isInstanceOf(DownloadScenarioException.class)
+                    .hasMessageNotContaining(secret);
             var messages = logs.list.stream()
                     .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
             assertThat(messages).anyMatch(message -> message.contains("command[0]: type=ADD"));

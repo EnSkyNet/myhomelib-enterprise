@@ -1,7 +1,6 @@
 package com.myhomelibcorp.infrastructure.download.scenario;
 
 import com.myhomelibcorp.infrastructure.download.DownloadSpaceSupport;
-import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.util.SafeFilePublication;
