@@ -7,7 +7,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.sqlite.SQLiteConfig;
-import org.sqlite.SQLiteDataSource;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.file.Files;
@@ -23,10 +24,15 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class IncomingFolderWatchAdapterTest {
     @TempDir Path tempDir;
     private IncomingFolderWatchAdapter adapter;
+    private HikariDataSource metadataDataSource;
 
     @AfterEach
     void close() {
-        if (adapter != null) adapter.shutdown();
+        try {
+            if (adapter != null) adapter.shutdown();
+        } finally {
+            if (metadataDataSource != null) metadataDataSource.close();
+        }
     }
 
     @Test
@@ -1232,14 +1238,29 @@ class IncomingFolderWatchAdapterTest {
         // foreign-key and 15-second SQLITE_BUSY wait to every pooled connection.
         // A zero-timeout test DataSource makes the real WatchService + SQLite
         // concurrent replay regression fail at the first short writer lock.
-        SQLiteConfig config = new SQLiteConfig();
-        config.enforceForeignKeys(true);
-        config.setBusyTimeout(15_000);
-        SQLiteDataSource ds = new SQLiteDataSource(config);
-        ds.setUrl("jdbc:sqlite:" + tempDir.resolve("meta.db"));
-        JdbcTemplate jdbc = new JdbcTemplate(ds);
+        // Production MetadataDatabaseConfig uses a bounded HikariCP pool, not
+        // one new SQLite physical connection per JdbcTemplate statement.
+        // Without this, 352 small files perform thousands of connection opens
+        // on Windows and the 40-second overflow regression tests connection
+        // setup latency instead of the real application behavior.
+        SQLiteConfig sqlite = new SQLiteConfig();
+        sqlite.enforceForeignKeys(true);
+        sqlite.setBusyTimeout(15_000);
+        HikariConfig pool = new HikariConfig();
+        pool.setJdbcUrl("jdbc:sqlite:" + tempDir.resolve("meta.db"));
+        pool.setDriverClassName("org.sqlite.JDBC");
+        pool.setMaximumPoolSize(2);
+        pool.setMinimumIdle(1);
+        pool.setConnectionTimeout(30_000);
+        pool.setPoolName("IncomingWatchTestMetaDB");
+        for (var entry : sqlite.toProperties().entrySet()) {
+            pool.addDataSourceProperty(String.valueOf(entry.getKey()), entry.getValue());
+        }
+        metadataDataSource = new HikariDataSource(pool);
+        JdbcTemplate jdbc = new JdbcTemplate(metadataDataSource);
         assertThat(jdbc.queryForObject("PRAGMA busy_timeout", Integer.class)).isEqualTo(15_000);
         assertThat(jdbc.queryForObject("PRAGMA foreign_keys", Integer.class)).isEqualTo(1);
+        assertThat(metadataDataSource.getMaximumPoolSize()).isEqualTo(2);
         jdbc.execute("CREATE TABLE collections(id TEXT PRIMARY KEY, name TEXT NOT NULL)");
         jdbc.update("INSERT INTO collections(id,name) VALUES('c1','Test')");
         jdbc.execute("""
