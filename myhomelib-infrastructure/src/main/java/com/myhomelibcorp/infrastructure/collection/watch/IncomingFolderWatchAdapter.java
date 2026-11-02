@@ -390,7 +390,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                 synchronized (pendingLock) {
                     if (pending.get(candidateKey) != replacement) return;
                 }
-                try { observeCandidate(collectionId, file); }
+                try { observeCandidate(collectionId, file, replacement); }
                 catch (RuntimeException failure) {
                     log.warn("Incoming candidate check failed for {}: {}", file, safeMessage(failure));
                 } finally {
@@ -546,7 +546,13 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         return comparison == 0 ? path.compareTo(otherPath) : comparison;
     }
 
-    private void observeCandidate(String collectionId, Path file) {
+    private void observeCandidate(String collectionId, Path file, PendingTask activeTask) {
+        synchronized (pendingLock) {
+            // Cancellation does not interrupt an observer already performing file I/O.
+            // An old observer must not resume after stop or watcher reconfiguration.
+            if (!queuedCollections.contains(collectionId)
+                    || pending.get(key(collectionId, file)) != activeTask) return;
+        }
         WatchSettings state = loadWatchSettings(collectionId).orElse(null);
         if (state == null || file == null) return;
         Path normalized = file.toAbsolutePath().normalize();
@@ -614,21 +620,28 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                     """, truncate("HASH_ERROR: " + safeMessage(failure)), now(), collectionId, normalize(normalized));
             return;
         }
-        if (alreadyImportedFingerprint(collectionId, normalized, fingerprint)) {
+        synchronized (pendingLock) {
+            // Serialize final publication with stopMonitoring and task replacement:
+            // a stale hash result must never publish READY after its watch has stopped.
+            if (!queuedCollections.contains(collectionId)
+                    || pending.get(key(collectionId, normalized)) != activeTask) return;
+            if (alreadyImportedFingerprint(collectionId, normalized, fingerprint)) {
+                jdbc.update("""
+                        UPDATE incoming_folder_file
+                           SET fingerprint=?, status='DUPLICATE_CONTENT', last_error=NULL, updated_at=?
+                         WHERE collection_id=? AND file_path=?
+                        """, fingerprint, now(), collectionId, normalize(normalized));
+                return;
+            }
+            boolean publish = old.status != IncomingFolderCandidateStatus.READY
+                    || !fingerprint.equals(old.fingerprint);
             jdbc.update("""
                     UPDATE incoming_folder_file
-                       SET fingerprint=?, status='DUPLICATE_CONTENT', last_error=NULL, updated_at=?
+                       SET fingerprint=?, status='READY', last_error=NULL, updated_at=?
                      WHERE collection_id=? AND file_path=?
                     """, fingerprint, now(), collectionId, normalize(normalized));
-            return;
+            if (publish) events.publish(new IncomingFolderFileReadyEvent(collectionId, normalized, fingerprint));
         }
-        boolean publish = old.status != IncomingFolderCandidateStatus.READY || !fingerprint.equals(old.fingerprint);
-        jdbc.update("""
-                UPDATE incoming_folder_file
-                   SET fingerprint=?, status='READY', last_error=NULL, updated_at=?
-                 WHERE collection_id=? AND file_path=?
-                """, fingerprint, now(), collectionId, normalize(normalized));
-        if (publish) events.publish(new IncomingFolderFileReadyEvent(collectionId, normalized, fingerprint));
     }
 
     private void upsertWaiting(String collectionId, Path file, long size, long mtime, String signatureSeenAt, String error) {

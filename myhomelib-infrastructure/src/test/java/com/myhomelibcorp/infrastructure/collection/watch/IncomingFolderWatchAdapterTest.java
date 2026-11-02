@@ -724,6 +724,45 @@ class IncomingFolderWatchAdapterTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(value = 20)
+    void stoppedWatchCannotPublishReadyFromAnAlreadyRunningHash() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        DomainEventPublisher events = mock(DomainEventPublisher.class);
+        var hashing = new java.util.concurrent.CountDownLatch(1);
+        var releaseHash = new java.util.concurrent.CountDownLatch(1);
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), events) {
+            @Override
+            String fingerprintFile(Path file) throws java.io.IOException {
+                hashing.countDown();
+                try {
+                    if (!releaseHash.await(8, java.util.concurrent.TimeUnit.SECONDS)) {
+                        throw new java.io.IOException("Timed out waiting to release synthetic hash");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new java.io.IOException("Interrupted synthetic hash", interrupted);
+                }
+                return super.fingerprintFile(file);
+            }
+        };
+        Path incoming = Files.createDirectory(tempDir.resolve("stop-during-hash"));
+        adapter.configure("c1", incoming, false, 1, 1);
+        Files.writeString(incoming.resolve("book.txt"), "synthetic book");
+        adapter.scanNow("c1");
+
+        try {
+            assertThat(hashing.await(8, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            // Cancel the already-running observer; ScheduledFuture.cancel(false)
+            // cannot prevent it from completing its hash after release.
+            adapter.stopMonitoring("c1");
+        } finally {
+            releaseHash.countDown();
+        }
+        verify(events, after(1000).never()).publish(any(IncomingFolderFileReadyEvent.class));
+        assertThat(adapter.listReady("c1", 10)).isEmpty();
+    }
+
+    @Test
     void stabilityGateThenContentFingerprintPreventsSecondImportCandidate() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         DomainEventPublisher events = mock(DomainEventPublisher.class);
