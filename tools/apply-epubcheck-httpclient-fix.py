@@ -52,26 +52,27 @@ def unfold_manifest(data: bytes) -> list[str]:
 
 
 def wrap_manifest(lines: list[str]) -> bytes:
-    physical: list[str] = []
-    for line in lines:
-        if not line.startswith("Class-Path: "):
-            physical.append(line)
-            continue
-        prefix = "Class-Path: "
-        current = prefix
-        for token in line[len(prefix):].split():
-            candidate = current + ("" if current == prefix else " ") + token
-            if len(candidate.encode("utf-8")) > 70 and current != prefix:
-                physical.append(current)
-                # The first space on a continuation line is stripped by the
-                # JAR manifest reader. A second space preserves the separator
-                # between two Class-Path entries across the physical wrap.
-                current = "  " + token
-            else:
-                current = candidate
-        physical.append(current)
-    return ("\r\n".join(physical) + "\r\n").encode("utf-8")
+    """Fold every manifest attribute at UTF-8 boundaries (JAR limit: 72 bytes).
 
+    Continuation lines start with a single added space that the JAR reader
+    removes when unfolding. Do not drop actual whitespace from the value:
+    Class-Path separators and long custom attributes must round-trip exactly.
+    """
+    physical: list[str] = []
+    for logical in lines:
+        remaining = logical.encode("utf-8")
+        while len(remaining) > 70:
+            cut = 70
+            # A continuation must never divide a multibyte UTF-8 character.
+            while cut > 0 and (remaining[cut] & 0xC0) == 0x80:
+                cut -= 1
+            if cut == 0:
+                raise ValueError("Cannot safely fold UTF-8 manifest field")
+            physical.append(remaining[:cut].decode("utf-8"))
+            remaining = b" " + remaining[cut:]
+        physical.append(remaining.decode("utf-8"))
+    # Manifest sections must end with a blank physical line.
+    return ("\r\n".join(physical) + "\r\n\r\n").encode("utf-8")
 
 def update_manifest(data: bytes, lib_dir: Path, future_files: set[str] | None = None) -> bytes:
     future_files = future_files or set()

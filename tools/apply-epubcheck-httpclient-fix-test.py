@@ -65,6 +65,19 @@ class EpubcheckManifestUpdateTest(unittest.TestCase):
             ], classpaths[0].split(": ", 1)[1].split())
             self.assertNotIn("5.1.3.jar", classpaths[0])
 
+    def test_long_non_class_path_fields_and_unicode_round_trip(self):
+        source = [
+            "Manifest-Version: 1.0",
+            "Created-By: " + ("Long Field Value with spaces " * 8),
+            "Implementation-Title: " + ("Українська назва " * 12),
+        ]
+        encoded = apply.wrap_manifest(source)
+        self.assertTrue(encoded.endswith(b"\r\n\r\n"))
+        self.assertEqual(source, apply.unfold_manifest(encoded))
+        self.assertTrue(all(
+            len(line) <= 72 for line in encoded.split(b"\r\n") if line
+        ))
+
     def test_unfold_rejects_orphan_continuation(self):
         with self.assertRaisesRegex(ValueError, "continuation"):
             apply.unfold_manifest(b" orphan\r\n")
