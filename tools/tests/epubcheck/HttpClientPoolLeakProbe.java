@@ -7,7 +7,7 @@ import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
-import org.apache.hc.core5.util.TimeValue;
+import org.apache.hc.core5.util.Timeout;
 import org.xmlresolver.ResolverFeature;
 import org.xmlresolver.ResourceConnection;
 import org.xmlresolver.XMLResolverConfiguration;
@@ -87,8 +87,8 @@ public final class HttpClientPoolLeakProbe {
                 .setMaxConnPerRoute(1)
                 .build();
         RequestConfig requestConfig = RequestConfig.custom()
-                .setConnectionRequestTimeout(TimeValue.ofSeconds(2))
-                .setResponseTimeout(TimeValue.ofSeconds(2))
+                .setConnectionRequestTimeout(Timeout.ofSeconds(2))
+                .setResponseTimeout(Timeout.ofSeconds(2))
                 .build();
 
         try (CloseableHttpClient client = HttpClients.custom()
