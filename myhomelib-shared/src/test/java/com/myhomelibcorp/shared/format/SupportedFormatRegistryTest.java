@@ -62,6 +62,14 @@ class SupportedFormatRegistryTest {
             assertThat(format.family()).isEqualTo(SupportedFormat.Family.BOOK);
             assertThat(format.readerSupported()).isTrue();
         });
+        for (String id : java.util.List.of("7z", "rar")) {
+            assertThat(registry.byId(id)).get().satisfies(format -> {
+                assertThat(format.family()).isEqualTo(SupportedFormat.Family.ARCHIVE);
+                assertThat(format.readerSupported()).isTrue();
+                assertThat(format.coverSupported()).isTrue();
+                assertThat(format.fullTextSupported()).isFalse();
+            });
+        }
         assertThat(registry.byId("docx")).get().extracting(SupportedFormat::importMode)
                 .isEqualTo(SupportedFormat.ImportMode.GENERIC);
     }
