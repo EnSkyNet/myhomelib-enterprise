@@ -227,9 +227,9 @@ public class ExportController {
                     extractOnlyCheckBox.setSelected(false);
                     extractOnlyCheckBox.setDisable(true);
                     formatComboBox.getItems().setAll(
-                            ExportRequest.ExportFormat.EPUB, ExportRequest.ExportFormat.FB2,
-                            ExportRequest.ExportFormat.TXT);
-                    formatComboBox.setValue(ExportRequest.ExportFormat.EPUB);
+                            ExportRequest.ExportFormat.FB2, ExportRequest.ExportFormat.FB2_ZIP,
+                            ExportRequest.ExportFormat.EPUB, ExportRequest.ExportFormat.TXT);
+                    formatComboBox.setValue(ExportRequest.ExportFormat.FB2);
                     if (archiveFormatComboBox != null) {
                         archiveFormatComboBox.setValue(ExportRequest.ArchiveFormat.NONE);
                     }
@@ -286,10 +286,10 @@ public class ExportController {
                 .filter(b -> b.getId() != null && !b.getId().isBlank()).toList();
         selectedBookIds = validBooks.stream().map(b -> BookId.fromString(b.getId())).collect(Collectors.toList());
         if (combineSeriesCheckBox != null && combineSeriesCheckBox.isSelected()) {
-            formatComboBox.getItems().setAll(ExportRequest.ExportFormat.EPUB, ExportRequest.ExportFormat.FB2,
-                            ExportRequest.ExportFormat.TXT);
+            formatComboBox.getItems().setAll(ExportRequest.ExportFormat.FB2, ExportRequest.ExportFormat.FB2_ZIP,
+                            ExportRequest.ExportFormat.EPUB, ExportRequest.ExportFormat.TXT);
             if (formatComboBox.getValue() == null || !formatComboBox.getItems().contains(formatComboBox.getValue())) {
-                formatComboBox.setValue(ExportRequest.ExportFormat.EPUB);
+                formatComboBox.setValue(ExportRequest.ExportFormat.FB2);
             }
             selectedBooksLabel.setText(i18n.format("ui.export.selection.count", validBooks.size()));
             exportButton.setDisable(exportRunning || validBooks.isEmpty());
