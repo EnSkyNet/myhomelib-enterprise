@@ -77,10 +77,10 @@ class SeriesOmnibusWriterTest {
     }
 
     @Test
-    void mergedFb2IsValidXmlWithOrderedBookSections() throws Exception {
+    void mergedFb2PreservesNativeBooksAndChapterHeadings() throws Exception {
         BookResourcePort resources = mock(BookResourcePort.class);
-        Book first = txt(resources, "Перша & книга", "Текст <першої>");
-        Book second = txt(resources, "Друга", "Текст другої");
+        Book first = fb2(resources, "Перша & книга", "Перша глава", "Текст <першої>");
+        Book second = fb2(resources, "Друга", "Друга глава", "Текст другої");
         Path output = folder.resolve("series.fb2");
 
         new SeriesOmnibusWriter(resources).assemble(
@@ -88,17 +88,40 @@ class SeriesOmnibusWriterTest {
                         List.of(first, second)),
                 output, ExportRequest.ExportFormat.FB2, () -> false);
 
-        String xml = Files.readString(output);
-        assertThat(xml).contains("<FictionBook", "<nickname>Автор &amp; команда</nickname>",
-                "<title><p>Перша &amp; книга</p></title>", "Текст &lt;першої&gt;",
-                "<title><p>Друга</p></title>", "Текст другої");
-        assertThat(xml.indexOf("Текст &lt;першої&gt;")).isLessThan(xml.indexOf("Текст другої"));
         javax.xml.parsers.DocumentBuilderFactory factory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
         factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
         factory.setNamespaceAware(true);
+        org.w3c.dom.Document doc;
         try (InputStream in = Files.newInputStream(output)) {
-            assertThat(factory.newDocumentBuilder().parse(in).getDocumentElement().getLocalName())
-                    .isEqualTo("FictionBook");
+            doc = factory.newDocumentBuilder().parse(in);
+        }
+        String ns = "http://www.gribuser.ru/xml/fictionbook/2.0";
+        assertThat(doc.getDocumentElement().getLocalName()).isEqualTo("FictionBook");
+        org.w3c.dom.NodeList sections = doc.getElementsByTagNameNS(ns, "section");
+        assertThat(sections.getLength()).isGreaterThanOrEqualTo(5); // contents, volumes, chapters
+        String content = doc.getDocumentElement().getTextContent();
+        assertThat(content).contains("Перша & книга", "Текст <першої>",
+                "Перша глава", "Друга глава", "Текст другої",
+                "Загальний зміст");
+        assertThat(content.indexOf("Текст <першої>")).isLessThan(content.indexOf("Текст другої"));
+        assertThat(Files.readString(output)).contains("mhl_contents", "mhl_volume_1", "mhl_volume_2");
+    }
+
+    @Test
+    void singleFb2ZipContainsOneReadableMergedBook() throws Exception {
+        BookResourcePort resources = mock(BookResourcePort.class);
+        Book first = fb2(resources, "First", "Chapter", "Text");
+        Path output = folder.resolve("series.fb2.zip");
+
+        new SeriesOmnibusWriter(resources).assemble(
+                new SeriesOmnibusPlanner.SeriesPlan("Author", "Series", List.of(first)),
+                output, ExportRequest.ExportFormat.FB2_ZIP, () -> false);
+
+        try (ZipFile archive = new ZipFile(output.toFile(), StandardCharsets.UTF_8)) {
+            assertThat(archive.size()).isOne();
+            var entry = archive.entries().nextElement();
+            assertThat(entry.getName()).endsWith(".fb2");
+            assertThat(read(archive, entry.getName())).contains("FictionBook", "Загальний зміст");
         }
     }
 
@@ -137,6 +160,37 @@ class SeriesOmnibusWriterTest {
         when(resources.readBookData(book)).thenAnswer(call ->
                 Optional.of(new ByteArrayInputStream(payload)));
         return book;
+    }
+
+    private static Book fb2(BookResourcePort resources, String title, String chapter, String body) {
+        Book book = mock(Book.class);
+        BookId id = BookId.generate();
+        when(book.getId()).thenReturn(id);
+        when(book.getTitle()).thenReturn(title);
+        when(book.getFileName()).thenReturn(id.asString() + ".fb2");
+        String xml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+                  <description><title-info>
+                    <genre>sf</genre>
+                    <author><nickname>Author</nickname></author>
+                    <book-title>Fixture</book-title><lang>uk</lang>
+                  </title-info></description>
+                  <body><section id="first"><title><p>%s</p></title>
+                    <section id="chapter"><title><p>%s</p></title>
+                      <p>%s</p>
+                    </section>
+                  </section></body>
+                </FictionBook>
+                """.formatted(escapeXml(title), escapeXml(chapter), escapeXml(body));
+        byte[] bytes = xml.getBytes(StandardCharsets.UTF_8);
+        when(resources.readBookData(book)).thenAnswer(call ->
+                Optional.of(new ByteArrayInputStream(bytes)));
+        return book;
+    }
+
+    private static String escapeXml(String value) {
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private static String read(ZipFile archive, String entry) throws Exception {
