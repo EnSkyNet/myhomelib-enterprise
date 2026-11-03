@@ -35,7 +35,8 @@ import java.util.zip.ZipOutputStream;
 
 /**
  * Text-only omnibus of a whole author series. EPUB3 has a chapter and TOC link
- * for each source book; TXT is a single readable text. The mode deliberately
+ * for each source book; FB2 creates a section per book, and TXT is plain text.
+ * The mode deliberately
  * does not claim to preserve illustrations, CSS or per-book binary assets.
  */
 @Component
@@ -52,8 +53,10 @@ public final class SeriesOmnibusWriter implements SeriesOmnibusPort {
         if (plan == null || stagedOutput == null || plan.books().isEmpty()) {
             throw new IOException("Series plan and fresh output path are required");
         }
-        if (format != ExportRequest.ExportFormat.EPUB && format != ExportRequest.ExportFormat.TXT) {
-            throw new IOException("Series omnibus currently supports EPUB or TXT only");
+        if (format != ExportRequest.ExportFormat.EPUB
+                && format != ExportRequest.ExportFormat.FB2
+                && format != ExportRequest.ExportFormat.TXT) {
+            throw new IOException("Series omnibus currently supports EPUB, FB2 or TXT only");
         }
         Path target = stagedOutput.toAbsolutePath().normalize();
         SafeFilePublication.requireSafeDirectoryPath(target.getParent(), "Series export staging");
@@ -62,6 +65,7 @@ public final class SeriesOmnibusWriter implements SeriesOmnibusPort {
         }
         try {
             if (format == ExportRequest.ExportFormat.TXT) writeTxt(plan, target, cancelled);
+            else if (format == ExportRequest.ExportFormat.FB2) writeFb2(plan, target, cancelled);
             else writeEpub(plan, target, cancelled);
         } catch (IOException | RuntimeException error) {
             try { Files.deleteIfExists(target); } catch (IOException cleanup) { error.addSuppressed(cleanup); }
@@ -84,6 +88,40 @@ public final class SeriesOmnibusWriter implements SeriesOmnibusPort {
                     writeText(document.text(), out, cancelled, false);
                 } finally { close(document); }
             }
+        }
+    }
+
+    private void writeFb2(SeriesOmnibusPlanner.SeriesPlan plan, Path target,
+                          BooleanSupplier cancelled) throws IOException {
+        long total = 0L;
+        String language = plan.books().getFirst().getLanguage() == null
+                ? "und" : plan.books().getFirst().getLanguage().value();
+        try (Writer out = Files.newBufferedWriter(target, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+            out.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            out.write("<FictionBook xmlns=\"http://www.gribuser.ru/xml/fictionbook/2.0\">");
+            out.write("<description><title-info><genre>prose</genre><author><nickname>");
+            escape(plan.author(), out);
+            out.write("</nickname></author><book-title>");
+            escape(plan.author() + " — " + plan.series(), out);
+            out.write("</book-title><lang>");
+            escape(language, out);
+            out.write("</lang></title-info></description><body>");
+            for (Book book : plan.books()) {
+                check(cancelled);
+                ReaderDocument document = parse(book);
+                try {
+                    total = account(document.text().length(), total);
+                    out.write("<section><title><p>");
+                    escape(book.getTitle(), out);
+                    out.write("</p></title><p>");
+                    writeText(document.text(), out, cancelled, true);
+                    out.write("</p></section>");
+                } finally {
+                    close(document);
+                }
+            }
+            out.write("</body></FictionBook>");
         }
     }
 
