@@ -5,12 +5,15 @@ import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.domain.model.book.Book;
 import org.w3c.dom.*;
 import org.xml.sax.InputSource;
+import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import org.xml.sax.SAXException;
 
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.stream.XMLOutputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamReader;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamWriter;
 import java.io.*;
@@ -39,6 +42,8 @@ final class Fb2OmnibusMerger {
     private static final int MAX_DEPTH = 96;
     private static final int MAX_XML_ELEMENTS = 160_000;
     private static final int MAX_AUXILIARY_BODIES = 8;
+    private static final int MAX_OUTPUT_ELEMENTS = 800_000;
+    private static final int MAX_OUTPUT_LINKS = 150_000;
     private final BookResourcePort resources;
 
     Fb2OmnibusMerger(BookResourcePort resources) {
@@ -151,6 +156,69 @@ final class Fb2OmnibusMerger {
             }
         } catch (XMLStreamException failure) {
             throw new IOException("Unable to write combined FB2", failure);
+        }
+        // Final pass is streaming rather than another DOM: verify the produced
+        // file really is a single parseable FB2 and all local links resolve.
+        verifyOutput(target, plan.books().size());
+    }
+
+    private static void verifyOutput(Path output, int expectedVolumes) throws IOException {
+        if (Files.size(output) > MAX_TOTAL_SOURCE_BYTES * 2L) {
+            throw new IOException("Merged FB2 exceeds output-size limit");
+        }
+        Set<String> ids = new HashSet<>();
+        List<String> references = new ArrayList<>();
+        int elements = 0, volumes = 0;
+        boolean rootSeen = false;
+        try (InputStream bytes = Files.newInputStream(output)) {
+            XMLStreamReader xml = SecureXmlInputFactory.create(false, true)
+                    .createXMLStreamReader(bytes, StandardCharsets.UTF_8.name());
+            try {
+                while (xml.hasNext()) {
+                    int event = xml.next();
+                    if (event == XMLStreamConstants.DTD) {
+                        throw new IOException("Merged FB2 unexpectedly contains a DTD");
+                    }
+                    if (event != XMLStreamConstants.START_ELEMENT) continue;
+                    if (++elements > MAX_OUTPUT_ELEMENTS) {
+                        throw new IOException("Merged FB2 has too many XML elements");
+                    }
+                    if (!rootSeen) {
+                        rootSeen = true;
+                        if (!"FictionBook".equals(xml.getLocalName())
+                                || !FB.equals(xml.getNamespaceURI())) {
+                            throw new IOException("Merged FB2 has an invalid root");
+                        }
+                    }
+                    String id = xml.getAttributeValue(null, "id");
+                    if (id != null && !id.isBlank()) {
+                        if (!ids.add(id)) throw new IOException("Duplicate merged FB2 anchor");
+                        if (id.startsWith("mhl_volume_")) volumes++;
+                    }
+                    for (int i = 0; i < xml.getAttributeCount(); i++) {
+                        if (!"href".equals(xml.getAttributeLocalName(i))) continue;
+                        String value = xml.getAttributeValue(i);
+                        if (value != null && value.startsWith("#")) {
+                            if (references.size() >= MAX_OUTPUT_LINKS) {
+                                throw new IOException("Merged FB2 has too many internal links");
+                            }
+                            references.add(value.substring(1));
+                        }
+                    }
+                }
+            } finally {
+                xml.close();
+            }
+        } catch (XMLStreamException invalid) {
+            throw new IOException("Produced FB2 is not well-formed XML", invalid);
+        }
+        if (!rootSeen || volumes != expectedVolumes || !ids.contains("mhl_contents")) {
+            throw new IOException("Produced FB2 has missing series or TOC sections");
+        }
+        for (String ref : references) {
+            if (!ids.contains(ref)) {
+                throw new IOException("Produced FB2 has an unresolved internal link");
+            }
         }
     }
 
