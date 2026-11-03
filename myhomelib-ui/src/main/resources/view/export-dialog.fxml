@@ -7,7 +7,7 @@
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.controller.ExportController"
       spacing="10" style="-fx-padding: 20; -fx-background-color: -mhl-background;"
-      prefWidth="710" prefHeight="725">
+      prefWidth="710" prefHeight="775">
 
     <Label text="ui.export.dialog.heading" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
     <Label fx:id="selectedBooksLabel" text="ui.export.selection.none" style="-fx-font-weight: bold; -fx-text-fill: -mhl-accent;"/>
@@ -63,6 +63,9 @@
         <Label text="ui.export.options.label" GridPane.columnIndex="0" GridPane.rowIndex="8" style="-fx-font-weight: bold;"/>
         <VBox GridPane.columnIndex="1" GridPane.rowIndex="8" spacing="5">
             <CheckBox fx:id="extractOnlyCheckBox" text="ui.export.extract_only"/>
+            <CheckBox fx:id="combineSeriesCheckBox" text="ui.export.series.combine" wrapText="true"/>
+            <Label text="ui.export.series.text_only_help" wrapText="true"
+                   style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 11px;"/>
             <Label text="ui.export.templates.help"
                    wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 11px;"/>
         </VBox>
