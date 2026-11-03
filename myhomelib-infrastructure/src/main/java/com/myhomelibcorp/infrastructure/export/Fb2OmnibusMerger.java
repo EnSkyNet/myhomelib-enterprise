@@ -18,6 +18,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.function.BooleanSupplier;
@@ -65,7 +67,8 @@ final class Fb2OmnibusMerger {
             links += chapters.size() + 1;
             if (links > MAX_TOC_LINKS) throw new IOException("Too many series TOC links");
             volumes.add(new Volume(book, i + 1, "mhl_volume_" + (i + 1),
-                    book.getTitle(), List.copyOf(chapters), hasNotes(loaded.document())));
+                    book.getTitle(), List.copyOf(chapters), hasNotes(loaded.document()),
+                    loaded.sha256()));
         }
 
         try (OutputStream raw = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW,
@@ -79,14 +82,14 @@ final class Fb2OmnibusMerger {
                 xml.writeStartElement("FictionBook");
                 xml.writeDefaultNamespace(FB);
                 xml.writeNamespace("l", XLINK);
-                writeDescription(xml, readPrepared(plan.books().getFirst(), 1, cancelled).document(),
+                writeDescription(xml, readUnchanged(volumes.getFirst(), cancelled).document(),
                         plan, title);
                 xml.writeStartElement("body");
                 title(xml, title);
                 writeContents(xml, volumes, plan, cancelled);
                 for (Volume volume : volumes) {
                     check(cancelled);
-                    Loaded loaded = readPrepared(volume.book(), volume.ordinal(), cancelled);
+                    Loaded loaded = readUnchanged(volume, cancelled);
                     Element body = mainBody(loaded.document());
                     xml.writeStartElement("section");
                     xml.writeAttribute("id", volume.anchor());
@@ -105,7 +108,7 @@ final class Fb2OmnibusMerger {
                     for (Volume volume : volumes) {
                         if (!volume.notes()) continue;
                         check(cancelled);
-                        Loaded loaded = readPrepared(volume.book(), volume.ordinal(), cancelled);
+                        Loaded loaded = readUnchanged(volume, cancelled);
                         xml.writeStartElement("section");
                         xml.writeAttribute("id", "mhl_notes_" + volume.ordinal());
                         title(xml, "Примітки: " + volume.title());
@@ -122,7 +125,7 @@ final class Fb2OmnibusMerger {
 
                 for (Volume volume : volumes) {
                     check(cancelled);
-                    Loaded loaded = readPrepared(volume.book(), volume.ordinal(), cancelled);
+                    Loaded loaded = readUnchanged(volume, cancelled);
                     for (Element binary : children(loaded.document().getDocumentElement(), "binary")) {
                         writeNode(xml, binary, 0, cancelled);
                     }
@@ -244,6 +247,15 @@ final class Fb2OmnibusMerger {
         }
     }
 
+    /** Prevent changing book bytes from invalidating the TOC or cross-book links mid-export. */
+    private Loaded readUnchanged(Volume volume, BooleanSupplier cancelled) throws IOException {
+        Loaded next = readPrepared(volume.book(), volume.ordinal(), cancelled);
+        if (!volume.sha256().equals(next.sha256())) {
+            throw new IOException("Source book changed while assembling series: " + volume.book().getId());
+        }
+        return next;
+    }
+
     private Loaded readPrepared(Book book, int ordinal, BooleanSupplier cancelled) throws IOException {
         check(cancelled);
         try (InputStream original = resources.readBookData(book)
@@ -260,6 +272,10 @@ final class Fb2OmnibusMerger {
             f.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
             f.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
             Document document = f.newDocumentBuilder().parse(new InputSource(stream));
+            // Include trailing bytes in the snapshot even if the parser stopped after
+            // the closing root element. The bounded stream prevents unlimited reads.
+            stream.transferTo(OutputStream.nullOutputStream());
+            check(cancelled);
             if (document.getDocumentElement() == null
                     || !"FictionBook".equals(document.getDocumentElement().getLocalName())
                     || !FB.equals(document.getDocumentElement().getNamespaceURI())) {
@@ -267,7 +283,7 @@ final class Fb2OmnibusMerger {
             }
             rewriteIdentifiers(document, ordinal, cancelled);
             mainBody(document);
-            return new Loaded(document, stream.bytes());
+            return new Loaded(document, stream.bytes(), stream.sha256());
         } catch (ParserConfigurationException | SAXException failure) {
             throw new IOException("Cannot safely parse source FB2: " + book.getId(), failure);
         }
@@ -380,24 +396,39 @@ final class Fb2OmnibusMerger {
 
     private record Chapter(String anchor, String title, int depth) { }
     private record Volume(Book book, int ordinal, String anchor, String title,
-                          List<Chapter> chapters, boolean notes) { }
-    private record Loaded(Document document, long byteCount) { }
+                          List<Chapter> chapters, boolean notes, String sha256) { }
+    private record Loaded(Document document, long byteCount, String sha256) { }
 
     private static final class LimitedInputStream extends FilterInputStream {
         private final long max;
         private long count;
-        private LimitedInputStream(InputStream in, long max) { super(in); this.max = max; }
+        private final MessageDigest sha256;
+        private LimitedInputStream(InputStream in, long max) {
+            super(in);
+            this.max = max;
+            try { this.sha256 = MessageDigest.getInstance("SHA-256"); }
+            catch (NoSuchAlgorithmException impossible) {
+                throw new IllegalStateException("SHA-256 algorithm unavailable", impossible);
+            }
+        }
         @Override public int read() throws IOException {
             int value = in.read();
-            if (value >= 0 && ++count > max) throw new IOException("FB2 source too large");
+            if (value >= 0) {
+                if (++count > max) throw new IOException("FB2 source too large");
+                sha256.update((byte) value);
+            }
             return value;
         }
         @Override public int read(byte[] b, int off, int len) throws IOException {
             int n = in.read(b, off, len);
             if (n > 0 && (count > max - n)) throw new IOException("FB2 source too large");
-            if (n > 0) count += n;
+            if (n > 0) {
+                count += n;
+                sha256.update(b, off, n);
+            }
             return n;
         }
         long bytes() { return count; }
+        String sha256() { return HexFormat.of().formatHex(sha256.digest()); }
     }
 }
