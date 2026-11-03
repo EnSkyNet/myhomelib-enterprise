@@ -137,6 +137,51 @@ class Fb2OmnibusMergerTest {
     }
 
     @Test
+    void supplementalCommentsBodyKeepsCrossBodyLinksAfterMerge() throws Exception {
+        BookResourcePort resources = mock(BookResourcePort.class);
+        Book book = source(resources, "Том 1", "Головний текст", false);
+        byte[] original;
+        try (var stream = resources.readBookData(book).orElseThrow()) {
+            original = stream.readAllBytes();
+        }
+        String updated = new String(original, StandardCharsets.UTF_8)
+                .replace("<a l:href=\"#note1\">[1]</a>",
+                        "<a l:href=\"#note1\">[1]</a><a l:href=\"#comment1\">[коментар]</a>")
+                .replace("<body name=\"notes\">",
+                        "<body name=\"comments\"><section id=\"comment1\"><title><p>Додаток</p></title>"
+                                + "<p>Додатковий текст</p></section></body><body name=\"notes\">");
+        assertThat(updated).contains("comment1", "Додатковий текст");
+        byte[] input = updated.getBytes(StandardCharsets.UTF_8);
+        doAnswer(call -> Optional.of(new ByteArrayInputStream(input)))
+                .when(resources).readBookData(book);
+        Path output = temp.resolve("comments.fb2");
+
+        new SeriesOmnibusWriter(resources).assemble(
+                new SeriesOmnibusPlanner.SeriesPlan("Автор", "Серія", List.of(book)),
+                output, ExportRequest.ExportFormat.FB2, () -> false);
+
+        Document merged = parse(Files.readAllBytes(output));
+        assertThat(merged.getElementsByTagNameNS(FB, "body").getLength()).isEqualTo(3);
+        assertThat(merged.getDocumentElement().getTextContent())
+                .contains("Додатковий текст", "Головний текст", "Службова примітка");
+        Set<String> allIds = new HashSet<>();
+        for (int i = 0; i < merged.getElementsByTagName("*").getLength(); i++) {
+            Element element = (Element) merged.getElementsByTagName("*").item(i);
+            if (element.hasAttribute("id")) allIds.add(element.getAttribute("id"));
+        }
+        int commentLinks = 0;
+        for (int i = 0; i < merged.getElementsByTagNameNS(FB, "a").getLength(); i++) {
+            Element link = (Element) merged.getElementsByTagNameNS(FB, "a").item(i);
+            String href = link.getAttributeNS(XLINK, "href");
+            if (href.startsWith("#")) {
+                assertThat(allIds).contains(href.substring(1));
+                if ("[коментар]".equals(link.getTextContent())) commentLinks++;
+            }
+        }
+        assertThat(commentLinks).isOne();
+    }
+
+    @Test
     void maliciousDocumentWithDoctypeIsRejectedBeforePublication() throws Exception {
         BookResourcePort resources = mock(BookResourcePort.class);
         Book malformed = source(resources, "Том 1", "text", true);
