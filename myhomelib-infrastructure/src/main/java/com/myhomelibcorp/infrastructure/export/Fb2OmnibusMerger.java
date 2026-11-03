@@ -74,7 +74,7 @@ final class Fb2OmnibusMerger {
             outputFactory.setProperty(XMLOutputFactory.IS_REPAIRING_NAMESPACES, true);
             XMLStreamWriter xml = outputFactory.createXMLStreamWriter(raw, StandardCharsets.UTF_8.name());
             try {
-                String title = plan.series() + " — повне зібрання (" + plan.books().size() + " книг)";
+                String title = plan.series() + " — повне зібрання (" + plan.sizeLabel() + ")";
                 xml.writeStartDocument("UTF-8", "1.0");
                 xml.writeStartElement("FictionBook");
                 xml.writeDefaultNamespace(FB);
@@ -155,8 +155,8 @@ final class Fb2OmnibusMerger {
                 out.writeEndElement();
                 out.writeStartElement("annotation");
                 out.writeStartElement("p");
-                out.writeCharacters("Об'єднано " + plan.books().size() + " вихідних книг. "
-                        + "Зміст має переходи до кожної книги та її глав.");
+                out.writeCharacters("Об'єднано " + plan.sizeLabel()
+                        + ". Зміст має переходи до кожної книги та її глав.");
                 out.writeEndElement();
                 out.writeEndElement();
                 seenTitle = true;
@@ -193,7 +193,7 @@ final class Fb2OmnibusMerger {
         xml.writeStartElement("section");
         xml.writeAttribute("id", "mhl_contents");
         title(xml, "Загальний зміст");
-        paragraph(xml, "Вихідних книг: " + plan.books().size()
+        paragraph(xml, "Зібрано: " + plan.sizeLabel()
                 + ". Усі книги послідовно об'єднані в одному файлі.");
         for (Volume volume : volumes) {
             check(cancelled);
