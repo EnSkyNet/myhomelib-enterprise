@@ -492,6 +492,32 @@ class HttpRemoteCatalogDownloadAdapterTest {
         assertThat(requests.get()).isOne();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {
+            408, 421, 425, 429, 500, 502, 503, 504
+    })
+    void transientHttpStatusRetriesAndEventuallyPublishesValidCatalog(int status) throws Exception {
+        byte[] archive = validInpx("20261103");
+        AtomicInteger requests = new AtomicInteger();
+        server = start(exchange -> {
+            int attempt = requests.incrementAndGet();
+            if (attempt == 1) {
+                exchange.getResponseHeaders().add("Retry-After", "0");
+                exchange.sendResponseHeaders(status, -1);
+                return;
+            }
+            exchange.getResponseHeaders().add("Content-Type", "application/zip");
+            respond(exchange, 200, archive);
+        });
+
+        String url = baseUrl() + "catalog.inpx";
+        Path path = new HttpRemoteCatalogDownloadAdapter().download(
+                null, url, new AtomicBoolean(false), ignored -> { });
+
+        assertThat(requests.get()).isEqualTo(2);
+        assertThat(Files.readAllBytes(path)).isEqualTo(archive);
+    }
+
     @Test
     void notModifiedResponseCannotBeMistakenForDownloadOrRetried() throws Exception {
         AtomicInteger requests = new AtomicInteger();
