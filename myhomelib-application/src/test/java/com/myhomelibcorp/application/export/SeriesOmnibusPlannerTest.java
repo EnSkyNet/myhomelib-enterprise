@@ -41,6 +41,21 @@ class SeriesOmnibusPlannerTest {
     }
 
     @Test
+    void recognizesTwoVolumesInsideOneBookAndPrefersTitleNumbersOverBadCatalogIndexes() {
+        Author alice = new Author(AuthorId.generate(), "Alice", "", "Author");
+        Book combined = book(alice, "Cycle", "Cycle. Том 1-2", 20);
+        Book third = book(alice, "Cycle", "Cycle. Том 3", 1);
+        when(repo.findById(third.getId())).thenReturn(Optional.of(third));
+        when(repo.streamAll()).thenAnswer(x -> Stream.of(third, combined));
+
+        SeriesOmnibusPlanner.SeriesPlan plan = planner.plan(List.of(third.getId()));
+
+        assertThat(plan.bookIds()).containsExactly(combined.getId(), third.getId());
+        assertThat(plan.recognizedVolumeCount()).isEqualTo(3);
+        assertThat(plan.sizeLabel()).isEqualTo("2 книг, 3 томів");
+    }
+
+    @Test
     void differentAuthorOrSeriesInSelectionIsRejected() {
         Author alice = new Author(AuthorId.generate(), "Alice", "", "Author");
         Author bob = new Author(AuthorId.generate(), "Bob", "", "Other");
