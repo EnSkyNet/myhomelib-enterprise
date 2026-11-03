@@ -40,6 +40,12 @@
             <artifactId>myhomelib-library-organizer</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
+        <!-- Reuse the same bounded FB2/EPUB/TXT parsers as the desktop Reader for omnibus export. -->
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-reader</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
             <artifactId>myhomelib-epub-optimizer</artifactId>
