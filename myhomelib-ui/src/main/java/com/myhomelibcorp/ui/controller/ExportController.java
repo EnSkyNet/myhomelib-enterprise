@@ -95,6 +95,8 @@ public class ExportController {
     @FXML private ComboBox<ExportRequest.CollisionPolicy> collisionPolicyComboBox;
     @FXML private ComboBox<ActionChoice> postActionComboBox;
     @FXML private CheckBox extractOnlyCheckBox;
+    @FXML private ComboBox<ExportRequest.ArchiveFormat> archiveFormatComboBox;
+    @FXML private ComboBox<ExportRequest.CompressionLevel> compressionLevelComboBox;
     @FXML private Label selectedBooksLabel;
     @FXML private Label calibreStatusLabel;
     @FXML private Button exportButton;
@@ -129,6 +131,47 @@ public class ExportController {
                 ExportRequest.CollisionPolicy.SKIP,
                 ExportRequest.CollisionPolicy.ASK);
         collisionPolicyComboBox.setValue(ExportRequest.CollisionPolicy.RENAME);
+        if (archiveFormatComboBox != null && compressionLevelComboBox != null) {
+            archiveFormatComboBox.getItems().setAll(
+                    ExportRequest.ArchiveFormat.SEVEN_Z,
+                    ExportRequest.ArchiveFormat.ZIP,
+                    ExportRequest.ArchiveFormat.NONE);
+            archiveFormatComboBox.setValue(ExportRequest.ArchiveFormat.SEVEN_Z);
+            archiveFormatComboBox.setConverter(new StringConverter<>() {
+                @Override public String toString(ExportRequest.ArchiveFormat value) {
+                    if (value == null) return "";
+                    return switch (value) {
+                        case NONE -> i18n.text("ui.export.archive.none");
+                        case ZIP -> "ZIP";
+                        case SEVEN_Z -> "7z (LZMA2)";
+                    };
+                }
+                @Override public ExportRequest.ArchiveFormat fromString(String text) {
+                    return archiveFormatComboBox.getValue();
+                }
+            });
+            compressionLevelComboBox.getItems().setAll(
+                    ExportRequest.CompressionLevel.MAXIMUM,
+                    ExportRequest.CompressionLevel.NORMAL,
+                    ExportRequest.CompressionLevel.FAST);
+            compressionLevelComboBox.setValue(ExportRequest.CompressionLevel.MAXIMUM);
+            compressionLevelComboBox.setConverter(new StringConverter<>() {
+                @Override public String toString(ExportRequest.CompressionLevel value) {
+                    if (value == null) return "";
+                    return switch (value) {
+                        case MAXIMUM -> i18n.text("ui.export.compression.maximum");
+                        case NORMAL -> i18n.text("ui.export.compression.normal");
+                        case FAST -> i18n.text("ui.export.compression.fast");
+                    };
+                }
+                @Override public ExportRequest.CompressionLevel fromString(String text) {
+                    return compressionLevelComboBox.getValue();
+                }
+            });
+            archiveFormatComboBox.valueProperty().addListener((obs, previous, current) ->
+                    compressionLevelComboBox.setDisable(
+                            exportRunning || current == ExportRequest.ArchiveFormat.NONE));
+        }
         collisionPolicyComboBox.setConverter(new StringConverter<>() {
             @Override public String toString(ExportRequest.CollisionPolicy p) {
                 if (p == null) return "";
@@ -603,6 +646,10 @@ public class ExportController {
                 .collisionPolicy(collisionPolicyComboBox.getValue())
                 .overwriteExisting(collisionPolicyComboBox.getValue() == ExportRequest.CollisionPolicy.OVERWRITE)
                 .extractOnly(extractOnlyCheckBox.isSelected())
+                .archiveFormat(archiveFormatComboBox == null
+                        ? ExportRequest.ArchiveFormat.NONE : archiveFormatComboBox.getValue())
+                .compressionLevel(compressionLevelComboBox == null
+                        ? ExportRequest.CompressionLevel.MAXIMUM : compressionLevelComboBox.getValue())
                 .customFileNameTemplate(text(fileNameTemplateField.getText()))
                 .subfolderTemplate(text(subfolderTemplateField.getText()))
                 .profileId(selectedProfile == null ? "" : selectedProfile.id())
