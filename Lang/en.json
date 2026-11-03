@@ -366,6 +366,8 @@
     "ui.export.compression.maximum": "Maximum (memory bounded)",
     "ui.export.compression.normal": "Normal",
     "ui.export.compression.fast": "Fast",
+    "ui.export.series.combine": "Create one readable book from the complete author's series (EPUB/TXT)",
+    "ui.export.series.text_only_help": "Text-only edition: text and order preserved; images and original formatting are not included.",
     "ui.export.extract_only": "Extract the archive entry without conversion",
     "ui.export.filename_template.label": "File name template:",
     "ui.export.format.label": "Format:",
