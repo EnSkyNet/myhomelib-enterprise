@@ -62,11 +62,16 @@ class SeriesOmnibusWriterTest {
             assertThat(read(archive, "mimetype")).isEqualTo("application/epub+zip");
             assertThat(read(archive, "META-INF/container.xml"))
                     .contains("OEBPS/content.opf");
-            assertThat(read(archive, "OEBPS/content.opf"))
+            String packageXml = read(archive, "OEBPS/content.opf");
+            assertThat(packageXml)
                     .contains("book-1.xhtml", "book-2.xhtml", "itemref idref=");
+            assertThat(packageXml).contains("<spine><itemref idref=\"nav\"/>");
             String nav = read(archive, "OEBPS/nav.xhtml");
-            assertThat(nav).contains("Том &amp; один", "book-1.xhtml", "book-2.xhtml");
-            assertThat(read(archive, "OEBPS/book-1.xhtml")).contains("Перший &lt;текст&gt;");
+            assertThat(nav).contains("Том &amp; один", "book-1.xhtml", "book-2.xhtml",
+                    "book-1.xhtml#chapter-1", "book-2.xhtml#chapter-1",
+                    "Загальний зміст");
+            assertThat(read(archive, "OEBPS/book-1.xhtml"))
+                    .contains("id=\"chapter-1\"", "Перший &lt;текст&gt;");
             assertThat(read(archive, "OEBPS/book-2.xhtml")).contains("Другий текст");
         }
     }
