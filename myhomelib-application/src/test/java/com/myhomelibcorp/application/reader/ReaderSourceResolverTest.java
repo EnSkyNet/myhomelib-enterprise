@@ -83,6 +83,57 @@ class ReaderSourceResolverTest {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {".7z", ".rar"})
+    void wholeArchiveBecomesEphemeralReaderZipWithMultipleBookEntries(String suffix) throws Exception {
+        Path source = Files.writeString(tempDir.resolve("multi" + suffix), "mock-container");
+        Book book = Book.builder().title("Multi-book archive")
+                .file(new BookFile(source.getFileName().toString(), "", "", 24,
+                        tempDir.toString()))
+                .local(true).build();
+        BookResourcePort resources = mock(BookResourcePort.class);
+        when(resources.isArchive(source.toString())).thenReturn(true);
+        when(resources.listArchiveEntries(source)).thenReturn(List.of(
+                "author/first.fb2", "second.txt", "cover.jpg"));
+        when(resources.readArchiveEntry(source, "author/first.fb2")).thenAnswer(call ->
+                Optional.of(new java.io.ByteArrayInputStream("first".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+        when(resources.readArchiveEntry(source, "second.txt")).thenAnswer(call ->
+                Optional.of(new java.io.ByteArrayInputStream("second".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+
+        ReaderSourceResolver.MaterializedSource prepared =
+                ReaderSourceResolver.materialize(book, source, resources, "missing");
+        try {
+            assertThat(prepared.temporaryPath()).isEqualTo(prepared.readerPath());
+            assertThat(prepared.readerPath()).isNotEqualTo(source);
+            assertThat(prepared.readerPath().toString()).endsWith(".zip");
+            try (var zip = new java.util.zip.ZipFile(prepared.readerPath().toFile())) {
+                assertThat(zip.size()).isEqualTo(2);
+                assertThat(zip.getEntry("author/first.fb2")).isNotNull();
+                try (var in = zip.getInputStream(zip.getEntry("second.txt"))) {
+                    assertThat(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8))
+                            .isEqualTo("second");
+                }
+            }
+        } finally {
+            Files.deleteIfExists(prepared.temporaryPath());
+        }
+    }
+
+    @Test
+    void unsafeArchiveMemberNameCannotBeRepackagedForReader() throws Exception {
+        Path source = Files.writeString(tempDir.resolve("unsafe.rar"), "mock-container");
+        Book book = Book.builder().title("Unsafe archive")
+                .file(new BookFile("unsafe.rar", "", "", 24, tempDir.toString()))
+                .local(true).build();
+        BookResourcePort resources = mock(BookResourcePort.class);
+        when(resources.isArchive(source.toString())).thenReturn(true);
+        when(resources.listArchiveEntries(source)).thenReturn(List.of("../escape.fb2"));
+
+        assertThatThrownBy(() -> ReaderSourceResolver.materialize(book, source, resources, "missing"))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("Unsafe archive member name");
+    }
+
     @Test
     void failedArchiveMaterializationDeletesStagingTemp() throws Exception {
         Path archive = tempDir.resolve("bundle.zip");
