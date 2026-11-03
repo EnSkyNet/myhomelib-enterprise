@@ -88,6 +88,55 @@ class Fb2OmnibusMergerTest {
     }
 
     @Test
+    void changedFb2BetweenPreflightAndDescriptionIsRejectedWithoutPublishing() throws Exception {
+        BookResourcePort resources = mock(BookResourcePort.class);
+        Book first = source(resources, "Том 1", "початковий вміст", false);
+        byte[] original;
+        try (var stream = resources.readBookData(first).orElseThrow()) {
+            original = stream.readAllBytes();
+        }
+        byte[] changed = new String(original, StandardCharsets.UTF_8)
+                .replace("початковий вміст", "підмінений вміст")
+                .getBytes(StandardCharsets.UTF_8);
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(call -> Optional.of(new ByteArrayInputStream(
+                reads.incrementAndGet() == 1 ? original : changed)))
+                .when(resources).readBookData(first);
+        Path output = temp.resolve("changed.fb2");
+
+        assertThatThrownBy(() -> new SeriesOmnibusWriter(resources).assemble(
+                new SeriesOmnibusPlanner.SeriesPlan("Автор", "Серія", List.of(first)),
+                output, ExportRequest.ExportFormat.FB2, () -> false))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("changed while assembling");
+        assertThat(reads.get()).isGreaterThanOrEqualTo(2);
+        assertThat(output).doesNotExist();
+    }
+
+    @Test
+    void sourceLinkToMissingNoteIsRejectedBeforePublishing() throws Exception {
+        BookResourcePort resources = mock(BookResourcePort.class);
+        Book first = source(resources, "Том 1", "text", false);
+        byte[] original;
+        try (var stream = resources.readBookData(first).orElseThrow()) {
+            original = stream.readAllBytes();
+        }
+        byte[] invalid = new String(original, StandardCharsets.UTF_8)
+                .replace("href=\"#note1\"", "href=\"#missing\"")
+                .getBytes(StandardCharsets.UTF_8);
+        doAnswer(call -> Optional.of(new ByteArrayInputStream(invalid)))
+                .when(resources).readBookData(first);
+        Path output = temp.resolve("missing-note.fb2");
+
+        assertThatThrownBy(() -> new SeriesOmnibusWriter(resources).assemble(
+                new SeriesOmnibusPlanner.SeriesPlan("Автор", "Серія", List.of(first)),
+                output, ExportRequest.ExportFormat.FB2, () -> false))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("Unresolved FB2 internal link");
+        assertThat(output).doesNotExist();
+    }
+
+    @Test
     void maliciousDocumentWithDoctypeIsRejectedBeforePublication() throws Exception {
         BookResourcePort resources = mock(BookResourcePort.class);
         Book malformed = source(resources, "Том 1", "text", true);
