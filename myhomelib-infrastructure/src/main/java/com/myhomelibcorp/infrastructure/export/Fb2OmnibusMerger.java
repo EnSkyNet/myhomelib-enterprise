@@ -37,6 +37,8 @@ final class Fb2OmnibusMerger {
     private static final long MAX_TOTAL_SOURCE_BYTES = 256L * 1024 * 1024;
     private static final int MAX_TOC_LINKS = 4096;
     private static final int MAX_DEPTH = 96;
+    private static final int MAX_XML_ELEMENTS = 160_000;
+    private static final int MAX_AUXILIARY_BODIES = 8;
     private final BookResourcePort resources;
 
     Fb2OmnibusMerger(BookResourcePort resources) {
@@ -67,8 +69,8 @@ final class Fb2OmnibusMerger {
             links += chapters.size() + 1;
             if (links > MAX_TOC_LINKS) throw new IOException("Too many series TOC links");
             volumes.add(new Volume(book, i + 1, "mhl_volume_" + (i + 1),
-                    book.getTitle(), List.copyOf(chapters), hasNotes(loaded.document()),
-                    loaded.sha256()));
+                    book.getTitle(), List.copyOf(chapters),
+                    namedBodies(loaded.document()), loaded.sha256()));
         }
 
         try (OutputStream raw = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW,
@@ -102,20 +104,31 @@ final class Fb2OmnibusMerger {
                 }
                 xml.writeEndElement(); // main body
 
-                if (volumes.stream().anyMatch(Volume::notes)) {
+                // Preserve every named auxiliary body, not only "notes". Otherwise
+                // links to comments/appendices would resolve during preflight but
+                // point at missing IDs in the newly published omnibus.
+                LinkedHashSet<String> extraBodies = new LinkedHashSet<>();
+                for (Volume volume : volumes) extraBodies.addAll(volume.auxiliaryBodyNames());
+                if (extraBodies.size() > MAX_AUXILIARY_BODIES) {
+                    throw new IOException("Too many named FB2 bodies in source series");
+                }
+                int bodyIndex = 0;
+                for (String name : extraBodies) {
+                    bodyIndex++;
                     xml.writeStartElement("body");
-                    xml.writeAttribute("name", "notes");
+                    xml.writeAttribute("name", name);
                     for (Volume volume : volumes) {
-                        if (!volume.notes()) continue;
+                        if (!volume.auxiliaryBodyNames().contains(name)) continue;
                         check(cancelled);
                         Loaded loaded = readUnchanged(volume, cancelled);
                         xml.writeStartElement("section");
-                        xml.writeAttribute("id", "mhl_notes_" + volume.ordinal());
-                        title(xml, "Примітки: " + volume.title());
+                        xml.writeAttribute("id", "mhl_aux_" + bodyIndex + "_" + volume.ordinal());
+                        title(xml, ("notes".equals(name) ? "Примітки: " : name + ": ") + volume.title());
                         for (Element body : bodyElements(loaded.document())) {
-                            if (!"notes".equalsIgnoreCase(body.getAttribute("name"))) continue;
+                            if (!name.equalsIgnoreCase(body.getAttribute("name").trim())) continue;
                             for (Node node = body.getFirstChild(); node != null; node = node.getNextSibling()) {
-                                if (is(node, "section")) writeNode(xml, node, 0, cancelled);
+                                if (node.getNodeType() != Node.ELEMENT_NODE || is(node, "title")) continue;
+                                writeNode(xml, node, 0, cancelled);
                             }
                         }
                         xml.writeEndElement();
@@ -296,6 +309,9 @@ final class Fb2OmnibusMerger {
         Map<String, String> mapped = new HashMap<>();
         List<Element> elements = new ArrayList<>();
         NodeList all = document.getElementsByTagName("*");
+        if (all.getLength() > MAX_XML_ELEMENTS) {
+            throw new IOException("FB2 source contains too many XML elements");
+        }
         for (int i = 0; i < all.getLength(); i++) {
             check(cancelled);
             Element element = (Element) all.item(i);
@@ -333,10 +349,20 @@ final class Fb2OmnibusMerger {
         throw new IOException("Source FB2 has no main body");
     }
 
-    private static boolean hasNotes(Document document) {
-        for (Element body : bodyElements(document))
-            if ("notes".equalsIgnoreCase(body.getAttribute("name"))) return true;
-        return false;
+    private static List<String> namedBodies(Document document) throws IOException {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (Element body : bodyElements(document)) {
+            String value = body.getAttribute("name").trim().toLowerCase(Locale.ROOT);
+            if (value.isBlank()) continue;
+            if (value.length() > 64 || !value.matches("[a-z][a-z0-9_-]*")) {
+                throw new IOException("Unsafe FB2 auxiliary body name");
+            }
+            names.add(value);
+            if (names.size() > MAX_AUXILIARY_BODIES) {
+                throw new IOException("Too many named FB2 bodies");
+            }
+        }
+        return List.copyOf(names);
     }
 
     private static List<Element> bodyElements(Document document) {
@@ -397,7 +423,7 @@ final class Fb2OmnibusMerger {
 
     private record Chapter(String anchor, String title, int depth) { }
     private record Volume(Book book, int ordinal, String anchor, String title,
-                          List<Chapter> chapters, boolean notes, String sha256) { }
+                          List<Chapter> chapters, List<String> auxiliaryBodyNames, String sha256) { }
     private record Loaded(Document document, long byteCount, String sha256) { }
 
     private static final class LimitedInputStream extends FilterInputStream {
