@@ -55,8 +55,9 @@ public final class SeriesOmnibusWriter implements SeriesOmnibusPort {
         }
         if (format != ExportRequest.ExportFormat.EPUB
                 && format != ExportRequest.ExportFormat.FB2
+                && format != ExportRequest.ExportFormat.FB2_ZIP
                 && format != ExportRequest.ExportFormat.TXT) {
-            throw new IOException("Series omnibus currently supports EPUB, FB2 or TXT only");
+            throw new IOException("Series omnibus supports EPUB, FB2, FB2.ZIP or TXT only");
         }
         Path target = stagedOutput.toAbsolutePath().normalize();
         SafeFilePublication.requireSafeDirectoryPath(target.getParent(), "Series export staging");
@@ -64,9 +65,13 @@ public final class SeriesOmnibusWriter implements SeriesOmnibusPort {
             throw new IOException("Series output already exists");
         }
         try {
-            if (format == ExportRequest.ExportFormat.TXT) writeTxt(plan, target, cancelled);
-            else if (format == ExportRequest.ExportFormat.FB2) writeFb2(plan, target, cancelled);
-            else writeEpub(plan, target, cancelled);
+            switch (format) {
+                case FB2 -> new Fb2OmnibusMerger(resources).merge(plan, target, cancelled);
+                case FB2_ZIP -> writeFb2Zip(plan, target, cancelled);
+                case TXT -> writeTxt(plan, target, cancelled);
+                case EPUB -> writeEpub(plan, target, cancelled);
+                default -> throw new IOException("Unsupported omnibus format");
+            }
         } catch (IOException | RuntimeException error) {
             try { Files.deleteIfExists(target); } catch (IOException cleanup) { error.addSuppressed(cleanup); }
             throw error;
@@ -91,37 +96,33 @@ public final class SeriesOmnibusWriter implements SeriesOmnibusPort {
         }
     }
 
-    private void writeFb2(SeriesOmnibusPlanner.SeriesPlan plan, Path target,
-                          BooleanSupplier cancelled) throws IOException {
-        long total = 0L;
-        String language = plan.books().getFirst().getLanguage() == null
-                ? "und" : plan.books().getFirst().getLanguage().value();
-        try (Writer out = Files.newBufferedWriter(target, StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
-            out.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-            out.write("<FictionBook xmlns=\"http://www.gribuser.ru/xml/fictionbook/2.0\">");
-            out.write("<description><title-info><genre>prose</genre><author><nickname>");
-            escape(plan.author(), out);
-            out.write("</nickname></author><book-title>");
-            escape(plan.author() + " — " + plan.series(), out);
-            out.write("</book-title><lang>");
-            escape(language, out);
-            out.write("</lang></title-info></description><body>");
-            for (Book book : plan.books()) {
-                check(cancelled);
-                ReaderDocument document = parse(book);
-                try {
-                    total = account(document.text().length(), total);
-                    out.write("<section><title><p>");
-                    escape(book.getTitle(), out);
-                    out.write("</p></title><p>");
-                    writeText(document.text(), out, cancelled, true);
-                    out.write("</p></section>");
-                } finally {
-                    close(document);
-                }
+    private void writeFb2Zip(SeriesOmnibusPlanner.SeriesPlan plan, Path output,
+                             BooleanSupplier cancelled) throws IOException {
+        // Reader-compatible .fb2.zip: precisely one real FB2 document inside.
+        Path temporary = Files.createTempFile(output.getParent(), ".mhl-series-", ".fb2");
+        try {
+            Files.deleteIfExists(temporary);
+            new Fb2OmnibusMerger(resources).merge(plan, temporary, cancelled);
+            String name = output.getFileName().toString();
+            if (name.toLowerCase(Locale.ROOT).endsWith(".zip")) {
+                name = name.substring(0, name.length() - 4);
             }
-            out.write("</body></FictionBook>");
+            if (!name.toLowerCase(Locale.ROOT).endsWith(".fb2")) name += ".fb2";
+            try (OutputStream stream = SafeFilePublication.openFreshOutputStream(output, "Series FB2.ZIP");
+                 ZipOutputStream zip = new ZipOutputStream(stream, StandardCharsets.UTF_8)) {
+                zip.setLevel(9);
+                zip.putNextEntry(new ZipEntry(name));
+                try (InputStream in = Files.newInputStream(temporary, LinkOption.NOFOLLOW_LINKS)) {
+                    byte[] buffer = new byte[64 * 1024];
+                    for (int n; (n = in.read(buffer)) >= 0;) {
+                        check(cancelled);
+                        if (n > 0) zip.write(buffer, 0, n);
+                    }
+                }
+                zip.closeEntry();
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
         }
     }
 
