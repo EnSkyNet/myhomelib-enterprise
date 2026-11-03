@@ -25,6 +25,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.OptionalLong;
 import java.util.UUID;
@@ -34,10 +37,10 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 /**
- * Text-only omnibus of a whole author series. EPUB3 has a chapter and TOC link
- * for each source book; FB2 creates a section per book, and TXT is plain text.
- * The mode deliberately
- * does not claim to preserve illustrations, CSS or per-book binary assets.
+ * Readable omnibus of a whole author series.
+ * FB2/FB2.ZIP preserve the original nested XML, notes, links and illustrations;
+ * EPUB/TXT use the Reader's text parser and are intentionally text-only.
+ * EPUB navigation contains books and nested chapters, and is first in the spine.
  */
 @Component
 public final class SeriesOmnibusWriter implements SeriesOmnibusPort {
@@ -146,12 +149,15 @@ public final class SeriesOmnibusWriter implements SeriesOmnibusPort {
                     + "<rootfiles><rootfile full-path=\"OEBPS/content.opf\""
                     + " media-type=\"application/oebps-package+xml\"/></rootfiles></container>");
             long total = 0;
+            List<List<ChapterLink>> allChapters = new ArrayList<>();
             for (int i = 0; i < plan.books().size(); i++) {
                 check(cancelled);
                 Book book = plan.books().get(i);
                 ReaderDocument document = parse(book);
                 try {
                     total = account(document.text().length(), total);
+                    List<ChapterLink> chapters = chapterLinks(document);
+                    allChapters.add(chapters);
                     zip.putNextEntry(new ZipEntry("OEBPS/book-" + (i + 1) + ".xhtml"));
                     Writer writer = new OutputStreamWriter(zip, StandardCharsets.UTF_8);
                     writer.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
@@ -160,13 +166,13 @@ public final class SeriesOmnibusWriter implements SeriesOmnibusPort {
                     writer.write("</title></head><body><h1>");
                     escape(book.getTitle(), writer);
                     writer.write("</h1><p>");
-                    writeText(document.text(), writer, cancelled, true);
+                    writeTextWithChapterAnchors(document.text(), chapters, writer, cancelled);
                     writer.write("</p></body></html>");
                     writer.flush();
                     zip.closeEntry();
                 } finally { close(document); }
             }
-            put(zip, "OEBPS/nav.xhtml", navigation(plan));
+            put(zip, "OEBPS/nav.xhtml", navigation(plan, allChapters));
             put(zip, "OEBPS/content.opf", packageXml(plan));
         }
     }
@@ -268,16 +274,86 @@ public final class SeriesOmnibusWriter implements SeriesOmnibusPort {
         zip.write(text.getBytes(StandardCharsets.UTF_8));
         zip.closeEntry();
     }
-    private static String navigation(SeriesOmnibusPlanner.SeriesPlan plan) {
+    private static List<ChapterLink> chapterLinks(ReaderDocument document) {
+        if (document.chapters() == null) return List.of();
+        List<ChapterIndex> raw = document.chapters().stream()
+                .filter(chapter -> chapter != null && chapter.title() != null
+                        && !chapter.title().isBlank()
+                        && chapter.startOffset() >= 0
+                        && chapter.startOffset() < document.text().length())
+                .sorted(Comparator.comparingLong(ChapterIndex::startOffset))
+                .limit(1200).toList();
+        List<ChapterLink> links = new ArrayList<>();
+        int lastOffset = -1;
+        for (ChapterIndex chapter : raw) {
+            int offset = (int) chapter.startOffset();
+            if (offset == lastOffset) continue;
+            lastOffset = offset;
+            links.add(new ChapterLink("chapter-" + (links.size() + 1),
+                    chapter.title().strip(), offset));
+        }
+        return List.copyOf(links);
+    }
+
+    private static void writeTextWithChapterAnchors(TextStorage text, List<ChapterLink> links,
+                                                     Writer out, BooleanSupplier cancelled)
+            throws IOException {
+        int position = 0;
+        for (ChapterLink link : links) {
+            check(cancelled);
+            if (link.position() > position) writeTextRange(text, position, link.position(), out, cancelled);
+            out.write("</p><h2 id=\"");
+            out.write(link.anchor());
+            out.write("\">");
+            escape(link.title(), out);
+            out.write("</h2><p>");
+            position = link.position();
+        }
+        writeTextRange(text, position, text.length(), out, cancelled);
+    }
+
+    private static void writeTextRange(TextStorage text, int start, int end, Writer out,
+                                       BooleanSupplier cancelled) throws IOException {
+        for (int i = start; i < end;) {
+            check(cancelled);
+            String chunk = text.getText(i, Math.min(end, i + 8192));
+            if (chunk.isEmpty()) throw new IOException("Reader returned empty text slice");
+            for (int j = 0; j < chunk.length(); j++) {
+                char ch = chunk.charAt(j);
+                if (ch == '\n') out.write("</p><p>");
+                else escapeCharacter(ch, out);
+            }
+            i += chunk.length();
+        }
+    }
+
+    private static String navigation(SeriesOmnibusPlanner.SeriesPlan plan,
+                                     List<List<ChapterLink>> allChapters) {
         StringBuilder out = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
                 + "<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\">"
-                + "<head><title>Contents</title></head><body><nav epub:type=\"toc\" id=\"toc\"><ol>");
+                + "<head><title>Загальний зміст</title></head><body>"
+                + "<nav epub:type=\"toc\" id=\"toc\"><h1>Загальний зміст — "
+                + escaped(plan.sizeLabel()) + "</h1><ol>");
         for (int i = 0; i < plan.books().size(); i++) {
             out.append("<li><a href=\"book-").append(i + 1).append(".xhtml\">")
-                    .append(escaped(plan.books().get(i).getTitle())).append("</a></li>");
+                    .append(escaped(plan.books().get(i).getTitle())).append("</a>");
+            List<ChapterLink> chapters = allChapters.get(i);
+            if (!chapters.isEmpty()) {
+                out.append("<ol>");
+                for (ChapterLink chapter : chapters) {
+                    out.append("<li><a href=\"book-").append(i + 1).append(".xhtml#")
+                            .append(chapter.anchor()).append("\">")
+                            .append(escaped(chapter.title())).append("</a></li>");
+                }
+                out.append("</ol>");
+            }
+            out.append("</li>");
         }
         return out.append("</ol></nav></body></html>").toString();
     }
+
+    private record ChapterLink(String anchor, String title, int position) { }
+
     private static String packageXml(SeriesOmnibusPlanner.SeriesPlan plan) {
         String title = escaped(plan.author() + " — " + plan.series());
         String language = plan.books().getFirst().getLanguage() == null
@@ -295,7 +371,7 @@ public final class SeriesOmnibusWriter implements SeriesOmnibusPort {
             xml.append("<item id=\"b").append(i + 1).append("\" href=\"book-").append(i + 1)
                     .append(".xhtml\" media-type=\"application/xhtml+xml\"/>");
         }
-        xml.append("</manifest><spine>");
+        xml.append("</manifest><spine><itemref idref=\"nav\"/>");
         for (int i = 0; i < plan.books().size(); i++) xml.append("<itemref idref=\"b").append(i + 1).append("\"/>");
         return xml.append("</spine></package>").toString();
     }
