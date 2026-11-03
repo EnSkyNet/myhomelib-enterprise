@@ -182,6 +182,54 @@ class Fb2OmnibusMergerTest {
     }
 
     @Test
+    void deeplyNestedChaptersStayInClickableGeneralContents() throws Exception {
+        BookResourcePort resources = mock(BookResourcePort.class);
+        Book book = source(resources, "Том 1", "Основний текст", false);
+        byte[] original;
+        try (var stream = resources.readBookData(book).orElseThrow()) {
+            original = stream.readAllBytes();
+        }
+        String deep = "<section id=\"deep1\"><title><p>Level 1</p></title>"
+                + "<section id=\"deep2\"><title><p>Level 2</p></title>"
+                + "<section id=\"deep3\"><title><p>Level 3</p></title>"
+                + "<section id=\"deep4\"><title><p>Level 4</p></title>"
+                + "<p>Deep chapter text</p></section></section></section></section>";
+        String nested = new String(original, StandardCharsets.UTF_8)
+                .replaceFirst("</section>\\s*</body>", deep + "</section></body>");
+        assertThat(nested).contains("Deep chapter text");
+        byte[] bytes = nested.getBytes(StandardCharsets.UTF_8);
+        doAnswer(call -> Optional.of(new ByteArrayInputStream(bytes)))
+                .when(resources).readBookData(book);
+        Path output = temp.resolve("deep-toc.fb2");
+
+        new SeriesOmnibusWriter(resources).assemble(
+                new SeriesOmnibusPlanner.SeriesPlan("Автор", "Серія", List.of(book)),
+                output, ExportRequest.ExportFormat.FB2, () -> false);
+
+        Document doc = parse(Files.readAllBytes(output));
+        Element contents = null;
+        for (int i = 0; i < doc.getElementsByTagNameNS(FB, "section").getLength(); i++) {
+            Element section = (Element) doc.getElementsByTagNameNS(FB, "section").item(i);
+            if ("mhl_contents".equals(section.getAttribute("id"))) {
+                contents = section;
+                break;
+            }
+        }
+        assertThat(contents).isNotNull();
+        boolean linked = false;
+        for (int i = 0; i < contents.getElementsByTagNameNS(FB, "a").getLength(); i++) {
+            Element link = (Element) contents.getElementsByTagNameNS(FB, "a").item(i);
+            if (link.getTextContent().contains("Level 4")) {
+                linked = true;
+                String ref = link.getAttributeNS(XLINK, "href");
+                assertThat(ref).startsWith("#mhl_v1_");
+            }
+        }
+        assertThat(linked).isTrue();
+        assertThat(doc.getDocumentElement().getTextContent()).contains("Deep chapter text");
+    }
+
+    @Test
     void maliciousDocumentWithDoctypeIsRejectedBeforePublication() throws Exception {
         BookResourcePort resources = mock(BookResourcePort.class);
         Book malformed = source(resources, "Том 1", "text", true);
