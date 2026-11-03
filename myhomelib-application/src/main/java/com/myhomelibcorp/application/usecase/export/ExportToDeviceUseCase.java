@@ -21,6 +21,7 @@ import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
+import com.myhomelibcorp.application.port.out.exporter.DeviceArchivePort;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
@@ -66,6 +67,9 @@ public class ExportToDeviceUseCase {
     private final CollectionLifecyclePort collectionLifecyclePort;
     private final LibraryOperationCoordinator operationCoordinator;
     private RuntimeExtensionRegistry runtimeExtensions = new RuntimeExtensionRegistry();
+    /** Optional only for standalone legacy tests; Spring injects it in the desktop app. */
+    @Autowired(required = false)
+    private DeviceArchivePort deviceArchivePort;
 
     @Autowired
     void setRuntimeExtensions(RuntimeExtensionRegistry runtimeExtensions) {
@@ -257,6 +261,27 @@ public class ExportToDeviceUseCase {
             return finish(request, requested, 0, 0, requested, false, startedAt, List.of(issue));
         }
 
+        boolean packageArchive = request.effectiveArchiveFormat() != ExportRequest.ArchiveFormat.NONE;
+        Path deviceDestination = destination;
+        Path bundleWorkspace = null;
+        if (packageArchive) {
+            if (deviceArchivePort == null) {
+                return finish(request, requested, 0, 0, requested, false, startedAt,
+                        List.of(ExportIssue.of("ui.export.error.generic",
+                                "Archive writer is unavailable")));
+            }
+            try {
+                bundleWorkspace = SafeFilePublication.createPrivateWorkspace(
+                        destination, ".mhl-device-bundle-", "Device archive staging");
+                destination = bundleWorkspace;
+            } catch (java.io.IOException stagingFailure) {
+                return finish(request, requested, 0, 0, requested, false, startedAt,
+                        List.of(ExportIssue.of("ui.export.error.generic",
+                                "Cannot prepare archive staging workspace")));
+            }
+        }
+
+        try {
         int processed = 0;
         int total = request.getBookIds().size();
         for (BookId bookId : request.getBookIds()) {
@@ -373,7 +398,7 @@ public class ExportToDeviceUseCase {
                         log.warn("Cannot remove disposable export staging workspace {}", stagingWorkspace, cleanupFailure);
                     }
                 }
-                runPostAction(book, request, destination, targetFile, issues);
+                if (!packageArchive) runPostAction(book, request, destination, targetFile, issues);
                 exported.incrementAndGet();
                 log.info("Експортовано: {} -> {}", book.getTitle(), targetFile.getFileName());
             } catch (Exception e) {
@@ -392,10 +417,98 @@ public class ExportToDeviceUseCase {
             }
         }
 
+        // A single archive is published only when every selected book was staged.
+        // Failed/skipped source books must never create a deceptively complete bundle.
+        if (packageArchive && exported.get() > 0) {
+            int stagedCount = exported.get();
+            if (failed.get() != 0 || skipped.get() != 0 || cancel.get()) {
+                exported.set(0);
+                if (!cancel.get()) failed.addAndGet(stagedCount);
+                issues.add(ExportIssue.of("ui.export.error.generic",
+                        "Archive not published because one or more books were not exported"));
+            } else {
+                try {
+                    publishDeviceArchive(request, resolver, deviceDestination, bundleWorkspace, cancel);
+                } catch (java.util.concurrent.CancellationException cancelled) {
+                    cancel.set(true);
+                    exported.set(0);
+                } catch (Exception archiveFailure) {
+                    exported.set(0);
+                    failed.addAndGet(stagedCount);
+                    issues.add(ExportIssue.of("ui.export.error.generic",
+                            "Archive packaging failed: " + archiveFailure.getMessage()));
+                    log.warn("Device archive packaging failed", archiveFailure);
+                }
+            }
+        }
+
         ExportResult result = finish(request, requested, exported.get(), skipped.get(), failed.get(), cancel.get(), startedAt, issues);
         log.info("Експорт завершено: exported={}, skipped={}, failed={}, cancelled={}, durationMs={}",
                 result.exported(), result.skipped(), result.failed(), result.cancelled(), result.durationMs());
         return result;
+        } finally {
+            if (bundleWorkspace != null) {
+                try { SafeFilePublication.cleanupPrivateWorkspace(bundleWorkspace); }
+                catch (java.io.IOException cleanupFailure) {
+                    log.warn("Could not clean temporary device export bundle workspace", cleanupFailure);
+                }
+            }
+        }
+    }
+
+    private void publishDeviceArchive(ExportRequest request, ExportCollisionResolver resolver,
+                                      Path deviceDestination, Path stagedBooks, AtomicBoolean cancel)
+            throws Exception {
+        if (cancel.get()) throw new java.util.concurrent.CancellationException();
+        String stem = archiveFileStem(request.getBookIds());
+        String extension = request.effectiveArchiveFormat().extension();
+        Path target = deviceDestination.resolve(stem + extension).normalize();
+        if (!target.startsWith(deviceDestination)) throw new java.io.IOException("Unsafe archive target");
+        String expectedOverwrite = null;
+        if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            ExportCollisionDecision decision = collisionDecision(request, resolver,
+                    new ExportCollisionContext(request.getBookIds().getFirst(), "Архів книг", target));
+            switch (decision) {
+                case SKIP -> throw new java.io.FileAlreadyExistsException("Archive target already exists");
+                case CANCEL -> throw new java.util.concurrent.CancellationException();
+                case RENAME -> target = nextAvailableName(deviceDestination, stem, extension);
+                case OVERWRITE -> expectedOverwrite = SafeFilePublication.sha256(target, "Existing device archive");
+            }
+        }
+        Path archiveWorkspace = SafeFilePublication.createPrivateWorkspace(
+                deviceDestination, ".mhl-archive-output-", "Device archive output workspace");
+        try {
+            Path stagedArchive = archiveWorkspace.resolve("bundle" + extension);
+            deviceArchivePort.pack(stagedBooks, stagedArchive, request.effectiveArchiveFormat(),
+                    request.effectiveCompressionLevel(), cancel::get);
+            if (cancel.get()) throw new java.util.concurrent.CancellationException();
+            verifyExportedFile(stagedArchive);
+            String stagedHash = SafeFilePublication.sha256(stagedArchive, "Packed device archive");
+            commitExportedFile(stagedArchive, target, expectedOverwrite, stagedHash,
+                    request.effectiveCompletionPolicy());
+        } finally {
+            SafeFilePublication.cleanupPrivateWorkspace(archiveWorkspace);
+        }
+    }
+
+    private String archiveFileStem(List<BookId> bookIds) {
+        String series = null;
+        for (BookId id : bookIds) {
+            Book book = bookQueryRepository.findById(id).orElse(null);
+            if (book == null || book.getSeries() == null || book.getSeries().isBlank()) {
+                series = null;
+                break;
+            }
+            String value = book.getSeries().trim();
+            if (series != null && !series.equalsIgnoreCase(value)) {
+                series = null;
+                break;
+            }
+            series = value;
+        }
+        String base = series == null ? "Books bundle" : "Series - " + series;
+        String safe = SafeFileNameSupport.sanitizeFileStem(base, 180);
+        return safe.isBlank() ? "Books bundle" : safe;
     }
 
     private void commitExportedFile(Path stagedFile, Path targetFile, String overwriteExpectedHash,
