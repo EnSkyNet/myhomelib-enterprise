@@ -146,7 +146,7 @@ class SeriesOmnibusWriterTest {
                 new SeriesOmnibusPlanner.SeriesPlan("Author", "Cycle", List.of(first)),
                 output, ExportRequest.ExportFormat.PDF, () -> false))
                 .isInstanceOf(java.io.IOException.class)
-                .hasMessageContaining("EPUB or TXT");
+                .hasMessageContaining("FB2.ZIP or TXT");
         assertThat(output).doesNotExist();
     }
 
