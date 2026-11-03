@@ -241,12 +241,14 @@ public final class SeriesOmnibusWriter implements SeriesOmnibusPort {
     }
     private static String packageXml(SeriesOmnibusPlanner.SeriesPlan plan) {
         String title = escaped(plan.author() + " — " + plan.series());
+        String language = plan.books().getFirst().getLanguage() == null
+                ? "und" : plan.books().getFirst().getLanguage().value();
         StringBuilder xml = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
                 + "<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"uid\">"
                 + "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">"
                 + "<dc:identifier id=\"uid\">urn:uuid:" + UUID.randomUUID() + "</dc:identifier>"
                 + "<dc:title>" + title + "</dc:title><dc:creator>" + escaped(plan.author())
-                + "</dc:creator><dc:language>uk</dc:language>"
+                + "</dc:creator><dc:language>" + escaped(language) + "</dc:language>"
                 + "<meta property=\"dcterms:modified\">"
                 + Instant.now().truncatedTo(ChronoUnit.SECONDS) + "</meta></metadata><manifest>"
                 + "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>");
