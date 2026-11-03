@@ -22,6 +22,8 @@ import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
 import com.myhomelibcorp.application.port.out.exporter.DeviceArchivePort;
+import com.myhomelibcorp.application.port.out.exporter.SeriesOmnibusPort;
+import com.myhomelibcorp.application.export.SeriesOmnibusPlanner;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
@@ -70,6 +72,8 @@ public class ExportToDeviceUseCase {
     /** Optional only for standalone legacy tests; Spring injects it in the desktop app. */
     @Autowired(required = false)
     private DeviceArchivePort deviceArchivePort;
+    @Autowired(required = false) private SeriesOmnibusPlanner seriesOmnibusPlanner;
+    @Autowired(required = false) private SeriesOmnibusPort seriesOmnibusPort;
 
     @Autowired
     void setRuntimeExtensions(RuntimeExtensionRegistry runtimeExtensions) {
@@ -190,6 +194,12 @@ public class ExportToDeviceUseCase {
         }
     }
 
+    /** Expands a single author/series selection for the UI's pre-export downloads. */
+    public List<BookId> completeSeriesBookIds(List<BookId> selected) {
+        if (seriesOmnibusPlanner == null) throw new IllegalStateException("Series planner unavailable");
+        return seriesOmnibusPlanner.plan(selected).bookIds();
+    }
+
     public ExportResult execute(ExportRequest request) {
         return execute(request, new AtomicBoolean(false), progress -> { }, context -> ExportCollisionDecision.SKIP);
     }
@@ -259,6 +269,10 @@ public class ExportToDeviceUseCase {
                     : ExportIssue.of("ui.export.error.destination_prepare_failed",
                             "Failed to prepare destination folder: " + e.getMessage(), destination);
             return finish(request, requested, 0, 0, requested, false, startedAt, List.of(issue));
+        }
+
+        if (request.isCombineSeries()) {
+            return executeSeriesOmnibus(request, cancel, reporter, resolver, destination, startedAt);
         }
 
         boolean packageArchive = request.effectiveArchiveFormat() != ExportRequest.ArchiveFormat.NONE;
@@ -451,6 +465,85 @@ public class ExportToDeviceUseCase {
                 try { SafeFilePublication.cleanupPrivateWorkspace(bundleWorkspace); }
                 catch (java.io.IOException cleanupFailure) {
                     log.warn("Could not clean temporary device export bundle workspace", cleanupFailure);
+                }
+            }
+        }
+    }
+
+    private ExportResult executeSeriesOmnibus(ExportRequest request, AtomicBoolean cancel,
+                                              Consumer<ExportProgress> reporter, ExportCollisionResolver resolver,
+                                              Path destination, long startedAt) {
+        int requested = request.getBookIds().size();
+        List<ExportIssue> issues = new ArrayList<>();
+        if (seriesOmnibusPlanner == null || seriesOmnibusPort == null) {
+            return finish(request, requested, 0, 0, requested, false, startedAt,
+                    List.of(ExportIssue.of("ui.export.error.generic", "Series omnibus writer is unavailable")));
+        }
+        Path workspace = null;
+        int total = requested;
+        try {
+            SeriesOmnibusPlanner.SeriesPlan plan = seriesOmnibusPlanner.plan(request.getBookIds());
+            total = plan.books().size();
+            ExportRequest.ExportFormat bookFormat = request.getFormat() == ExportRequest.ExportFormat.TXT
+                    ? ExportRequest.ExportFormat.TXT : ExportRequest.ExportFormat.EPUB;
+            String bookExtension = bookFormat == ExportRequest.ExportFormat.TXT ? ".txt" : ".epub";
+            String stem = SafeFileNameSupport.sanitizeFileStem(
+                    plan.author() + " - " + plan.series() + " (повна серія)", 180);
+            if (stem.isBlank()) stem = "Series omnibus";
+            String finalExtension = request.effectiveArchiveFormat() == ExportRequest.ArchiveFormat.NONE
+                    ? bookExtension : request.effectiveArchiveFormat().extension();
+            Path target = destination.resolve(stem + finalExtension).normalize();
+            if (!target.startsWith(destination)) throw new java.io.IOException("Unsafe omnibus filename");
+            String expectedOverwrite = null;
+            if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                ExportCollisionDecision decision = collisionDecision(request, resolver,
+                        new ExportCollisionContext(request.getBookIds().getFirst(), plan.series(), target));
+                switch (decision) {
+                    case SKIP -> {
+                        return finish(request, total, 0, total, 0, false, startedAt, List.of());
+                    }
+                    case CANCEL -> {
+                        cancel.set(true);
+                        return finish(request, total, 0, 0, 0, true, startedAt, List.of());
+                    }
+                    case RENAME -> target = nextAvailableName(destination, stem, finalExtension);
+                    case OVERWRITE -> expectedOverwrite = SafeFilePublication.sha256(
+                            target, "Existing device omnibus");
+                }
+            }
+            if (cancel.get()) throw new java.util.concurrent.CancellationException();
+            workspace = SafeFilePublication.createPrivateWorkspace(
+                    destination, ".mhl-series-omnibus-", "Series omnibus workspace");
+            Path content = SafeFilePublication.createDirectoriesNoLinks(
+                    workspace.resolve("books"), "Series omnibus content");
+            Path stagedBook = content.resolve("series" + bookExtension);
+            seriesOmnibusPort.assemble(plan, stagedBook, bookFormat, cancel::get);
+            if (cancel.get()) throw new java.util.concurrent.CancellationException();
+            Path output = stagedBook;
+            if (request.effectiveArchiveFormat() != ExportRequest.ArchiveFormat.NONE) {
+                if (deviceArchivePort == null) throw new java.io.IOException("Archive writer unavailable");
+                output = workspace.resolve("bundle" + finalExtension);
+                deviceArchivePort.pack(content, output, request.effectiveArchiveFormat(),
+                        request.effectiveCompressionLevel(), cancel::get);
+            }
+            verifyExportedFile(output);
+            String hash = SafeFilePublication.sha256(output, "Series omnibus output");
+            commitExportedFile(output, target, expectedOverwrite, hash, request.effectiveCompletionPolicy());
+            reporter.accept(new ExportProgress(total, total, plan.series()));
+            return finish(request, total, total, 0, 0, false, startedAt, List.of());
+        } catch (java.util.concurrent.CancellationException | java.io.InterruptedIOException interrupted) {
+            cancel.set(true);
+            return finish(request, total, 0, 0, 0, true, startedAt, List.of());
+        } catch (Exception failure) {
+            log.warn("Series omnibus export failed", failure);
+            issues.add(ExportIssue.of("ui.export.error.generic",
+                    "Series omnibus export failed: " + failure.getMessage()));
+            return finish(request, total, 0, 0, total, false, startedAt, issues);
+        } finally {
+            if (workspace != null) {
+                try { SafeFilePublication.cleanupPrivateWorkspace(workspace); }
+                catch (java.io.IOException cleanupFailure) {
+                    log.warn("Cannot clean series omnibus workspace", cleanupFailure);
                 }
             }
         }
