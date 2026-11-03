@@ -367,7 +367,7 @@
     "ui.export.compression.normal": "Normal",
     "ui.export.compression.fast": "Fast",
     "ui.export.series.combine": "Create one readable book from the complete author's series (EPUB/FB2/TXT)",
-    "ui.export.series.text_only_help": "FB2/FB2.ZIP preserves original chapters, images and notes. EPUB/TXT are simplified text-only editions.",
+    "ui.export.series.text_only_help": "For FB2 sources, FB2/FB2.ZIP preserves chapters, images and notes. EPUB/TXT are simplified text-only editions.",
     "ui.export.extract_only": "Extract the archive entry without conversion",
     "ui.export.filename_template.label": "File name template:",
     "ui.export.format.label": "Format:",
