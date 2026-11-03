@@ -71,7 +71,7 @@ public class ExportRequest {
     }
 
     public enum ArchiveFormat {
-        NONE(""), ZIP(".zip"), SEVEN_Z(".7z");
+        NONE(""), ZIP(".zip"), SEVEN_Z(".7z"), RAR(".rar");
         private final String extension;
         ArchiveFormat(String extension) { this.extension = extension; }
         public String extension() { return extension; }
