@@ -142,8 +142,8 @@ public final class SupportedFormatRegistry {
         result.add(f("zip", "ZIP", "ZIP/FB2ZIP", set("fb2.zip", "fb2zip", "zip"), set("application/zip"), ARCHIVE, SupportedFormat.ImportMode.ARCHIVE, true, true, true, true));
         result.add(f("cbz", "CBZ", "CBZ", set("cbz"), set("application/vnd.comicbook+zip"), BOOK, NATIVE, true, true, true, false));
         result.add(f("jar", "JAR", "JAR", set("jar"), set("application/java-archive"), ARCHIVE, SupportedFormat.ImportMode.ARCHIVE, true, false, false, false));
-        result.add(f("7z", "SEVEN_Z", "7Z", set("7z"), set("application/x-7z-compressed"), ARCHIVE, SupportedFormat.ImportMode.ARCHIVE, true, false, false, false));
-        result.add(f("rar", "RAR", "RAR", set("rar"), set("application/vnd.rar", "application/x-rar-compressed"), ARCHIVE, SupportedFormat.ImportMode.ARCHIVE, true, false, false, false));
+        result.add(f("7z", "SEVEN_Z", "7Z", set("7z"), set("application/x-7z-compressed"), ARCHIVE, SupportedFormat.ImportMode.ARCHIVE, true, true, true, false));
+        result.add(f("rar", "RAR", "RAR", set("rar"), set("application/vnd.rar", "application/x-rar-compressed"), ARCHIVE, SupportedFormat.ImportMode.ARCHIVE, true, true, true, false));
         result.add(f("cbr", "CBR", "CBR", set("cbr"), set("application/vnd.comicbook-rar"), BOOK, NATIVE, true, true, true, false));
         result.add(f("tar", "TAR", "TAR", set("tar.gz", "tar.bz2", "tar.xz", "tgz", "tbz2", "txz", "tar"), set("application/x-tar"), ARCHIVE, SupportedFormat.ImportMode.ARCHIVE, true, false, false, false));
         result.add(f("cpio", "CPIO", "CPIO", set("cpio"), set("application/x-cpio"), ARCHIVE, SupportedFormat.ImportMode.ARCHIVE, true, false, false, false));
