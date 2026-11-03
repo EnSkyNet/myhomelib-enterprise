@@ -28,6 +28,12 @@ public class ExportRequest {
     List<ExportFormat> preferredFormats;
     /** Completion contract for removable-device writes. Legacy callers default to VERIFY_READABLE. */
     CompletionPolicy completionPolicy;
+    /** One archive containing the selected exported book files, independent of format conversion. */
+    ArchiveFormat archiveFormat;
+    /** Maximum is a 4-GiB-RAM-safe preset, not an unbounded dictionary. */
+    CompressionLevel compressionLevel;
+    /** Request to create a readable combined series volume (separate from archive packaging). */
+    boolean combineSeries;
 
     public List<ExportFormat> effectivePreferredFormats() {
         java.util.LinkedHashSet<ExportFormat> ordered = new java.util.LinkedHashSet<>();
@@ -55,6 +61,23 @@ public class ExportRequest {
         /** Flush committed file data/metadata before reporting success; directory metadata is flushed best-effort. */
         EJECT_SAFE
     }
+
+    public ArchiveFormat effectiveArchiveFormat() {
+        return archiveFormat == null ? ArchiveFormat.NONE : archiveFormat;
+    }
+
+    public CompressionLevel effectiveCompressionLevel() {
+        return compressionLevel == null ? CompressionLevel.MAXIMUM : compressionLevel;
+    }
+
+    public enum ArchiveFormat {
+        NONE(""), ZIP(".zip"), SEVEN_Z(".7z");
+        private final String extension;
+        ArchiveFormat(String extension) { this.extension = extension; }
+        public String extension() { return extension; }
+    }
+
+    public enum CompressionLevel { FAST, NORMAL, MAXIMUM }
 
     public enum ExportFormat {
         FB2,
