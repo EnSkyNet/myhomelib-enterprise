@@ -487,12 +487,14 @@ public class ExportToDeviceUseCase {
             ExportRequest.ExportFormat bookFormat = request.getFormat();
             if (bookFormat != ExportRequest.ExportFormat.TXT
                     && bookFormat != ExportRequest.ExportFormat.EPUB
-                    && bookFormat != ExportRequest.ExportFormat.FB2) {
-                throw new java.io.IOException("Readable series export supports EPUB, FB2 or TXT");
+                    && bookFormat != ExportRequest.ExportFormat.FB2
+                    && bookFormat != ExportRequest.ExportFormat.FB2_ZIP) {
+                throw new java.io.IOException("Readable series export supports EPUB, FB2, FB2.ZIP or TXT");
             }
             String bookExtension = switch (bookFormat) {
                 case TXT -> ".txt";
                 case FB2 -> ".fb2";
+                case FB2_ZIP -> ".fb2.zip";
                 case EPUB -> ".epub";
                 default -> throw new IllegalStateException("Unreachable series format");
             };
