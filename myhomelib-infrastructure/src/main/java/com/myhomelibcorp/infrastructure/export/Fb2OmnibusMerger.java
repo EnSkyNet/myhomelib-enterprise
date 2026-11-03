@@ -201,10 +201,11 @@ final class Fb2OmnibusMerger {
         for (Volume volume : volumes) {
             check(cancelled);
             linkParagraph(xml, volume.anchor(), volume.title());
+            // Include every titled nested section, not only the first three levels.
+            // Some FB2 sources place chapter titles deeper in the hierarchy.
             for (Chapter chapter : volume.chapters()) {
-                if (chapter.depth() <= 3) {
-                    linkParagraph(xml, chapter.anchor(), "  " + chapter.title());
-                }
+                String indentation = "  ".repeat(Math.min(chapter.depth(), 12));
+                linkParagraph(xml, chapter.anchor(), indentation + chapter.title());
             }
         }
         xml.writeEndElement();
