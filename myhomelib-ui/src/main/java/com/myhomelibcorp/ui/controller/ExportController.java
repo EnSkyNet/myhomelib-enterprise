@@ -95,6 +95,7 @@ public class ExportController {
     @FXML private ComboBox<ExportRequest.CollisionPolicy> collisionPolicyComboBox;
     @FXML private ComboBox<ActionChoice> postActionComboBox;
     @FXML private CheckBox extractOnlyCheckBox;
+    @FXML private CheckBox combineSeriesCheckBox;
     @FXML private ComboBox<ExportRequest.ArchiveFormat> archiveFormatComboBox;
     @FXML private ComboBox<ExportRequest.CompressionLevel> compressionLevelComboBox;
     @FXML private Label selectedBooksLabel;
@@ -220,6 +221,35 @@ public class ExportController {
         loadPostActions(lastState.hasPostAction() ? lastState.postActionId() : "");
         loadProfiles(lastState.profileId());
         restoreLastExportState(lastState);
+        if (combineSeriesCheckBox != null) {
+            combineSeriesCheckBox.selectedProperty().addListener((ignored, previous, selected) -> {
+                if (selected) {
+                    extractOnlyCheckBox.setSelected(false);
+                    extractOnlyCheckBox.setDisable(true);
+                    formatComboBox.getItems().setAll(
+                            ExportRequest.ExportFormat.EPUB, ExportRequest.ExportFormat.TXT);
+                    formatComboBox.setValue(ExportRequest.ExportFormat.EPUB);
+                    if (archiveFormatComboBox != null) {
+                        archiveFormatComboBox.setValue(ExportRequest.ArchiveFormat.NONE);
+                    }
+                } else {
+                    extractOnlyCheckBox.setDisable(exportRunning);
+                    if (selectedBookIds != null && !selectedBookIds.isEmpty()) {
+                        Set<ExportRequest.ExportFormat> common =
+                                exportToDeviceUseCase.supportedFormatsForBooks(selectedBookIds);
+                        formatComboBox.getItems().setAll(java.util.Arrays.stream(
+                                ExportRequest.ExportFormat.values()).filter(common::contains).toList());
+                        if (!formatComboBox.getItems().isEmpty()) {
+                            formatComboBox.setValue(formatComboBox.getItems().getFirst());
+                        } else {
+                            formatComboBox.setValue(null);
+                        }
+                    }
+                }
+                exportButton.setDisable(exportRunning || selectedBookIds == null
+                        || selectedBookIds.isEmpty() || formatComboBox.getValue() == null);
+            });
+        }
 
         selectedBooksLabel.setText(i18n.text("ui.export.selection.none"));
         exportButton.setDisable(true);
@@ -254,6 +284,15 @@ public class ExportController {
         List<BookViewModel> validBooks = selectedBooks.stream()
                 .filter(b -> b.getId() != null && !b.getId().isBlank()).toList();
         selectedBookIds = validBooks.stream().map(b -> BookId.fromString(b.getId())).collect(Collectors.toList());
+        if (combineSeriesCheckBox != null && combineSeriesCheckBox.isSelected()) {
+            formatComboBox.getItems().setAll(ExportRequest.ExportFormat.EPUB, ExportRequest.ExportFormat.TXT);
+            if (formatComboBox.getValue() == null || !formatComboBox.getItems().contains(formatComboBox.getValue())) {
+                formatComboBox.setValue(ExportRequest.ExportFormat.EPUB);
+            }
+            selectedBooksLabel.setText(i18n.format("ui.export.selection.count", validBooks.size()));
+            exportButton.setDisable(exportRunning || validBooks.isEmpty());
+            return;
+        }
         Set<ExportRequest.ExportFormat> common = exportToDeviceUseCase.supportedFormatsForBooks(selectedBookIds);
         ExportRequest.ExportFormat preferred = formatComboBox.getValue();
         formatComboBox.getItems().setAll(java.util.Arrays.stream(ExportRequest.ExportFormat.values())
@@ -646,6 +685,7 @@ public class ExportController {
                 .collisionPolicy(collisionPolicyComboBox.getValue())
                 .overwriteExisting(collisionPolicyComboBox.getValue() == ExportRequest.CollisionPolicy.OVERWRITE)
                 .extractOnly(extractOnlyCheckBox.isSelected())
+                .combineSeries(combineSeriesCheckBox != null && combineSeriesCheckBox.isSelected())
                 .archiveFormat(archiveFormatComboBox == null
                         ? ExportRequest.ArchiveFormat.NONE : archiveFormatComboBox.getValue())
                 .compressionLevel(compressionLevelComboBox == null
@@ -665,7 +705,34 @@ public class ExportController {
         setExportRunning(true);
         exportButton.setText(UiText.text("ui.java.export_controller.f28ce2cee1"));
         String expectedCollectionId = request.getCollectionId();
-        bookDownloadCoordinator.prepareForExport(selectedBookIds, stage).whenComplete((downloadResult, downloadError) ->
+        List<BookId> selectedForTransfer = List.copyOf(selectedBookIds);
+        if (request.isCombineSeries()) {
+            // Series membership can require traversing a large catalog. Do not block JavaFX
+            // and download every member before asking the export worker to assemble the book.
+            executor.submitCollectionScoped(LibraryOperationType.QUERY,
+                    () -> exportToDeviceUseCase.completeSeriesBookIds(selectedForTransfer))
+                    .whenComplete((seriesIds, lookupError) -> Platform.runLater(() -> {
+                        if (!isCurrentCollection(expectedCollectionId)) {
+                            setExportRunning(false);
+                            closeDialog();
+                            return;
+                        }
+                        if (lookupError != null) {
+                            setExportRunning(false);
+                            dialogService.showError(UiText.text("common.error"),
+                                    UiExceptionSupport.message(lookupError));
+                            return;
+                        }
+                        prepareDownloadedExport(request, seriesIds);
+                    }));
+        } else {
+            prepareDownloadedExport(request, selectedForTransfer);
+        }
+    }
+
+    private void prepareDownloadedExport(ExportRequest request, List<BookId> allBookIds) {
+        String expectedCollectionId = request.getCollectionId();
+        bookDownloadCoordinator.prepareForExport(allBookIds, stage).whenComplete((downloadResult, downloadError) ->
                 Platform.runLater(() -> {
                     if (!isCurrentCollection(expectedCollectionId)) {
                         setExportRunning(false);
@@ -842,7 +909,10 @@ public class ExportController {
         formatComboBox.setDisable(running); collisionPolicyComboBox.setDisable(running); profileComboBox.setDisable(running);
         deviceProfileComboBox.setDisable(running);
         destinationField.setDisable(running); fileNameTemplateField.setDisable(running); subfolderTemplateField.setDisable(running);
-        postActionComboBox.setDisable(running); extractOnlyCheckBox.setDisable(running);
+        postActionComboBox.setDisable(running);
+        extractOnlyCheckBox.setDisable(running || combineSeriesCheckBox != null
+                && combineSeriesCheckBox.isSelected());
+        if (combineSeriesCheckBox != null) combineSeriesCheckBox.setDisable(running);
         if (archiveFormatComboBox != null) archiveFormatComboBox.setDisable(running);
         if (compressionLevelComboBox != null) compressionLevelComboBox.setDisable(
                 running || archiveFormatComboBox == null
