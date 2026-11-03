@@ -484,9 +484,18 @@ public class ExportToDeviceUseCase {
         try {
             SeriesOmnibusPlanner.SeriesPlan plan = seriesOmnibusPlanner.plan(request.getBookIds());
             total = plan.books().size();
-            ExportRequest.ExportFormat bookFormat = request.getFormat() == ExportRequest.ExportFormat.TXT
-                    ? ExportRequest.ExportFormat.TXT : ExportRequest.ExportFormat.EPUB;
-            String bookExtension = bookFormat == ExportRequest.ExportFormat.TXT ? ".txt" : ".epub";
+            ExportRequest.ExportFormat bookFormat = request.getFormat();
+            if (bookFormat != ExportRequest.ExportFormat.TXT
+                    && bookFormat != ExportRequest.ExportFormat.EPUB
+                    && bookFormat != ExportRequest.ExportFormat.FB2) {
+                throw new java.io.IOException("Readable series export supports EPUB, FB2 or TXT");
+            }
+            String bookExtension = switch (bookFormat) {
+                case TXT -> ".txt";
+                case FB2 -> ".fb2";
+                case EPUB -> ".epub";
+                default -> throw new IllegalStateException("Unreachable series format");
+            };
             String stem = SafeFileNameSupport.sanitizeFileStem(
                     plan.author() + " - " + plan.series() + " (повна серія)", 180);
             if (stem.isBlank()) stem = "Series omnibus";
@@ -529,7 +538,10 @@ public class ExportToDeviceUseCase {
             verifyExportedFile(output);
             String hash = SafeFilePublication.sha256(output, "Series omnibus output");
             commitExportedFile(output, target, expectedOverwrite, hash, request.effectiveCompletionPolicy());
-            reporter.accept(new ExportProgress(total, total, plan.series()));
+            try { reporter.accept(new ExportProgress(total, total, plan.series())); }
+            catch (RuntimeException callbackFailure) {
+                log.debug("Series export progress callback failed", callbackFailure);
+            }
             return finish(request, total, total, 0, 0, false, startedAt, List.of());
         } catch (java.util.concurrent.CancellationException | java.io.InterruptedIOException interrupted) {
             cancel.set(true);
