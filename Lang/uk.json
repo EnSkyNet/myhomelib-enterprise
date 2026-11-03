@@ -366,7 +366,7 @@
     "ui.export.compression.maximum": "Максимальне (обмежене за пам’яттю)",
     "ui.export.compression.normal": "Звичайне",
     "ui.export.compression.fast": "Швидке",
-    "ui.export.series.combine": "Зібрати всю серію автора в одну книгу (EPUB/TXT)",
+    "ui.export.series.combine": "Зібрати всю серію автора в одну книгу (EPUB/FB2/TXT)",
     "ui.export.series.text_only_help": "Текстове видання: зберігаються текст і порядок книг, але не ілюстрації та оформлення.",
     "ui.export.extract_only": "Витягти запис з архіву без конвертації",
     "ui.export.filename_template.label": "Шаблон імені:",
