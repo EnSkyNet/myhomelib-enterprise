@@ -519,6 +519,18 @@ class HttpRemoteCatalogDownloadAdapterTest {
     }
 
     @Test
+    void retriesOnlyFirstConnectTimeoutButNotReadTimeout() {
+        IOException connect = new java.net.http.HttpConnectTimeoutException("connect timeout");
+        IOException read = new java.net.http.HttpTimeoutException("request timed out");
+        IOException reset = new IOException("connection reset");
+
+        assertThat(HttpRemoteCatalogDownloadAdapter.shouldRetryCatalogIOException(connect, 1)).isTrue();
+        assertThat(HttpRemoteCatalogDownloadAdapter.shouldRetryCatalogIOException(connect, 2)).isFalse();
+        assertThat(HttpRemoteCatalogDownloadAdapter.shouldRetryCatalogIOException(read, 1)).isFalse();
+        assertThat(HttpRemoteCatalogDownloadAdapter.shouldRetryCatalogIOException(reset, 2)).isTrue();
+    }
+
+    @Test
     void notModifiedResponseCannotBeMistakenForDownloadOrRetried() throws Exception {
         AtomicInteger requests = new AtomicInteger();
         server = start(exchange -> {

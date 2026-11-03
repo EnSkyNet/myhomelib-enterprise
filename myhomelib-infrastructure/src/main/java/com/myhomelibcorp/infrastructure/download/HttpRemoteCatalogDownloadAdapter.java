@@ -497,7 +497,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                     catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
                     throw e;
                 }
-                if (attempt == MAX_ATTEMPTS || !OnlineRetryPolicy.isRetryableIOException(e)) break;
+                if (attempt == MAX_ATTEMPTS || !shouldRetryCatalogIOException(e, attempt)) break;
                 backoff(attempt, cancel, null);
             }
         }
@@ -675,6 +675,16 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
             catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("Оновлення скасовано", e); }
             remaining -= slice;
         }
+    }
+
+    /**
+     * This adapter only issues GET requests. Retry one failed TCP connection
+     * establishment, where no request was delivered, but not a read/request
+     * timeout that already consumed the configured response budget.
+     */
+    static boolean shouldRetryCatalogIOException(IOException failure, int attempt) {
+        if (failure instanceof java.net.http.HttpConnectTimeoutException) return attempt == 1;
+        return OnlineRetryPolicy.isRetryableIOException(failure);
     }
 
     private static boolean isSemanticFailure(IOException e) {
