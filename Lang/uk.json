@@ -367,7 +367,7 @@
     "ui.export.compression.normal": "Звичайне",
     "ui.export.compression.fast": "Швидке",
     "ui.export.series.combine": "Зібрати всю серію автора в одну книгу (EPUB/FB2/TXT)",
-    "ui.export.series.text_only_help": "FB2/FB2.ZIP зберігає структуру розділів, ілюстрації та примітки. EPUB/TXT створюються зі спрощеного тексту.",
+    "ui.export.series.text_only_help": "Для FB2-джерел FB2/FB2.ZIP зберігає глави, ілюстрації та примітки. EPUB/TXT — спрощений текст без оформлення.",
     "ui.export.extract_only": "Витягти запис з архіву без конвертації",
     "ui.export.filename_template.label": "Шаблон імені:",
     "ui.export.format.label": "Формат:",
