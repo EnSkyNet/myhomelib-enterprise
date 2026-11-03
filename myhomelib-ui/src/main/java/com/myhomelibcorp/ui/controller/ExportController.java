@@ -843,6 +843,10 @@ public class ExportController {
         deviceProfileComboBox.setDisable(running);
         destinationField.setDisable(running); fileNameTemplateField.setDisable(running); subfolderTemplateField.setDisable(running);
         postActionComboBox.setDisable(running); extractOnlyCheckBox.setDisable(running);
+        if (archiveFormatComboBox != null) archiveFormatComboBox.setDisable(running);
+        if (compressionLevelComboBox != null) compressionLevelComboBox.setDisable(
+                running || archiveFormatComboBox == null
+                        || archiveFormatComboBox.getValue() == ExportRequest.ArchiveFormat.NONE);
         cancelButton.setDisable(false);
         cancelButton.setText(running ? UiText.text("ui.java.export_controller.cfb5f1d251") : UiText.text("common.close"));
         exportButton.setText(running ? UiText.text("ui.java.export_controller.039ccdd668") + selectedBookIds.size() + UiText.text("ui.java.export_controller.de7370facb") : UiText.text("ui.annotations.export_action"));
