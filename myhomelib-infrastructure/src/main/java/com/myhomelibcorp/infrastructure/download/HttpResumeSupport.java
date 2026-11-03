@@ -107,12 +107,15 @@ final class HttpResumeSupport {
                     || (total != null && (total <= actualEnd || actualStart >= total))) {
                 throw invalidContentRange(uri, expectedStart, actualStart);
             }
+            // Reject arithmetic overflow even if the server uses chunked transfer
+            // and omits Content-Length. Otherwise a 206 can evade length checking.
+            long rangeLength = actualEnd - actualStart + 1L;
+            if (rangeLength <= 0L) {
+                throw invalidContentRange(uri, expectedStart, actualStart);
+            }
             long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
-            if (contentLength >= 0) {
-                long rangeLength = actualEnd - actualStart + 1L;
-                if (rangeLength <= 0 || contentLength != rangeLength) {
-                    throw invalidContentRange(uri, expectedStart, actualStart);
-                }
+            if (contentLength >= 0 && contentLength != rangeLength) {
+                throw invalidContentRange(uri, expectedStart, actualStart);
             }
         } catch (NumberFormatException e) {
             throw invalidContentRange(uri, expectedStart, null);
@@ -141,7 +144,9 @@ final class HttpResumeSupport {
         try {
             long start = Long.parseLong(matcher.group(1));
             long end = Long.parseLong(matcher.group(2));
-            return end >= start ? end - start + 1L : -1L;
+            if (end < start) return -1L;
+            long length = end - start + 1L;
+            return length > 0 ? length : -1L;
         } catch (NumberFormatException ignored) {
             return -1L;
         }

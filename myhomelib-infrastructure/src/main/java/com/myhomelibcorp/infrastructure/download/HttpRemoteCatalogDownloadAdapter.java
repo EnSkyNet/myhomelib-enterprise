@@ -324,7 +324,10 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                             "HTTP " + status + " для " + SensitiveDataSanitizer.sanitizeUri(uri), retryAfter);
                 } else if (status < 200 || status >= 300) {
                     closeQuietly(response.body());
-                    throw new IOException("HTTP " + status + " для " + SensitiveDataSanitizer.sanitizeUri(uri));
+                    // Unlike 408/429/5xx, permanent HTTP errors must not consume
+                    // four attempts and the user's configured read-timeout budget.
+                    throw new NonRetryableCatalogDownloadException(
+                            "HTTP " + status + " для " + SensitiveDataSanitizer.sanitizeUri(uri));
                 }
 
                 String contentType = response.headers().firstValue("Content-Type").orElse("").toLowerCase(Locale.ROOT);
@@ -494,7 +497,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                     catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
                     throw e;
                 }
-                if (attempt == MAX_ATTEMPTS) break;
+                if (attempt == MAX_ATTEMPTS || !OnlineRetryPolicy.isRetryableIOException(e)) break;
                 backoff(attempt, cancel, null);
             }
         }

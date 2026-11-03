@@ -54,6 +54,41 @@ class HttpResumeSupportTest {
     }
 
     @Test
+    void rejectsOverflowingChunkedRangeWithoutContentLength() {
+        URI uri = URI.create("https://example.test/book");
+        HttpResponse<?> response = response(206, Map.of(
+                "Content-Range", List.of("bytes 0-9223372036854775807/*")));
+
+        assertThatThrownBy(() -> HttpResumeSupport.validateContentRange(response, 0, uri))
+                .isInstanceOf(IOException.class).hasMessageContaining("Content-Range");
+        assertThat(HttpResumeSupport.expectedPartialBodyLength(response)).isEqualTo(-1L);
+    }
+
+    @Test
+    void acceptsNonOverflowingChunkedRangeAndReportsExpectedBodyLength() {
+        URI uri = URI.create("https://example.test/book");
+        HttpResponse<?> response = response(206, Map.of(
+                "Content-Range", List.of("bytes 6-10/*")));
+
+        assertThatCode(() -> HttpResumeSupport.validateContentRange(response, 6, uri))
+                .doesNotThrowAnyException();
+        assertThat(HttpResumeSupport.expectedPartialBodyLength(response)).isEqualTo(5L);
+    }
+
+    @Test
+    void rejectsContentRangeEndOutsideSignedLongWithoutEchoingHeader() {
+        URI uri = URI.create("https://user:SECRET@example.test/book?token=SECRET");
+        HttpResponse<?> response = response(206, Map.of(
+                "Content-Range", List.of("bytes 0-9223372036854775808/*")));
+
+        assertThatThrownBy(() -> HttpResumeSupport.validateContentRange(response, 0, uri))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("Content-Range")
+                .hasMessageNotContaining("SECRET", "9223372036854775808");
+        assertThat(HttpResumeSupport.expectedPartialBodyLength(response)).isEqualTo(-1L);
+    }
+
+    @Test
     void weakEtagUsesLastModifiedForByteRangeResume(@TempDir Path tempDir) throws Exception {
         URI uri = URI.create("https://example.test/book");
         HttpResponse<?> response = response(200, Map.of(

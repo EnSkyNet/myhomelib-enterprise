@@ -474,6 +474,39 @@ class HttpRemoteCatalogDownloadAdapterTest {
         assertThat(Files.readAllBytes(downloaded)).isEqualTo(archive);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {
+            400, 401, 403, 404, 405, 410, 422, 451, 501
+    })
+    void permanentHttpErrorsFailOnFirstAttempt(int status) throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = start(exchange -> {
+            requests.incrementAndGet();
+            respond(exchange, status, "error".getBytes(StandardCharsets.UTF_8));
+        });
+        String url = baseUrl() + "catalog.inpx";
+        assertThatThrownBy(() -> new HttpRemoteCatalogDownloadAdapter().download(
+                null, url, new AtomicBoolean(false), ignored -> { }))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("HTTP " + status);
+        assertThat(requests.get()).isOne();
+    }
+
+    @Test
+    void notModifiedResponseCannotBeMistakenForDownloadOrRetried() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = start(exchange -> {
+            requests.incrementAndGet();
+            exchange.sendResponseHeaders(304, -1);
+        });
+        String url = baseUrl() + "catalog.inpx";
+        assertThatThrownBy(() -> new HttpRemoteCatalogDownloadAdapter().download(
+                null, url, new AtomicBoolean(false), ignored -> { }))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("HTTP 304");
+        assertThat(requests.get()).isOne();
+    }
+
     @Test
     void rejectsHtmlBeforeImporterCanSeeIt() throws Exception {
         server = start(exchange -> {
