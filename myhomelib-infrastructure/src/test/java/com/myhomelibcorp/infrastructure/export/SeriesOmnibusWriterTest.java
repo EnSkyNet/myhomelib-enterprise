@@ -72,6 +72,32 @@ class SeriesOmnibusWriterTest {
     }
 
     @Test
+    void mergedFb2IsValidXmlWithOrderedBookSections() throws Exception {
+        BookResourcePort resources = mock(BookResourcePort.class);
+        Book first = txt(resources, "Перша & книга", "Текст <першої>");
+        Book second = txt(resources, "Друга", "Текст другої");
+        Path output = folder.resolve("series.fb2");
+
+        new SeriesOmnibusWriter(resources).assemble(
+                new SeriesOmnibusPlanner.SeriesPlan("Автор & команда", "Цикл",
+                        List.of(first, second)),
+                output, ExportRequest.ExportFormat.FB2, () -> false);
+
+        String xml = Files.readString(output);
+        assertThat(xml).contains("<FictionBook", "<nickname>Автор &amp; команда</nickname>",
+                "<title><p>Перша &amp; книга</p></title>", "Текст &lt;першої&gt;",
+                "<title><p>Друга</p></title>", "Текст другої");
+        assertThat(xml.indexOf("Текст &lt;першої&gt;")).isLessThan(xml.indexOf("Текст другої"));
+        javax.xml.parsers.DocumentBuilderFactory factory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setNamespaceAware(true);
+        try (InputStream in = Files.newInputStream(output)) {
+            assertThat(factory.newDocumentBuilder().parse(in).getDocumentElement().getLocalName())
+                    .isEqualTo("FictionBook");
+        }
+    }
+
+    @Test
     void cancellationDoesNotPublishTruncatedEbook() {
         BookResourcePort resources = mock(BookResourcePort.class);
         Book first = txt(resources, "First", "Sample");
